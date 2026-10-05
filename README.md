@@ -51,6 +51,25 @@ as isolated uv tools on Python 3.12, and downloads:
 | `incoai/Qwen3.8-27B-DFlash2` | DFlash 2 drafter | 3.6 GB |
 | `mlx-community/Qwen-Image-2.1-mflux-q4` | Image model | 8.9 GB |
 
+## Mac app
+
+Build a native **Local Studio.app** (Dock icon, own window, Mac menus) and install it to
+/Applications:
+
+```sh
+macos/build.sh --install
+```
+
+- Opening the app starts the engine and interface automatically; there's nothing else to run.
+- Quitting (⌘Q) stops everything and frees the ~16 GB the model uses. To keep the servers running
+  in the background instead, check **Local Studio → Keep Running After Quit**.
+- Closing the window keeps the app in the Dock; click the icon to bring it back.
+- Attachments open a native file picker, downloads go to ~/Downloads, and links open in your browser.
+- The app is a thin Swift/WebKit shell (`macos/main.swift`) around the same local web UI, so the
+  browser at http://127.0.0.1:7860 keeps working too. It is signed with your Apple Development
+  certificate if one is installed (ad-hoc otherwise), and it looks for the scripts in the folder it
+  was built from.
+
 ## Use
 
 ```sh
@@ -144,7 +163,7 @@ From the UI: **Models & storage → Uninstall**. Or from the terminal:
 ./uninstall.sh --remove-app  # also delete this folder (images and chats)
 ```
 
-This stops the servers, runs `uv tool uninstall` for mlx-dspark and mflux, deletes the Qwen
+Also delete `/Applications/Local Studio.app` if you installed it. This stops the servers, runs `uv tool uninstall` for mlx-dspark and mflux, deletes the Qwen
 models from the Hugging Face cache, and removes `~/.cache/mlx_dspark`. uv itself is left installed.
 
 ## Project layout
@@ -156,6 +175,7 @@ install.sh      Installs tools and models
 start.sh        Starts engine and UI
 stop.sh         Stops everything
 uninstall.sh    Removes tools, models and (optionally) this folder
+macos/          Native Mac app: main.swift, icon generator, build.sh
 ```
 
 ## Licenses

@@ -7,8 +7,9 @@ for name in llm vlm ui; do
     rm -f logs/$name.pid
   fi
 done
-pkill -f "mlx-dspark serve" 2>/dev/null
-pkill -f "mlx_vlm server" 2>/dev/null
-pkill -f "uvicorn app:app --host 127.0.0.1 --port 7860" 2>/dev/null
-pkill -f "mflux-generate-qwen" 2>/dev/null
+pkill -f "^[^ ]*python[^ ]* [^ ]*mlx-dspark serve" 2>/dev/null
+pkill -f "^[^ ]*python[^ ]* -m mlx_vlm server" 2>/dev/null
+pkill -f "^[^ ]*uv run .*uvicorn app:app --host 127.0.0.1 --port 7860" 2>/dev/null
+pkill -f "^[^ ]*python[^ ]* [^ ]*uvicorn app:app --host 127.0.0.1 --port 7860" 2>/dev/null
+pkill -f "^[^ ]*python[^ ]* [^ ]*mflux-generate-qwen" 2>/dev/null
 true

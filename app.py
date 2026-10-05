@@ -110,8 +110,8 @@ def api_system():
 #   text   — mlx-dspark with DFlash 2 (~40 tok/s), text only: it drops image inputs.
 #   vision — mlx-vlm server (images + text, ~24 tok/s), used for chats that contain images.
 ENGINES = {
-    "text": {"pattern": "mlx-dspark serve", "pid": "llm", "url": LLM_URL, "ready": "/health"},
-    "vision": {"pattern": "mlx_vlm server", "pid": "vlm", "url": VLM_URL, "ready": "/v1/models"},
+    "text": {"pattern": r"^[^ ]*python[^ ]* [^ ]*mlx-dspark serve", "pid": "llm", "url": LLM_URL, "ready": "/health"},
+    "vision": {"pattern": r"^[^ ]*python[^ ]* -m mlx_vlm server", "pid": "vlm", "url": VLM_URL, "ready": "/v1/models"},
 }
 engine_lock = threading.Lock()
 
