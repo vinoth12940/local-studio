@@ -15,6 +15,9 @@ locally on MLX; nothing leaves your Mac.
 - **Chat**: streaming replies, collapsible "thinking", effort control, saved conversations with
   search/rename/delete, copy and regenerate, and per-reply performance details (tok/s, speed-up,
   accept length, time to first token, cached tokens).
+- **Attachments (multimodal)**: attach with the paperclip, drag and drop, or paste. Ask about
+  images (Qwen3.8 vision), PDFs, Word (.docx), Excel (.xlsx), and text/code files. Scanned PDFs
+  are read as page images.
 - **Images**: text-to-image with aspect presets, steps, seed, guidance and step caching; live
   progress with ETA and cancel; a library with full-size view, reuse settings, download and delete.
 - **Models & storage**: start/stop the engine, download or delete each model, clear images,
@@ -57,6 +60,25 @@ as isolated uv tools on Python 3.12, and downloads:
 ```
 
 The servers listen on `127.0.0.1` only and are not reachable from other devices.
+
+## How attachments work
+
+Qwen3.8-27B is multimodal, but the fast DFlash engine (mlx-dspark) is text-only. Local Studio
+therefore runs one of two engines on the same weights, never both (each needs ~16 GB):
+
+| Engine | Used for | Speed (measured) |
+|---|---|---|
+| Text: mlx-dspark + DFlash 2 | Chats without images, including document attachments | ~40 tok/s |
+| Vision: mlx-vlm server | Chats that contain an image or scanned PDF | ~20 tok/s, ~10 s to read an image |
+
+The app switches automatically when a chat needs the other engine; a switch takes about 5–10 s and
+the UI says so while it happens.
+
+Documents are converted to text when you attach them (PDF via pypdf, Word via python-docx, Excel via
+openpyxl, text and code as-is) and added to your message. Each document is capped at about 20k
+tokens so the 32k context keeps room for the answer; longer files are marked "truncated". Images are
+downscaled to 1536 px. Scanned PDFs (no text layer) send their first 4 pages to the vision engine.
+Files stay in `uploads/` on this Mac.
 
 ## Performance (M4 Pro, 48 GB)
 
@@ -108,7 +130,7 @@ Environment variables read by `app.py`:
 | Engine calibration | `~/.cache/mlx_dspark` |
 | Images | `gallery/` |
 | Conversations | `data/chats/` |
-| Uploads | `uploads/` |
+| Attachments | `uploads/` |
 | Logs | `logs/` |
 
 None of these folders are committed to git.
