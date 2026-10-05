@@ -7,7 +7,7 @@ accelerated by **DFlash/DSpark** speculative decoding or any **GGUF** model on *
 about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Image Turbo** or
 **FLUX.2 Klein**. Everything runs locally; nothing leaves your Mac.
 
-**Version 1.2.1**
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.2.2**
 
 ![Chat](docs/chat.jpg)
 
@@ -44,7 +44,7 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 
 ### The easy way (recommended)
 
-1. Download **Local-Studio-1.2.1.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+1. Download **Local-Studio-1.2.2.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
 2. Open it and drag **Local Studio** into **Applications**.
 3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
    engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
@@ -257,8 +257,18 @@ uninstall.sh    Removes tools, models and (optionally) this folder
 macos/          Native Mac app: main.swift, logos.py (icon), build.sh, release.sh (DMG)
 ```
 
-## Licenses
+## Contributing
 
-This repository contains only code. Model weights are downloaded from Hugging Face under their
-own licenses; check each model card before commercial use (the Qwen-Image 2.1 weights are
-described as research/non-commercial by several sources).
+Issues and pull requests are welcome. Before opening a pull request, run `macos/build.sh` (it checks
+that the UI script and `app.py` load cleanly) and try the change in the app. New models can be added
+to `catalog.json`.
+
+## License
+
+Local Studio is released under the [MIT License](LICENSE).
+
+It builds on [mlx-dspark](https://github.com/ARahim3/mlx-dspark), [MLX](https://github.com/ml-explore/mlx),
+[mlx-vlm](https://github.com/Blaizzy/mlx-vlm), [mflux](https://github.com/filipstrand/mflux) and
+[llama.cpp](https://github.com/ggml-org/llama.cpp), which are installed separately under their own licenses.
+Model weights are downloaded from Hugging Face under each model's license; check the model card
+before commercial use (some, such as Qwen-Image 2.1, are described as research/non-commercial).

@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -25,7 +26,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.2.2"
 
 ROOT = Path(__file__).resolve().parent                       # code (inside the .app when bundled)
 STATE = Path(os.environ.get("LOCAL_STUDIO_HOME", ROOT))      # user data: images, chats, logs
@@ -1016,9 +1017,9 @@ async def create_image(prompt: str = Form(...), width: int = Form(1024), height:
     im = image_model(model_id or None)
     if mode != "edit" and not model_installed(im):
         raise HTTPException(409, f"{im['name']} isn't downloaded. Get it from the Model library.")
-    seed_val = int(seed) if seed.strip() else int(time.time()) % 2**31
+    seed_val = int(seed) if seed.strip() else secrets.randbelow(2**31)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    fname = f"{stamp}-{seed_val}.png"
+    fname = f"{stamp}-{seed_val}-{uuid.uuid4().hex[:6]}.png"      # unique even for jobs queued together
     meta = {"prompt": prompt, "mode": mode, "width": width, "height": height, "steps": steps,
             "seed": seed_val, "model": im["repo"], "model_name": im["name"], "file": fname, "low_ram": True}
 
