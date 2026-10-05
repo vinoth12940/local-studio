@@ -847,16 +847,23 @@ function renderThread() {
   if (!current || !current.messages.length) {
     scroll.style.display = "none";
     if (!w) { w = document.createElement("div"); w.className = "welcome"; $("v-chat").prepend(w); }
+    const noModel = lib && !lib.chat.some((m) => m.installed);
+    if (noModel) { renderOnboarding(w); return; }
+    w.onclick = null; wrap.style.display = "";
+    if (wrap.parentElement === w && w.querySelector(".starters") && w.querySelector("h1")?.textContent === "What can I help with?") { $("input").placeholder = `Ask ${activeChat()?.name || "anything"}`; renderHistory(); return; }
+    const hadFocus = document.activeElement === $("input");
     w.innerHTML = `<h1>What can I help with?</h1>`;
     w.appendChild(wrap);
+    if (hadFocus) $("input").focus();
     const st = document.createElement("div"); st.className = "starters";
     st.innerHTML = STARTERS.map(([ic, label, q]) => `<button data-q="${esc(q)}">${icon(ic)}${label}</button>`).join("");
     w.appendChild(st);
     st.onclick = (e) => { const b = e.target.closest("button"); if (b) { $("input").value = b.dataset.q; autosize(); send(); } };
-    $("input").placeholder = "Ask anything";
+    $("input").placeholder = `Ask ${activeChat()?.name || "anything"}`;
     showPerf(null); drawSpark();
   } else {
     if (w) { $("v-chat").appendChild(wrap); w.remove(); }
+    wrap.style.display = "";
     scroll.style.display = "";
     $("thread").innerHTML = current.messages.map((m, i) => turnHTML(m, i)).join("");
     $("input").placeholder = `Message ${activeChat()?.name || ""}`;
@@ -864,6 +871,29 @@ function renderThread() {
     showPerf(last?.stats); drawSpark();
   }
   renderHistory();
+}
+// First run: no chat model yet — recommend one that fits this Mac's memory.
+let sysRam = 0;
+function renderOnboarding(w) {
+  $("chatScroll").style.display = "none";
+  const wrap = $("composerWrap"); $("v-chat").appendChild(wrap); wrap.style.display = "none";
+  const gb = sysRam / 2 ** 30;
+  const picks = gb >= 40 ? ["qwen3.8-27b", "gemma-4-12b", "lfm2.5-1.2b"] : gb >= 24 ? ["gemma-4-12b", "qwen3-8b", "lfm2.5-1.2b"]
+    : gb >= 16 ? ["gguf-qwen3.5-9b", "qwen3-8b", "lfm2.5-1.2b"] : ["lfm2.5-1.2b", "gguf-qwen3.5-9b"];
+  const models = picks.map((id) => lib.chat.find((m) => m.id === id)).filter(Boolean);
+  const grid = w.querySelector("#obCards");
+  if (grid) { patchCards(grid, models.map((m, i) => cardHTML({ ...m, blurb: (i === 0 ? "Recommended for this Mac. " : "") + m.blurb })).join(""), models); return; }
+  w.innerHTML = `<div style="max-width:880px;width:100%">
+    <h1 style="margin-bottom:8px">Choose your first model</h1>
+    <p style="text-align:center;color:var(--muted);margin:0 0 26px">Models run entirely on this Mac. Picked for your ${Math.round(gb)} GB of memory — you can add more any time in the Model library.</p>
+    <div class="cards" id="obCards">${models.map((m, i) => cardHTML({ ...m, blurb: (i === 0 ? "Recommended for this Mac. " : "") + m.blurb })).join("")}</div>
+    <p style="text-align:center;margin-top:18px"><button class="btn sm" data-view="library" onclick="showView('library')">Browse all models</button></p></div>`;
+  w.onclick = async (e) => {
+    const b = e.target.closest("button[data-dl],button[data-cancel]"); if (!b) return;
+    try { if (b.dataset.dl) { await jpost("/api/models/download", { id: b.dataset.dl }); toast("Downloading — chat unlocks when it finishes"); } else { await jpost("/api/models/cancel", { id: b.dataset.cancel }); } } catch (err) { toast(err.message); }
+    loadLibrary();
+  };
+
 }
 function perfLine(x) {
   if (!x) return "";
@@ -1147,7 +1177,9 @@ async function loadLibrary() {
   try { lib = await api("/api/models"); } catch { return; }
   renderMenu(); renderImgModels(); updateHeader();
   if (view === "library") renderLibrary();
-  if (!current?.messages?.length) $("input").placeholder = `Ask ${activeChat()?.name || "anything"}`;
+  const noModel = !lib.chat.some((m) => m.installed);
+  if (!current?.messages?.length && view === "chat" && (noModel || loadLibrary._noModel)) renderThread();   // onboarding only
+  loadLibrary._noModel = noModel;
   clearTimeout(loadLibrary._t);
   if ([...lib.chat, ...lib.image].some((m) => m.downloading)) loadLibrary._t = setTimeout(loadLibrary, 3000);
 }
@@ -1158,17 +1190,32 @@ function tagsHTML(m) {
   if (m.custom) t.push(`<span class="tag">Custom</span>`);
   return t.join("");
 }
+const dlText = (m) => `Downloading · ${human(m.size_bytes)} of ~${m.size_gb} GB`;
+const cardSig = (m) => [m.installed, m.downloading, m.active, m.download_error].map(Number).join("");
+// Re-render a card list only when a card's state changes; otherwise just move the progress bars,
+// so buttons under the pointer (Cancel, Use) aren't replaced mid-click during downloads.
+function patchCards(el, html, models) {
+  const cards = el.querySelectorAll("[data-card]");
+  const same = cards.length === models.length && models.every((m, i) => cards[i].dataset.card === m.id && cards[i].dataset.sig === cardSig(m));
+  if (!same) { el.innerHTML = html; return; }
+  models.forEach((m, i) => {
+    if (!m.downloading) return;
+    const bar = cards[i].querySelector("[data-p]"), txt = cards[i].querySelector("[data-pt]");
+    if (bar) bar.style.width = Math.round((m.progress || 0) * 100) + "%";
+    if (txt) txt.textContent = dlText(m);
+  });
+}
 function cardHTML(m) {
   const inst = m.installed, dl = m.downloading;
   const size = inst ? human(m.size_bytes) : `${m.size_gb} GB`;
   let acts;
-  if (dl) acts = `<div style="flex:1"><div class="dlbar"><i style="width:${Math.round((m.progress || 0) * 100)}%"></i></div><div class="sub" style="margin-top:5px">Downloading · ${human(m.size_bytes)} of ~${m.size_gb} GB</div></div><button class="btn sm" data-cancel="${m.id}">Cancel</button>`;
+  if (dl) acts = `<div style="flex:1"><div class="dlbar"><i data-p style="width:${Math.round((m.progress || 0) * 100)}%"></i></div><div class="sub" data-pt style="margin-top:5px">${dlText(m)}</div></div><button class="btn sm" data-cancel="${m.id}">Cancel</button>`;
   else if (!inst) acts = `<button class="btn primary sm" data-dl="${m.id}">${icon("i-dl")}Download · ${m.size_gb} GB</button>${m.download_error ? `<span class="sub" style="color:var(--bad)">Download failed, try again</span>` : ""}<span class="grow"></span>${m.custom ? `<button class="btn sm danger" data-del="${m.id}">Remove</button>` : ""}`;
   else acts = `${m.active ? `<span class="badge ok">${icon("i-check", "width:13px;height:13px")}Active</span>` : `<button class="btn primary sm" data-use="${m.id}" data-kind="${m.kind}">Use</button>`}<span class="grow"></span><button class="btn sm danger" data-del="${m.id}">${icon("i-trash")}Delete</button>`;
   const facts = [`<span>Size <b>${size}</b></span>`];
   if (m.ram_gb) facts.push(`<span>Memory <b>~${m.ram_gb} GB</b></span>`);
   if (m.steps) facts.push(`<span>Default <b>${m.steps} steps</b></span>`);
-  return `<div class="mcard${m.active ? " active" : ""}"><div class="top"><div style="min-width:0"><h4>${esc(m.name)}</h4><div class="repo" title="${esc(m.repo)}">${esc(m.repo)}${m.file ? " · " + esc(m.file.replace(/\.gguf$/, "")) : ""}</div></div><div class="tags">${tagsHTML(m)}</div></div>
+  return `<div class="mcard${m.active ? " active" : ""}" data-card="${m.id}" data-sig="${cardSig(m)}"><div class="top"><div style="min-width:0"><h4>${esc(m.name)}</h4><div class="repo" title="${esc(m.repo)}">${esc(m.repo)}${m.file ? " · " + esc(m.file.replace(/\.gguf$/, "")) : ""}</div></div><div class="tags">${tagsHTML(m)}</div></div>
     <p>${esc(m.blurb || "")}</p><div class="facts">${facts.join("")}</div><div class="acts">${acts}</div></div>`;
 }
 function renderLibrary() {
@@ -1180,8 +1227,10 @@ function renderLibrary() {
   const chat = lib.chat.filter((m) => f === "all" || (f === "installed" ? m.installed : f === "gguf" ? m.backend === "gguf" : m.backend !== "gguf"));
   let html = chat.map(cardHTML).join("");
   if (!lib.llama_cpp && chat.some((m) => m.backend === "gguf")) html = `<div class="empty" style="grid-column:1/-1">llama.cpp isn't installed, so GGUF models can't run yet. Use Settings → Update engines to install it.</div>` + html;
-  $("libChat").innerHTML = html || `<div class="empty">No models match this filter.</div>`;
-  $("libImage").innerHTML = lib.image.map(cardHTML).join("");
+  if (!chat.length) $("libChat").innerHTML = `<div class="empty">No models match this filter.</div>`;
+  else if (!lib.llama_cpp && chat.some((m) => m.backend === "gguf")) $("libChat").innerHTML = html;
+  else patchCards($("libChat"), html, chat);
+  patchCards($("libImage"), lib.image.map(cardHTML).join(""), lib.image);
   $("libOtherWrap").style.display = lib.other.length && libTab !== "search" ? "" : "none";
   $("libOther").innerHTML = lib.other.map((o) => `<div class="row"><div class="grow"><div class="ttl">${esc(o.repo)}</div></div><div class="size">${human(o.size_bytes)}</div><button class="btn sm danger" data-delrepo="${esc(o.repo)}">Delete</button></div>`).join("");
 }
@@ -1311,7 +1360,7 @@ $("unBtn").onclick = async () => {
 
 // ---------------- boot
 (async () => {
-  api("/api/system").then((s) => { $("verBadge").textContent = s.version; });
+  await api("/api/system").then((s) => { $("verBadge").textContent = s.version; sysRam = s.total_bytes; }).catch(() => {});
   await loadLibrary();
   showView("chat");
   renderThread();

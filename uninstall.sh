@@ -4,6 +4,10 @@
 #   ./uninstall.sh --remove-app  also deletes this folder
 #   ./uninstall.sh --yes         no prompt
 APP_DIR="${0:A:h}"
+SUPPORT="$HOME/Library/Application Support/Local Studio"
+STATE="${LOCAL_STUDIO_HOME:-$APP_DIR}"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+UV=$(command -v uv || echo ~/.local/bin/uv)
 YES=0; REMOVE_APP=0
 for a in "$@"; do
   case $a in --yes|-y) YES=1;; --remove-app) REMOVE_APP=1;; esac
@@ -15,19 +19,10 @@ if (( ! YES )); then
 fi
 
 echo "==> Stopping servers"
-"$APP_DIR/stop.sh" >/dev/null 2>&1
-
-echo "==> Uninstalling tools"
-UV=$(command -v uv || echo ~/.local/bin/uv)
-$UV tool uninstall mlx-dspark 2>/dev/null
-$UV tool uninstall mflux 2>/dev/null
-if command -v brew >/dev/null && brew list llama.cpp >/dev/null 2>&1; then
-  echo "==> Uninstalling llama.cpp"
-  brew uninstall llama.cpp >/dev/null 2>&1
-fi
+LOCAL_STUDIO_HOME="$STATE" "$APP_DIR/stop.sh" >/dev/null 2>&1
 
 echo "==> Deleting models"
-APP_DIR="$APP_DIR" python3 - <<'PY'
+APP_DIR="$APP_DIR" STATE="$STATE" "$UV" run --no-project --python 3.12 python - <<'PY'
 import json, os, shutil
 from pathlib import Path
 app = Path(os.environ["APP_DIR"])
@@ -39,7 +34,7 @@ try:
 except Exception:
     entries = []
 try:
-    entries += json.loads((app / "data/settings.json").read_text()).get("custom", [])
+    entries += json.loads((Path(os.environ["STATE"]) / "data/settings.json").read_text()).get("custom", [])
 except Exception:
     pass
 for m in entries:
@@ -68,14 +63,23 @@ for d in targets:
     print("   removed", d.name)
 print(f"   freed {freed / 2**30:.1f} GB")
 PY
-rm -rf ~/.cache/mlx_dspark
+echo "==> Uninstalling tools"
+$UV tool uninstall mlx-dspark 2>/dev/null
+$UV tool uninstall mflux 2>/dev/null
+if command -v brew >/dev/null && brew list llama.cpp >/dev/null 2>&1; then
+  echo "==> Uninstalling llama.cpp"
+  brew uninstall llama.cpp >/dev/null 2>&1
+fi
+
+rm -rf ~/.cache/mlx_dspark "$SUPPORT/llama.cpp"
 if [[ -d "/Applications/Local Studio.app" ]]; then
   echo "==> Removing /Applications/Local Studio.app"
   rm -rf "/Applications/Local Studio.app"
 fi
 
 if (( REMOVE_APP )); then
-  echo "==> Deleting $APP_DIR"
-  rm -rf "$APP_DIR"
+  echo "==> Deleting your images, chats and settings"
+  rm -rf "$SUPPORT"
+  [[ "$APP_DIR" != *".app/Contents/"* && -f "$APP_DIR/app.py" ]] && rm -rf "$APP_DIR"
 fi
 echo "Uninstall complete."

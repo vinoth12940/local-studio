@@ -1,6 +1,7 @@
 // Local Studio — native macOS shell for the local web app.
-// Starts the servers (start.sh) on launch, shows the UI in a WKWebView, and stops
-// everything (stop.sh) on quit unless "Keep Running After Quit" is checked.
+// The app bundle carries the code (Resources/app). On launch it checks the Mac and, on first
+// run, shows a setup screen that installs the engines. Then it starts the servers, shows the
+// UI in a WKWebView, and stops everything on quit unless "Keep Running After Quit" is on.
 
 import Cocoa
 import WebKit
@@ -8,34 +9,73 @@ import WebKit
 let uiURL = URL(string: "http://127.0.0.1:7860/")!
 let probeURL = URL(string: "http://127.0.0.1:7860/api/system")!
 let keepRunningKey = "KeepRunningAfterQuit"
+let supportDir = NSHomeDirectory() + "/Library/Application Support/Local Studio"
 
-/// Folder holding start.sh / stop.sh. Set at build time in Info.plist (LSAppRoot);
-/// falls back to ~/local-studio.
-func appRoot() -> String {
+/// Bundled code (Resources/app) when present; otherwise the dev checkout recorded at build time.
+var bundled: Bool { FileManager.default.fileExists(atPath: (Bundle.main.resourcePath ?? "") + "/app/start.sh") }
+func codeDir() -> String {
+    if bundled { return Bundle.main.resourcePath! + "/app" }
     if let p = Bundle.main.object(forInfoDictionaryKey: "LSAppRoot") as? String,
        FileManager.default.fileExists(atPath: p + "/start.sh") { return p }
     return NSHomeDirectory() + "/local-studio"
 }
+func stateDir() -> String { bundled ? supportDir : codeDir() }
 
-@discardableResult
-func runScript(_ name: String, args: [String] = [], wait: Bool = false) -> Int32 {
-    let task = Process()
-    task.executableURL = URL(fileURLWithPath: "/bin/zsh")
-    task.arguments = [appRoot() + "/" + name] + args
-    task.currentDirectoryURL = URL(fileURLWithPath: appRoot())
+func scriptEnv() -> [String: String] {
     var env = ProcessInfo.processInfo.environment
     env["PATH"] = NSHomeDirectory() + "/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-    task.environment = env
-    task.standardOutput = FileHandle.nullDevice
-    task.standardError = FileHandle.nullDevice
-    do { try task.run() } catch { return -1 }
+    env["LOCAL_STUDIO_HOME"] = stateDir()
+    env["UV_NO_MODIFY_PATH"] = "1"
+    return env
+}
+
+/// Runs a bundled script. `onLine` receives stdout/stderr lines as they arrive.
+@discardableResult
+func runScript(_ name: String, args: [String] = [], wait: Bool = false,
+               onLine: ((String) -> Void)? = nil, onExit: ((Int32) -> Void)? = nil) -> Int32 {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+    task.arguments = [codeDir() + "/" + name] + args
+    task.currentDirectoryURL = URL(fileURLWithPath: codeDir())
+    task.environment = scriptEnv()
+    if let onLine = onLine {
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        var buffer = Data()
+        pipe.fileHandleForReading.readabilityHandler = { h in
+            let chunk = h.availableData
+            if chunk.isEmpty { return }
+            buffer.append(chunk)
+            while let nl = buffer.firstIndex(of: 0x0A) {
+                let line = String(decoding: buffer[buffer.startIndex..<nl], as: UTF8.self)
+                buffer.removeSubrange(buffer.startIndex...nl)
+                onLine(line)
+            }
+        }
+    } else {
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+    }
+    task.terminationHandler = { t in onExit?(t.terminationStatus) }
+    do { try task.run() } catch { onExit?(-1); return -1 }
     if wait { task.waitUntilExit(); return task.terminationStatus }
     return 0
 }
 
+func label(_ s: String, size: CGFloat = 13, weight: NSFont.Weight = .regular, color: NSColor = .labelColor) -> NSTextField {
+    let l = NSTextField(wrappingLabelWithString: s)
+    l.font = .systemFont(ofSize: size, weight: weight)
+    l.textColor = color
+    l.isSelectable = false
+    return l
+}
+
+// MARK: - Loading screen
+
 final class LoadingView: NSView {
-    let label = NSTextField(labelWithString: "Starting Local Studio…")
-    let detail = NSTextField(labelWithString: "Loading the engine and interface")
+    let title = label("Starting Local Studio…", size: 17, weight: .semibold)
+    let detail = label("Loading the engine and interface", color: .secondaryLabelColor)
     let spinner = NSProgressIndicator()
 
     override init(frame: NSRect) {
@@ -43,36 +83,116 @@ final class LoadingView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         spinner.style = .spinning
-        spinner.controlSize = .regular
         spinner.startAnimation(nil)
-        label.font = .systemFont(ofSize: 17, weight: .semibold)
-        detail.font = .systemFont(ofSize: 13)
-        detail.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [spinner, label, detail])
-        stack.orientation = .vertical
-        stack.spacing = 10
+        title.alignment = .center; detail.alignment = .center
+        let stack = NSStackView(views: [spinner, title, detail])
+        stack.orientation = .vertical; stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualToConstant: 520),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
     func fail(_ message: String) {
-        spinner.stopAnimation(nil)
-        spinner.isHidden = true
-        label.stringValue = "Local Studio couldn't start"
+        spinner.stopAnimation(nil); spinner.isHidden = true
+        title.stringValue = "Local Studio couldn't start"
         detail.stringValue = message
     }
 }
+
+// MARK: - First-run setup screen
+
+final class SetupView: NSView {
+    let checks = NSStackView()
+    let progress = NSProgressIndicator()
+    let status = label("", weight: .medium)
+    let logLine = label("", size: 11.5, color: .secondaryLabelColor)
+    let primary = NSButton(title: "Install", target: nil, action: nil)
+    let secondary = NSButton(title: "Quit", target: nil, action: nil)
+    let headline = label("Welcome to Local Studio", size: 24, weight: .semibold)
+    let subtitle = label("Private AI chat and image generation that runs entirely on your Mac. "
+                         + "Setup installs the engines (about 3 GB, a few minutes). You'll pick models to download next.",
+                         size: 13.5, color: .secondaryLabelColor)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        let icon = NSImageView(image: NSApp.applicationIconImage ?? NSImage())
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 96).isActive = true
+
+        checks.orientation = .vertical; checks.alignment = .leading; checks.spacing = 8
+        let box = NSBox(); box.titlePosition = .noTitle; box.contentViewMargins = NSSize(width: 16, height: 14)
+        box.contentView = checks; box.boxType = .custom; box.cornerRadius = 12
+        box.borderColor = .separatorColor; box.fillColor = .controlBackgroundColor
+        box.translatesAutoresizingMaskIntoConstraints = false
+
+        progress.isIndeterminate = false; progress.minValue = 0; progress.maxValue = 1
+        progress.isHidden = true
+        logLine.lineBreakMode = .byTruncatingTail; logLine.maximumNumberOfLines = 1
+        primary.bezelStyle = .rounded; primary.keyEquivalent = "\r"; primary.controlSize = .large
+        secondary.bezelStyle = .rounded; secondary.controlSize = .large
+        let buttons = NSStackView(views: [secondary, primary]); buttons.spacing = 10
+
+        let stack = NSStackView(views: [icon, headline, subtitle, box, progress, status, logLine, buttons])
+        stack.orientation = .vertical; stack.alignment = .centerX; stack.spacing = 14
+        stack.setCustomSpacing(18, after: icon); stack.setCustomSpacing(22, after: subtitle)
+        stack.setCustomSpacing(22, after: logLine)
+        headline.alignment = .center; subtitle.alignment = .center; status.alignment = .center; logLine.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.widthAnchor.constraint(equalToConstant: 460),
+            box.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            progress.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            logLine.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// One row per `@check <state> <name> <detail>` line.
+    func setChecks(_ lines: [String]) {
+        checks.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for line in lines {
+            let parts = line.split(separator: " ", maxSplits: 3).map(String.init)
+            guard parts.count >= 3 else { continue }
+            let state = parts[1], name = parts[2], detail = parts.count > 3 ? parts[3] : ""
+            let symbol: String, tint: NSColor
+            switch state {
+            case "ok": symbol = "checkmark.circle.fill"; tint = .systemGreen
+            case "warn": symbol = "exclamationmark.triangle.fill"; tint = .systemOrange
+            case "fail": symbol = "xmark.octagon.fill"; tint = .systemRed
+            default: symbol = "arrow.down.circle"; tint = .secondaryLabelColor
+            }
+            let img = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: state) ?? NSImage())
+            img.contentTintColor = tint
+            let n = label(name, weight: .medium)
+            let d = label(state == "missing" ? "\(detail) · will be installed" : detail, color: .secondaryLabelColor)
+            let row = NSStackView(views: [img, n, d]); row.spacing = 8
+            checks.addArrangedSubview(row)
+        }
+    }
+}
+
+// MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate, WKDownloadDelegate {
     var window: NSWindow!
     var webView: WKWebView!
     var loading: LoadingView!
+    var setup: SetupView!
     var keepItem: NSMenuItem!
+    var setupLog: FileHandle?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         buildMenu()
@@ -81,42 +201,116 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         webView = WKWebView(frame: .zero, configuration: config)
         webView.uiDelegate = self
         webView.navigationDelegate = self
-        webView.allowsBackForwardNavigationGestures = false
         webView.setValue(false, forKey: "drawsBackground")
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1360, height: 880),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.title = "Local Studio"
-        window.minSize = NSSize(width: 760, height: 520)
+        window.minSize = NSSize(width: 760, height: 560)
         window.center()
         window.setFrameAutosaveName("LocalStudioMain")
         window.isReleasedWhenClosed = false
         loading = LoadingView(frame: window.contentView!.bounds)
+        setup = SetupView(frame: window.contentView!.bounds)
+        setup.primary.target = self; setup.primary.action = #selector(runInstall)
+        setup.secondary.target = self; setup.secondary.action = #selector(quitOrCancel)
+        loading.detail.stringValue = "Checking this Mac"
         window.contentView = loading
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-
-        startServersAndLoad()
+        checkThenStart()
     }
 
-    func startServersAndLoad() {
-        guard FileManager.default.fileExists(atPath: appRoot() + "/start.sh") else {
-            loading.fail("start.sh not found in \(appRoot()). Reinstall from the repository.")
+    // MARK: setup flow
+
+    func checkThenStart(forceSetup: Bool = false) {
+        guard FileManager.default.fileExists(atPath: codeDir() + "/setup.sh") else {
+            loading.fail("The app is incomplete (setup.sh missing). Please reinstall Local Studio.")
             return
         }
+        var lines: [String] = []
+        runScript("setup.sh", args: ["--check"], onLine: { l in if l.hasPrefix("@check") { lines.append(l) } },
+                  onExit: { code in
+            DispatchQueue.main.async {
+                if code == 0 && !forceSetup {
+                    runScript("setup.sh", args: ["--migrate"], wait: true)
+                    self.startServersAndLoad(); return
+                }
+                self.setup.setChecks(lines)
+                if code == 2 {
+                    self.setup.headline.stringValue = "This Mac isn't supported"
+                    self.setup.subtitle.stringValue = "Local Studio needs a Mac with Apple Silicon (M1 or newer) and macOS 14 or later."
+                    self.setup.primary.isHidden = true
+                } else if code == 0 {
+                    self.setup.headline.stringValue = "Everything is installed"
+                    self.setup.subtitle.stringValue = "Reinstall the engines to repair or update them."
+                    self.setup.primary.title = "Reinstall"
+                }
+                self.window.contentView = self.setup
+            }
+        })
+    }
+
+    @objc func runInstall() {
+        setup.primary.isEnabled = false
+        setup.secondary.title = "Cancel"
+        setup.progress.isHidden = false
+        setup.progress.doubleValue = 0.02
+        setup.status.stringValue = "Starting…"
+        try? FileManager.default.createDirectory(atPath: stateDir() + "/logs", withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: stateDir() + "/logs/setup.log", contents: nil)
+        setupLog = FileHandle(forWritingAtPath: stateDir() + "/logs/setup.log")
+        var failed: String?
+        runScript("setup.sh", args: ["--install"], onLine: { line in
+            self.setupLog?.write((line + "\n").data(using: .utf8)!)
+            DispatchQueue.main.async {
+                if line.hasPrefix("@step ") {
+                    let p = line.split(separator: " ", maxSplits: 3).map(String.init)
+                    if p.count == 4, let n = Double(p[1]), let t = Double(p[2]) {
+                        self.setup.progress.doubleValue = (n - 1) / t + 0.02
+                        self.setup.status.stringValue = "Step \(Int(n)) of \(Int(t)) · \(p[3])"
+                    }
+                } else if line.hasPrefix("@log ") {
+                    self.setup.logLine.stringValue = String(line.dropFirst(5))
+                } else if line.hasPrefix("@error ") {
+                    failed = String(line.dropFirst(7))
+                }
+            }
+        }, onExit: { code in
+            DispatchQueue.main.async {
+                try? self.setupLog?.close()
+                if code == 0 && failed == nil {
+                    self.setup.progress.doubleValue = 1
+                    self.setup.status.stringValue = "All set"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.startServersAndLoad() }
+                } else {
+                    self.setup.status.stringValue = "Setup didn't finish: \(failed ?? "exit code \(code)")"
+                    self.setup.logLine.stringValue = "Details: \(stateDir())/logs/setup.log"
+                    self.setup.primary.title = "Try Again"
+                    self.setup.primary.isEnabled = true
+                    self.setup.secondary.title = "Quit"
+                }
+            }
+        })
+    }
+
+    @objc func quitOrCancel() { NSApp.terminate(nil) }
+
+    func startServersAndLoad() {
+        loading.title.stringValue = "Starting Local Studio…"
+        loading.detail.stringValue = "Loading the engine and interface"
+        loading.spinner.isHidden = false; loading.spinner.startAnimation(nil)
+        window.contentView = loading
         DispatchQueue.global().async {
             if !self.uiIsUp() { runScript("start.sh") }
-            let deadline = Date().addingTimeInterval(120)
+            let deadline = Date().addingTimeInterval(180)
             while Date() < deadline {
-                if self.uiIsUp() {
-                    DispatchQueue.main.async { self.showUI() }
-                    return
-                }
+                if self.uiIsUp() { DispatchQueue.main.async { self.showUI() }; return }
                 Thread.sleep(forTimeInterval: 0.5)
             }
             DispatchQueue.main.async {
-                self.loading.fail("The interface didn't respond. See \(appRoot())/logs/ui.log")
+                self.loading.fail("The interface didn't respond. See \(stateDir())/logs/ui.log")
             }
         }
     }
@@ -139,7 +333,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         window.contentView = webView
     }
 
-    // Close button hides the window; the app keeps running until ⌘Q.
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if !hasVisibleWindows { window.makeKeyAndOrderFront(nil) }
@@ -147,8 +340,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if UserDefaults.standard.bool(forKey: keepRunningKey) { return .terminateNow }
-        loading.label.stringValue = "Stopping Local Studio…"
+        if UserDefaults.standard.bool(forKey: keepRunningKey) || window.contentView === setup { return .terminateNow }
+        loading.title.stringValue = "Stopping Local Studio…"
         loading.detail.stringValue = "Freeing memory used by the models"
         window.contentView = loading
         DispatchQueue.global().async {
@@ -170,7 +363,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         keepItem.target = self
         keepItem.state = UserDefaults.standard.bool(forKey: keepRunningKey) ? .on : .off
         app.addItem(keepItem)
-        let folder = NSMenuItem(title: "Show App Folder", action: #selector(showFolder), keyEquivalent: "")
+        let repair = NSMenuItem(title: "Repair or Update Engines…", action: #selector(showSetup), keyEquivalent: "")
+        repair.target = self
+        app.addItem(repair)
+        let folder = NSMenuItem(title: "Show Data Folder", action: #selector(showFolder), keyEquivalent: "")
         folder.target = self
         app.addItem(folder)
         app.addItem(.separator())
@@ -195,8 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
         let viewItem = NSMenuItem(); main.addItem(viewItem)
         let view = NSMenu(title: "View")
-        let reload = NSMenuItem(title: "Reload", action: #selector(reloadPage), keyEquivalent: "r")
-        reload.target = self
+        let reload = NSMenuItem(title: "Reload", action: #selector(reloadPage), keyEquivalent: "r"); reload.target = self
         view.addItem(reload)
         let zin = NSMenuItem(title: "Zoom In", action: #selector(zoomIn), keyEquivalent: "+"); zin.target = self
         let zout = NSMenuItem(title: "Zoom Out", action: #selector(zoomOut), keyEquivalent: "-"); zout.target = self
@@ -223,8 +418,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         UserDefaults.standard.set(v, forKey: keepRunningKey)
         keepItem.state = v ? .on : .off
     }
-    @objc func showFolder() { NSWorkspace.shared.open(URL(fileURLWithPath: appRoot())) }
-    @objc func reloadPage() { if window.contentView === webView { webView.reload() } else { startServersAndLoad() } }
+    @objc func showSetup() {
+        setup.primary.isEnabled = true; setup.primary.isHidden = false; setup.primary.title = "Install"
+        setup.secondary.title = "Quit"; setup.progress.isHidden = true; setup.status.stringValue = ""; setup.logLine.stringValue = ""
+        checkThenStart(forceSetup: true)
+    }
+    @objc func showFolder() {
+        try? FileManager.default.createDirectory(atPath: stateDir(), withIntermediateDirectories: true)
+        NSWorkspace.shared.open(URL(fileURLWithPath: stateDir()))
+    }
+    @objc func reloadPage() { if window.contentView === webView { webView.reload() } else { checkThenStart() } }
     @objc func zoomIn() { webView.pageZoom = min(webView.pageZoom + 0.1, 2.0) }
     @objc func zoomOut() { webView.pageZoom = max(webView.pageZoom - 0.1, 0.6) }
     @objc func zoomReset() { webView.pageZoom = 1.0 }
@@ -232,7 +435,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // MARK: web view
 
-    // <input type=file> → native open panel (attachments)
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
         let panel = NSOpenPanel()
@@ -241,14 +443,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         panel.beginSheetModal(for: window) { r in completionHandler(r == .OK ? panel.urls : nil) }
     }
 
-    // window.open / target=_blank → open full-size images in a viewer window of the default browser
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = action.request.url { NSWorkspace.shared.open(url) }
         return nil
     }
 
-    // Keep the app on localhost; anything external opens in the default browser.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if action.shouldPerformDownload { decisionHandler(.download); return }
@@ -267,7 +467,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         download.delegate = self
     }
 
-    // <a download> → save to ~/Downloads
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                   suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
         let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
@@ -285,7 +484,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         if let url = download.progress.fileURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
 
-    // If the UI server goes away (e.g. after Uninstall), show the loading screen with a hint.
     func webView(_ webView: WKWebView, didFailProvisionalNavigation nav: WKNavigation!, withError error: Error) {
         window.contentView = loading
         loading.fail("Lost connection to the local server. Use View → Reload to restart it.")

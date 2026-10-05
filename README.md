@@ -7,7 +7,7 @@ accelerated by **DFlash/DSpark** speculative decoding or any **GGUF** model on *
 about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Image Turbo** or
 **FLUX.2 Klein**. Everything runs locally; nothing leaves your Mac.
 
-**Version 1.1.0**
+**Version 1.2.0**
 
 ![Chat](docs/chat.jpg)
 
@@ -42,46 +42,69 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 
 ## Install
 
+### The easy way (recommended)
+
+1. Download **Local-Studio-1.2.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+2. Open it and drag **Local Studio** into **Applications**.
+3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
+   engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
+   or Xcode needed).
+4. Pick your first model. Local Studio recommends models that fit your Mac's memory, and chat
+   unlocks when the download finishes.
+
+Requirements: Apple Silicon (M1 or newer), macOS 14+, 16 GB RAM or more (32 GB+ for the larger
+models), and disk space for the models you choose (3–25 GB each).
+
+> If the DMG isn't notarized (see "Building a release" below), macOS blocks it on first open.
+> Go to **System Settings → Privacy & Security → Open Anyway**, then open it again.
+
+### From source (developers)
+
 ```sh
 git clone https://github.com/vinoth12940/local-studio.git ~/local-studio
 cd ~/local-studio
-./install.sh            # tools + ~27 GB of models
-# or: ./install.sh --no-models   (then download models from Models & storage)
+./setup.sh --install        # engines only; or ./install.sh for engines + default models
+./start.sh                  # then open http://127.0.0.1:7860
 ```
 
-`install.sh` installs [uv](https://docs.astral.sh/uv/) if missing, then installs
-[mlx-dspark](https://github.com/ARahim3/mlx-dspark) and [mflux](https://github.com/filipstrand/mflux)
-as isolated uv tools on Python 3.12, and downloads:
-
-| Model | Role | Size |
-|---|---|---|
-| `mlx-community/Qwen3.8-27B-4bit` | Chat model | 15.0 GB |
-| `incoai/Qwen3.8-27B-DFlash2` | DFlash 2 drafter | 3.6 GB |
-| `mlx-community/Qwen-Image-2.1-mflux-q4` | Image model | 8.9 GB |
+When run from a checkout, user data stays in the checkout folder. The Mac app keeps it in
+`~/Library/Application Support/Local Studio` and, on its first launch, copies existing images,
+chats and settings over from `~/local-studio`.
 
 ## Mac app
 
-Build a native **Local Studio.app** (Dock icon, own window, Mac menus) and install it to
-/Applications:
+`Local Studio.app` is self-contained: the code ships inside the app bundle
+(`Contents/Resources/app`) and user data lives in `~/Library/Application Support/Local Studio`.
+
+- Opening the app checks that the engines are installed (and offers to install them), then starts
+  the engine and interface automatically.
+- Quitting (⌘Q) stops everything and frees the model's memory. Check
+  **Local Studio → Keep Running After Quit** to keep the servers running in the background.
+- **Local Studio → Repair or Update Engines…** re-runs the installer.
+- **Local Studio → Show Data Folder** opens your images, chats and logs.
+- Closing the window keeps the app in the Dock; click the icon to bring it back.
+
+### Building a release
 
 ```sh
-macos/build.sh --install
+macos/build.sh --install   # build Local Studio.app and copy it to /Applications
+macos/release.sh           # build the app and build/Local-Studio-<version>.dmg
 ```
 
-- Opening the app starts the engine and interface automatically; there's nothing else to run.
-- Quitting (⌘Q) stops everything and frees the ~16 GB the model uses. To keep the servers running
-  in the background instead, check **Local Studio → Keep Running After Quit**.
-- Closing the window keeps the app in the Dock; click the icon to bring it back.
-- Attachments open a native file picker, downloads go to ~/Downloads, and links open in your browser.
-- The app is a thin Swift/WebKit shell (`macos/main.swift`) around the same local web UI, so the
-  browser at http://127.0.0.1:7860 keeps working too. It is signed with your Apple Development
-  certificate if one is installed (ad-hoc otherwise), and it looks for the scripts in the folder it
-  was built from.
+The app is signed with a **Developer ID Application** certificate when one is installed (otherwise
+your Apple Development certificate, which only works on your own Macs). To ship a DMG that opens on
+any Mac without warnings:
+
+1. In your Apple Developer account, create a **Developer ID Application** certificate
+   (Certificates → +) and install it in Keychain.
+2. Create an app-specific password at appleid.apple.com, then store notarization credentials once:
+   `xcrun notarytool store-credentials notary --apple-id YOU@icloud.com --team-id YOURTEAMID`
+3. Run `macos/release.sh`. It signs, notarizes and staples the DMG automatically.
 
 ## Use
 
 ```sh
-./start.sh          # engine + UI, then open http://127.0.0.1:7860
+./start.sh          # engine + UI (from a source checkout), then open http://127.0.0.1:7860
 ./start.sh --ui     # UI only; start the engine later from the UI to save memory
 ./stop.sh           # stop everything and free memory
 ```
@@ -197,14 +220,16 @@ The active chat and image models and any models added from Hugging Face are stor
 | What | Location |
 |---|---|
 | Models (MLX and GGUF) | `~/.cache/huggingface/hub` |
-| Active models, custom models | `data/settings.json` |
+| Active models, custom models | `<data>/data/settings.json` |
+| llama.cpp (when installed without Homebrew) | `~/Library/Application Support/Local Studio/llama.cpp` |
 | Engine calibration | `~/.cache/mlx_dspark` |
-| Images | `gallery/` |
-| Conversations | `data/chats/` |
+| Images | `<data>/gallery/` |
+| Conversations | `<data>/data/chats/` |
 | Attachments | `uploads/` |
 | Logs | `logs/` |
 
-None of these folders are committed to git.
+`<data>` is `~/Library/Application Support/Local Studio` for the Mac app, or the checkout folder
+when running from source. None of these folders are committed to git.
 
 ## Uninstall
 
@@ -224,11 +249,12 @@ or added from Hugging Face, removes `~/.cache/mlx_dspark`, and deletes `/Applica
 app.py          FastAPI backend: engines, chat proxy, attachments, image jobs, models, updates
 catalog.json    Curated chat and image models
 index.html      Single-page UI
-install.sh      Installs tools and models
+setup.sh        Checks the Mac and installs the engines (used by the app's first-run screen)
+install.sh      Engines + default models, for source checkouts
 start.sh        Starts engine and UI
 stop.sh         Stops everything
 uninstall.sh    Removes tools, models and (optionally) this folder
-macos/          Native Mac app: main.swift, logos.py (icon), build.sh
+macos/          Native Mac app: main.swift, logos.py (icon), build.sh, release.sh (DMG)
 ```
 
 ## Licenses

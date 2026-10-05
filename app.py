@@ -25,13 +25,14 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
-ROOT = Path(__file__).resolve().parent
-GALLERY = ROOT / "gallery"
-UPLOADS = ROOT / "uploads"
-LOGS = ROOT / "logs"
-DATA = ROOT / "data"
+ROOT = Path(__file__).resolve().parent                       # code (inside the .app when bundled)
+STATE = Path(os.environ.get("LOCAL_STUDIO_HOME", ROOT))      # user data: images, chats, logs
+GALLERY = STATE / "gallery"
+UPLOADS = STATE / "uploads"
+LOGS = STATE / "logs"
+DATA = STATE / "data"
 CHATS = DATA / "chats"
 SETTINGS = DATA / "settings.json"
 for d in (GALLERY, UPLOADS, LOGS, CHATS):
@@ -43,7 +44,10 @@ UV = shutil.which("uv") or str(BIN / "uv")
 HF_HUB = Path(os.environ.get("HF_HUB_CACHE", HOME / ".cache/huggingface/hub"))
 HF_CLI = HOME / ".local/share/uv/tools/mlx-dspark/bin/hf"
 DSPARK_PY = HOME / ".local/share/uv/tools/mlx-dspark/bin/python"   # its env also ships mlx-vlm
-LLAMA_SERVER = shutil.which("llama-server") or "/opt/homebrew/bin/llama-server"
+APP_SUPPORT = HOME / "Library/Application Support/Local Studio"
+LLAMA_SERVER = next((p for p in (shutil.which("llama-server"), "/opt/homebrew/bin/llama-server",
+                                 str(APP_SUPPORT / "llama.cpp/llama-server")) if p and Path(p).exists()),
+                    "/opt/homebrew/bin/llama-server")
 BREW = shutil.which("brew") or "/opt/homebrew/bin/brew"
 CONTEXT = 32768
 # mflux editing needs a complete checkpoint; the q4 export used here is text-to-image only.
@@ -214,7 +218,7 @@ def model_bytes(m):
 downloads: dict[str, dict] = {}
 
 
-def _download(mid, parts):
+def _download(mid, parts, kind=None):
     job = downloads[mid]
     log = open(LOGS / f"download-{mid}.log", "w")
     for repo, files in parts:
@@ -229,6 +233,13 @@ def _download(mid, parts):
             job.update(status="error", returncode=rc)
             return
     job.update(status="done", finished=time.time())
+    # First model of its kind on this Mac: make it the active one automatically.
+    s = load_settings()
+    key = "image_model" if kind == "image" else "chat_model"
+    current = image_model(s[key]) if kind == "image" else chat_model(s[key])
+    if not model_installed(current) or current["id"] == mid:
+        s[key] = mid
+        save_settings(s)
 
 
 def start_download(m):
@@ -236,7 +247,8 @@ def start_download(m):
     if downloads.get(mid, {}).get("status") == "running":
         return downloads[mid]
     downloads[mid] = {"id": mid, "status": "running", "started": time.time()}
-    threading.Thread(target=_download, args=(mid, model_parts(m)), daemon=True).start()
+    kind = "image" if any(i["id"] == mid for i in CATALOG["image"]) else "chat"
+    threading.Thread(target=_download, args=(mid, model_parts(m), kind), daemon=True).start()
     return downloads[mid]
 
 
@@ -244,10 +256,11 @@ def _row(m, kind, active_id, running):
     dl = downloads.get(m["id"], {})
     size = model_bytes(m)
     expected = int((m.get("size_gb") or 0) * 1e9)
-    row = {**m, "kind": kind, "installed": model_installed(m), "size_bytes": size, "expected_bytes": expected,
+    inst = model_installed(m)
+    row = {**m, "kind": kind, "installed": inst, "size_bytes": size, "expected_bytes": expected,
            "downloading": dl.get("status") == "running", "download_error": dl.get("status") == "error",
            "progress": min(0.99, size / expected) if dl.get("status") == "running" and expected else None,
-           "active": m["id"] == active_id}
+           "active": m["id"] == active_id and inst}
     if kind == "chat":
         row["running"] = running
     return row
@@ -1114,8 +1127,10 @@ async def versions():
 def _run_update():
     log = open(LOGS / "update.log", "w")
     steps = [[UV, "tool", "upgrade", "mlx-dspark"], [UV, "tool", "upgrade", "mflux"]]
-    if Path(BREW).exists():
+    if Path(BREW).exists() and not LLAMA_SERVER.startswith(str(APP_SUPPORT)):
         steps.append([BREW, "upgrade", "llama.cpp"] if Path(LLAMA_SERVER).exists() else [BREW, "install", "llama.cpp"])
+    else:                                             # no Homebrew: refresh the app-managed build
+        steps.append(["/bin/zsh", str(ROOT / "setup.sh"), "--llama"])
     before = _versions()
     for cmd in steps:
         update_job["step"] = " ".join(Path(c).name if i == 0 else c for i, c in enumerate(cmd))
@@ -1151,7 +1166,8 @@ def storage():
         "logs": {"bytes": dir_size(LOGS), "count": len(list(LOGS.glob("*.log")))},
         "engine_cache": {"bytes": dir_size(engine_cache) if engine_cache.exists() else 0},
         "disk_free_bytes": shutil.disk_usage(HOME).free,
-        "root": str(ROOT),
+        "root": str(STATE),
+        "bundled": STATE != ROOT,
     }
 
 
@@ -1179,7 +1195,7 @@ def clear_storage(what: str = Body(..., embed=True)):
 @app.post("/api/uninstall")
 def uninstall(remove_app: bool = Body(False, embed=True)):
     log = HOME / "local-studio-uninstall.log"
-    args = [str(ROOT / "uninstall.sh"), "--yes"] + (["--remove-app"] if remove_app else [])
+    args = ["/bin/zsh", str(ROOT / "uninstall.sh"), "--yes"] + (["--remove-app"] if remove_app else [])
     subprocess.Popen(args, stdout=open(log, "w"), stderr=subprocess.STDOUT, start_new_session=True)
     return {"ok": True, "log": str(log)}
 
