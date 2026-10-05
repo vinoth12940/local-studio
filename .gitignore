@@ -1,0 +1,14 @@
+# user data — never commit
+gallery/
+uploads/
+logs/
+data/
+*.log
+*.pid
+# python
+__pycache__/
+*.pyc
+.venv/
+# macOS
+.DS_Store
+.claude/
