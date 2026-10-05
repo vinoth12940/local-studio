@@ -32,7 +32,7 @@ locally on MLX; nothing leaves your Mac.
 ## Install
 
 ```sh
-git clone git@github.com:vinoth12940/local-studio.git ~/local-studio
+git clone https://github.com/vinoth12940/local-studio.git ~/local-studio
 cd ~/local-studio
 ./install.sh            # tools + ~27 GB of models
 # or: ./install.sh --no-models   (then download models from Models & storage)
