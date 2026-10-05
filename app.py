@@ -1,11 +1,14 @@
-"""Local Studio: a local web app for Qwen3.8 chat (mlx-dspark) and Qwen-Image 2.1 (mflux).
+"""Local Studio: a local web app for on-device chat and image generation on Apple Silicon.
 
-Chat is proxied to the mlx-dspark server; image jobs run the mflux CLI one at a time and
-record steps, wall time and peak memory. Also manages the engine process, the downloaded
-models, local storage and uninstalling.
+Chat runs on one of three engines (only one at a time, to keep memory free):
+  text   — mlx-dspark: MLX models with DFlash/DSpark speculative decoding (text only)
+  vision — mlx-vlm server: the same MLX weights when a chat contains images
+  gguf   — llama.cpp's llama-server: GGUF models (vision when an mmproj file is present)
+Image jobs run the mflux CLI one at a time. Also manages models, storage, updates and uninstall.
 """
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -22,34 +25,31 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+APP_VERSION = "1.1.0"
+
 ROOT = Path(__file__).resolve().parent
 GALLERY = ROOT / "gallery"
 UPLOADS = ROOT / "uploads"
 LOGS = ROOT / "logs"
-CHATS = ROOT / "data" / "chats"
+DATA = ROOT / "data"
+CHATS = DATA / "chats"
+SETTINGS = DATA / "settings.json"
 for d in (GALLERY, UPLOADS, LOGS, CHATS):
     d.mkdir(parents=True, exist_ok=True)
 
 HOME = Path.home()
 BIN = HOME / ".local/bin"
+UV = shutil.which("uv") or str(BIN / "uv")
 HF_HUB = Path(os.environ.get("HF_HUB_CACHE", HOME / ".cache/huggingface/hub"))
 HF_CLI = HOME / ".local/share/uv/tools/mlx-dspark/bin/hf"
-
-LLM_URL = os.environ.get("LLM_URL", "http://127.0.0.1:8080")
-VLM_URL = os.environ.get("VLM_URL", "http://127.0.0.1:8081")
 DSPARK_PY = HOME / ".local/share/uv/tools/mlx-dspark/bin/python"   # its env also ships mlx-vlm
-LLM_MODEL = os.environ.get("LLM_MODEL", "mlx-community/Qwen3.8-27B-4bit")
-LLM_DRAFTER = os.environ.get("LLM_DRAFTER", "incoai/Qwen3.8-27B-DFlash2")
-IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "mlx-community/Qwen-Image-2.1-mflux-q4")
-# mflux editing needs a complete checkpoint (VAE + transformer + text encoder configs);
-# the mflux-q4 text-only export lacks the visual encoder, so edit stays off unless set.
+LLAMA_SERVER = shutil.which("llama-server") or "/opt/homebrew/bin/llama-server"
+BREW = shutil.which("brew") or "/opt/homebrew/bin/brew"
+CONTEXT = 32768
+# mflux editing needs a complete checkpoint; the q4 export used here is text-to-image only.
 EDIT_MODEL = os.environ.get("EDIT_MODEL")
 
-MODELS = [
-    {"repo": LLM_MODEL, "role": "Chat model", "group": "llm", "approx_gb": 15.2},
-    {"repo": LLM_DRAFTER, "role": "DFlash 2 drafter", "group": "llm", "approx_gb": 3.6},
-    {"repo": IMAGE_MODEL, "role": "Image model", "group": "image", "approx_gb": 8.9},
-]
+CATALOG = json.loads((ROOT / "catalog.json").read_text())
 
 app = FastAPI()
 app.mount("/gallery", StaticFiles(directory=GALLERY), name="gallery")
@@ -101,18 +101,338 @@ def _read_pid(name):
         return None
 
 
+def load_settings():
+    try:
+        s = json.loads(SETTINGS.read_text())
+    except Exception:
+        s = {}
+    s.setdefault("chat_model", next(m["id"] for m in CATALOG["chat"] if m.get("default")))
+    s.setdefault("image_model", next(m["id"] for m in CATALOG["image"] if m.get("default")))
+    s.setdefault("custom", [])
+    return s
+
+
+def save_settings(s):
+    SETTINGS.write_text(json.dumps(s, indent=2))
+
+
+def chat_models():
+    return CATALOG["chat"] + [m for m in load_settings()["custom"]]
+
+
+def chat_model(mid=None):
+    mid = mid or load_settings()["chat_model"]
+    m = next((m for m in chat_models() if m["id"] == mid), None)
+    return m or next(m for m in CATALOG["chat"] if m.get("default"))
+
+
+def image_model(mid=None):
+    mid = mid or load_settings()["image_model"]
+    return next((m for m in CATALOG["image"] if m["id"] == mid), CATALOG["image"][0])
+
+
 @app.get("/api/system")
 def api_system():
-    return {**system_memory(), "edit_enabled": bool(EDIT_MODEL)}
+    return {**system_memory(), "edit_enabled": bool(EDIT_MODEL), "version": APP_VERSION}
+
+# ---------------------------------------------------------------- models on disk
+
+
+def repo_dir(repo: str) -> Path:
+    return HF_HUB / ("models--" + repo.replace("/", "--"))
+
+
+def _repo_files(d: Path) -> set[Path]:
+    """Every real file a cached repo uses. Snapshot symlinks resolve into the repo's own
+    blobs/ or the hub-wide shared blobs/ store, so resolve them all."""
+    files = set()
+    for p in d.rglob("*"):
+        try:
+            r = p.resolve()
+            if r.is_file():
+                files.add(r)
+        except OSError:
+            pass
+    return files
+
+
+def _repo_for_dir(name: str) -> str:
+    return name[len("models--"):].replace("--", "/", 1)
+
+
+def snapshot_file(repo, name):
+    """Path of `name` inside the newest snapshot of a cached repo, or None."""
+    snaps = sorted((repo_dir(repo) / "snapshots").glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for s in snaps:
+        p = s / name
+        if p.exists():
+            return p
+    return None
+
+
+def _repo_bytes(repo):
+    """Bytes on disk for a repo, counting partial downloads."""
+    d = repo_dir(repo)
+    if not d.exists():
+        return 0
+    total = sum(f.stat().st_size for f in _repo_files(d) if not f.name.endswith(".incomplete"))
+    total += sum(p.stat().st_size for p in d.rglob("*.incomplete") if p.is_file())
+    return total
+
+
+def _incomplete(repo):
+    d = repo_dir(repo)
+    return d.exists() and any(d.rglob("*.incomplete"))
+
+
+def model_parts(m):
+    """What a catalog entry needs on disk: [(repo, [files] or None for whole repo)]."""
+    if m.get("backend") == "gguf":
+        return [(m["repo"], [f for f in (m.get("file"), m.get("mmproj")) if f])]
+    parts = [(m["repo"], None)]
+    if m.get("drafter"):
+        parts.append((m["drafter"], None))
+    return parts
+
+
+def model_installed(m):
+    for repo, files in model_parts(m):
+        if _incomplete(repo):
+            return False
+        if files:
+            if any(snapshot_file(repo, f) is None for f in files):
+                return False
+        elif not (repo_dir(repo).exists() and list((repo_dir(repo) / "snapshots").glob("*/*"))):
+            return False
+    return True
+
+
+def model_bytes(m):
+    return sum(_repo_bytes(repo) for repo, _ in model_parts(m))
+
+
+downloads: dict[str, dict] = {}
+
+
+def _download(mid, parts):
+    job = downloads[mid]
+    log = open(LOGS / f"download-{mid}.log", "w")
+    for repo, files in parts:
+        cmd = [str(HF_CLI), "download", repo] + (files or [])
+        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        job["pid"] = proc.pid
+        rc = proc.wait()
+        if job.get("cancelled"):
+            job.update(status="cancelled")
+            return
+        if rc != 0:
+            job.update(status="error", returncode=rc)
+            return
+    job.update(status="done", finished=time.time())
+
+
+def start_download(m):
+    mid = m["id"]
+    if downloads.get(mid, {}).get("status") == "running":
+        return downloads[mid]
+    downloads[mid] = {"id": mid, "status": "running", "started": time.time()}
+    threading.Thread(target=_download, args=(mid, model_parts(m)), daemon=True).start()
+    return downloads[mid]
+
+
+def _row(m, kind, active_id, running):
+    dl = downloads.get(m["id"], {})
+    size = model_bytes(m)
+    expected = int((m.get("size_gb") or 0) * 1e9)
+    row = {**m, "kind": kind, "installed": model_installed(m), "size_bytes": size, "expected_bytes": expected,
+           "downloading": dl.get("status") == "running", "download_error": dl.get("status") == "error",
+           "progress": min(0.99, size / expected) if dl.get("status") == "running" and expected else None,
+           "active": m["id"] == active_id}
+    if kind == "chat":
+        row["running"] = running
+    return row
+
+
+@app.get("/api/models")
+def models():
+    s = load_settings()
+    eng = engine_state()
+    chat = [_row(m, "chat", s["chat_model"], eng.get("model_id") == m["id"] and eng.get("mode") is not None)
+            for m in chat_models()]
+    image = [_row(m, "image", s["image_model"], False) for m in CATALOG["image"]]
+    known = set()
+    for m in chat_models() + CATALOG["image"]:
+        known |= {repo for repo, _ in model_parts(m)}
+    other = []
+    if HF_HUB.exists():
+        for d in sorted(HF_HUB.glob("models--*")):
+            repo = _repo_for_dir(d.name)
+            if repo not in known:
+                other.append({"repo": repo, "size_bytes": _repo_bytes(repo)})
+    return {"chat": chat, "image": image, "other": other, "llama_cpp": Path(LLAMA_SERVER).exists(),
+            "disk_free_bytes": shutil.disk_usage(HOME).free}
+
+
+def _find_any(mid):
+    m = next((m for m in chat_models() + CATALOG["image"] if m["id"] == mid), None)
+    if not m:
+        raise HTTPException(404, "unknown model")
+    return m
+
+
+@app.post("/api/models/download")
+def download_model(id: str = Body(..., embed=True)):
+    m = _find_any(id)
+    if m.get("backend") == "gguf" and not Path(LLAMA_SERVER).exists():
+        raise HTTPException(409, "llama.cpp isn't installed. Run: brew install llama.cpp")
+    need = int((m.get("size_gb") or 0) * 1e9) - model_bytes(m)
+    if need > shutil.disk_usage(HOME).free - 5e9:
+        raise HTTPException(507, f"Not enough disk space: needs about {need / 1e9:.0f} GB.")
+    return start_download(m)
+
+
+@app.post("/api/models/cancel")
+def cancel_download(id: str = Body(..., embed=True)):
+    job = downloads.get(id)
+    if not job or job.get("status") != "running":
+        raise HTTPException(404, "no running download")
+    job["cancelled"] = True
+    if job.get("pid"):
+        try:
+            os.killpg(job["pid"], signal.SIGTERM)
+        except OSError:
+            pass
+    return {"ok": True}
+
+
+def _delete_repo(repo):
+    d = repo_dir(repo)
+    if not d.exists():
+        return 0
+    mine = _repo_files(d) | {p for p in d.rglob("*.incomplete") if p.is_file()}
+    others = set()
+    for od in HF_HUB.glob("models--*"):
+        if od != d:
+            others |= _repo_files(od)
+    freed = 0
+    for f in mine - others:
+        if HF_HUB in f.parents:                     # never touch anything outside the cache
+            freed += f.stat().st_size
+            f.unlink(missing_ok=True)
+    shutil.rmtree(d, ignore_errors=True)
+    return freed
+
+
+@app.delete("/api/models")
+def delete_model(id: str = "", repo: str = ""):
+    """Delete a catalog/custom model by id, or any cached repo by name."""
+    if repo:
+        if any(repo in {r for r, _ in model_parts(m)} for m in chat_models() + CATALOG["image"]):
+            raise HTTPException(400, "Delete it from the model library instead.")
+        return {"ok": True, "freed_bytes": _delete_repo(repo)}
+    m = _find_any(id)
+    eng = engine_state()
+    if eng.get("model_id") == m["id"] and eng.get("mode"):
+        raise HTTPException(409, "This model is running. Stop the engine or switch models first.")
+    shared = set()
+    for other in chat_models() + CATALOG["image"]:
+        if other["id"] != m["id"] and model_installed(other):
+            shared |= {r for r, _ in model_parts(other)}
+    freed = sum(_delete_repo(r) for r, _ in model_parts(m) if r not in shared)
+    s = load_settings()
+    if m.get("custom"):
+        s["custom"] = [c for c in s["custom"] if c["id"] != m["id"]]
+        if s["chat_model"] == m["id"]:
+            s["chat_model"] = next(c["id"] for c in CATALOG["chat"] if c.get("default"))
+        save_settings(s)
+    return {"ok": True, "freed_bytes": freed}
+
+
+@app.post("/api/models/active")
+def set_active(id: str = Body(..., embed=True), kind: str = Body("chat", embed=True)):
+    m = _find_any(id)
+    if not model_installed(m):
+        raise HTTPException(409, "Download the model first.")
+    s = load_settings()
+    if kind == "image":
+        s["image_model"] = id
+        save_settings(s)
+        return {"ok": True}
+    s["chat_model"] = id
+    save_settings(s)
+    eng = engine_state()
+    if eng.get("mode") and eng.get("model_id") != id:      # swap the running engine in the background
+        mode = "gguf" if m.get("backend") == "gguf" else "text"
+        threading.Thread(target=_ensure_quiet, args=(mode, m), daemon=True).start()
+    return {"ok": True}
+
+
+# ---- Hugging Face search (for models outside the catalog)
+
+@app.get("/api/hf/search")
+async def hf_search(q: str, kind: str = "mlx"):
+    params = {"search": q, "sort": "downloads", "direction": "-1", "limit": "25",
+              "filter": "gguf" if kind == "gguf" else "mlx"}
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get("https://huggingface.co/api/models", params=params)
+    if r.status_code != 200:
+        raise HTTPException(502, "Hugging Face search failed")
+    return [{"repo": m["id"], "downloads": m.get("downloads", 0), "likes": m.get("likes", 0),
+             "pipeline": m.get("pipeline_tag")} for m in r.json()]
+
+
+@app.get("/api/hf/files")
+async def hf_files(repo: str):
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.get(f"https://huggingface.co/api/models/{repo}/tree/main", params={"recursive": "true"})
+    if r.status_code != 200:
+        raise HTTPException(404, "Repository not found")
+    files = [f for f in r.json() if f.get("type") == "file"]
+    ggufs = [{"file": f["path"], "size": f.get("size", 0)} for f in files
+             if f["path"].endswith(".gguf") and "mmproj" not in f["path"].lower()]
+    mmproj = [{"file": f["path"], "size": f.get("size", 0)} for f in files
+              if f["path"].endswith(".gguf") and "mmproj" in f["path"].lower()]
+    return {"total": sum(f.get("size", 0) for f in files), "ggufs": ggufs, "mmproj": mmproj,
+            "has_config": any(f["path"] == "config.json" for f in files)}
+
+
+@app.post("/api/models/custom")
+async def add_custom(repo: str = Body(..., embed=True), backend: str = Body("mlx", embed=True),
+                     file: str = Body(None, embed=True), mmproj: str = Body(None, embed=True)):
+    info = await hf_files(repo)
+    if backend == "gguf":
+        if not file:
+            raise HTTPException(400, "Pick a GGUF file")
+        size = next((g["size"] for g in info["ggufs"] if g["file"] == file), 0) + \
+            next((g["size"] for g in info["mmproj"] if g["file"] == mmproj), 0)
+    else:
+        if not info["has_config"]:
+            raise HTTPException(400, "That repository isn't an MLX model (no config.json).")
+        size = info["total"]
+    slug = re.sub(r"[^a-z0-9]+", "-", (repo + "-" + (file or "")).lower()).strip("-")[:60]
+    base = re.sub(r"[-_](GGUF|gguf|MLX|mlx)$", "", repo.split("/")[-1]).replace("-", " ")
+    quant = re.search(r"(UD-)?(I?Q\d[\w]*|BF16|F16|F32)(?=\.gguf$)", file or "")
+    m = {"id": "custom-" + slug, "name": base + (f" · {quant.group(0)}" if quant else ""),
+         "backend": backend, "repo": repo, "accel": "llama.cpp" if backend == "gguf" else "MLX",
+         "vision": bool(mmproj), "size_gb": round(size / 1e9, 1), "custom": True,
+         "blurb": "Added from Hugging Face."}
+    if backend == "gguf":
+        m["file"] = file
+        if mmproj:
+            m["mmproj"] = mmproj
+    s = load_settings()
+    s["custom"] = [c for c in s["custom"] if c["id"] != m["id"]] + [m]
+    save_settings(s)
+    start_download(m)
+    return m
 
 # ---------------------------------------------------------------- engines
-# Two engines share the same Qwen3.8 weights; only one runs at a time (~16 GB each).
-#   text   — mlx-dspark with DFlash 2 (~40 tok/s), text only: it drops image inputs.
-#   vision — mlx-vlm server (images + text, ~24 tok/s), used for chats that contain images.
 ENGINES = {
-    "text": {"pattern": r"^[^ ]*python[^ ]* [^ ]*mlx-dspark serve", "pid": "llm", "url": LLM_URL, "ready": "/health"},
-    "vision": {"pattern": r"^[^ ]*python[^ ]* -m mlx_vlm server", "pid": "vlm", "url": VLM_URL, "ready": "/v1/models"},
+    "text": {"pattern": r"^[^ ]*python[^ ]* [^ ]*mlx-dspark serve", "pid": "llm", "url": "http://127.0.0.1:8080", "ready": "/health"},
+    "vision": {"pattern": r"^[^ ]*python[^ ]* -m mlx_vlm server", "pid": "vlm", "url": "http://127.0.0.1:8081", "ready": "/v1/models"},
+    "gguf": {"pattern": r"^[^ ]*llama-server .*--port 8082", "pid": "gguf", "url": "http://127.0.0.1:8082", "ready": "/health"},
 }
+ENGINE_STATE = LOGS / "engine.json"
 engine_lock = threading.Lock()
 
 
@@ -131,6 +451,35 @@ def engine_running():
     return running_mode() is not None
 
 
+def engine_state():
+    """{mode, model_id} of the running engine (mode None when nothing runs)."""
+    mode = running_mode()
+    try:
+        st = json.loads(ENGINE_STATE.read_text())
+    except Exception:
+        st = {}
+    if not mode:
+        return {"mode": None, "model_id": st.get("model_id")}
+    if st.get("mode") != mode or not st.get("model_id"):
+        # started outside this app version: ask the engine what it loaded, never guess from
+        # settings (they may already name the model we're about to switch to)
+        st = {"mode": mode, "model_id": _infer_running_model(mode)}
+        if st["model_id"]:
+            ENGINE_STATE.write_text(json.dumps(st))
+    return st
+
+
+def _infer_running_model(mode):
+    try:
+        if mode == "text":
+            repo = httpx.get(ENGINES["text"]["url"] + "/health", timeout=3).json().get("target")
+            return next((m["id"] for m in chat_models() if m["repo"] == repo), None)
+        ids = [d.get("id") for d in httpx.get(ENGINES[mode]["url"] + "/v1/models", timeout=3).json().get("data", [])]
+        return next((m["id"] for m in chat_models() if m["id"] in ids or m["repo"] in ids), None)
+    except Exception:
+        return None
+
+
 def _engine_ready(mode):
     e = ENGINES[mode]
     try:
@@ -140,17 +489,39 @@ def _engine_ready(mode):
         return False
 
 
-def _start_engine(mode):
+def _uses_mlx_lm(repo):
+    """mlx-dspark routes multimodal configs to mlx-vlm except qwen3_5-family; --kv-bits only
+    applies on the mlx-lm route."""
+    cfg = snapshot_file(repo, "config.json")
+    try:
+        c = json.loads(cfg.read_text()) if cfg else {}
+    except Exception:
+        c = {}
+    return c.get("model_type") in ("qwen3_5", "qwen3_5_moe") or "vision_config" not in c
+
+
+def _start_engine(mode, m):
     log = open(LOGS / f"{ENGINES[mode]['pid']}.log", "w")
     if mode == "text":
-        cmd = [str(BIN / "mlx-dspark"), "serve", "--model", LLM_MODEL, "--kv-bits", "8",
-               "--context-window", "32768", "--host", "127.0.0.1", "--port", "8080"]
+        cmd = [str(BIN / "mlx-dspark"), "serve", "--model", m["repo"], "--context-window", str(CONTEXT),
+               "--host", "127.0.0.1", "--port", "8080"]
+        if m.get("drafter"):
+            cmd += ["--drafter", m["drafter"], "--mode", m.get("mode", "auto")]
+        if _uses_mlx_lm(m["repo"]):
+            cmd += ["--kv-bits", "8"]
+    elif mode == "vision":
+        cmd = [str(DSPARK_PY), "-m", "mlx_vlm", "server", "--model", m["repo"], "--host", "127.0.0.1", "--port", "8081"]
+        if m["id"] == "qwen3.8-27b":               # the only pairing verified with mlx-vlm's DFlash path
+            cmd += ["--draft-model", m["drafter"], "--draft-kind", "dflash"]
     else:
-        cmd = [str(DSPARK_PY), "-m", "mlx_vlm", "server", "--model", LLM_MODEL,
-               "--draft-model", LLM_DRAFTER, "--draft-kind", "dflash",
-               "--host", "127.0.0.1", "--port", "8081"]
+        model = snapshot_file(m["repo"], m["file"])
+        cmd = [LLAMA_SERVER, "-m", str(model), "-c", str(CONTEXT), "-ngl", "999", "--jinja",
+               "--host", "127.0.0.1", "--port", "8082", "-a", m["id"]]
+        if m.get("mmproj") and snapshot_file(m["repo"], m["mmproj"]):
+            cmd += ["--mmproj", str(snapshot_file(m["repo"], m["mmproj"]))]
     proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     (LOGS / f"{ENGINES[mode]['pid']}.pid").write_text(str(proc.pid))
+    ENGINE_STATE.write_text(json.dumps({"mode": mode, "model_id": m["id"]}))
     return proc.pid
 
 
@@ -167,38 +538,43 @@ def _stop_engine(mode):
         time.sleep(0.25)
 
 
-def ensure_engine(mode, timeout=240):
-    """Make `mode` the running engine (stopping the other); block until it answers."""
+def ensure_engine(mode, m, timeout=300):
+    """Make (mode, model) the running engine, stopping anything else; block until ready."""
     with engine_lock:
-        current = running_mode()
-        if current == mode and _engine_ready(mode):
+        st = engine_state()
+        if st.get("mode") == mode and st.get("model_id") == m["id"] and _engine_ready(mode):
             return False
         for other in ENGINES:
-            if other != mode and _proc_running(ENGINES[other]["pattern"]):
+            if _proc_running(ENGINES[other]["pattern"]) and (other != mode or st.get("model_id") != m["id"]):
                 _stop_engine(other)
         if not _proc_running(ENGINES[mode]["pattern"]):
-            _start_engine(mode)
+            _start_engine(mode, m)
         deadline = time.time() + timeout
         while time.time() < deadline:
             if _engine_ready(mode):
                 return True
             if not _proc_running(ENGINES[mode]["pattern"]):
-                raise RuntimeError(f"{mode} engine exited; see logs/{ENGINES[mode]['pid']}.log")
+                tail = (LOGS / f"{ENGINES[mode]['pid']}.log").read_text()[-600:]
+                raise RuntimeError(f"{m['name']} failed to start: {tail.strip().splitlines()[-1] if tail.strip() else 'see logs'}")
             time.sleep(1)
-        raise RuntimeError(f"{mode} engine did not become ready in {timeout}s")
+        raise RuntimeError(f"{m['name']} did not become ready in {timeout}s")
+
+
+def _ensure_quiet(mode, m):
+    try:
+        ensure_engine(mode, m)
+    except Exception:
+        pass
 
 
 @app.post("/api/engine/start")
-def engine_start(mode: str = Body("text", embed=True)):
-    if mode not in ENGINES:
-        raise HTTPException(400, "unknown engine")
-    if running_mode() == mode:
-        return {"status": "already running", "mode": mode}
-    missing = [m["repo"] for m in MODELS if m["group"] == "llm" and not repo_dir(m["repo"]).exists()]
-    if missing:
-        raise HTTPException(409, f"Download first: {', '.join(missing)}")
-    threading.Thread(target=ensure_engine, args=(mode,), daemon=True).start()
-    return {"status": "starting", "mode": mode}
+def engine_start():
+    m = chat_model()
+    if not model_installed(m):
+        raise HTTPException(409, f"Download {m['name']} first (Model library).")
+    mode = "gguf" if m.get("backend") == "gguf" else "text"
+    threading.Thread(target=_ensure_quiet, args=(mode, m), daemon=True).start()
+    return {"status": "starting", "mode": mode, "model_id": m["id"]}
 
 
 @app.post("/api/engine/stop")
@@ -213,21 +589,25 @@ def engine_stop():
 
 @app.get("/api/llm/{route:path}")
 async def llm_get(route: str):
-    mode = running_mode()
-    if mode == "vision":
-        # mlx-vlm has no dspark-style health/metrics; report what the UI needs
-        ready = await asyncio.to_thread(_engine_ready, "vision")
+    st = await asyncio.to_thread(engine_state)
+    mode, m = st.get("mode"), chat_model(st.get("model_id"))
+    if mode in ("vision", "gguf"):
+        ready = await asyncio.to_thread(_engine_ready, mode)
         if route == "health":
-            return {"status": "ok" if ready else "loading", "mode": "vision", "target": LLM_MODEL,
-                    "drafter": LLM_DRAFTER, "max_draft": None, "kv_bits": None,
-                    "context_window": 32768, "warnings": []}
-        return JSONResponse({"engine": "vision"}, status_code=200 if ready else 503)
+            return {"status": "ok" if ready else "loading", "mode": mode, "target": m["repo"],
+                    "model_id": m["id"], "model_name": m["name"], "drafter": m.get("drafter") if mode == "vision" else None,
+                    "max_draft": None, "kv_bits": None, "context_window": CONTEXT, "warnings": []}
+        return JSONResponse({"engine": mode}, status_code=200 if ready else 503)
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{LLM_URL}/{route}")
-        return JSONResponse(r.json(), status_code=r.status_code)
+            r = await client.get(f"{ENGINES['text']['url']}/{route}")
+        j = r.json()
+        if route == "health" and isinstance(j, dict):
+            j.update(model_id=m["id"], model_name=m["name"])
+        return JSONResponse(j, status_code=r.status_code)
     except httpx.HTTPError as e:
-        return JSONResponse({"status": "starting" if mode else "down", "error": str(e)}, status_code=503)
+        return JSONResponse({"status": "starting" if mode else "down", "model_id": m["id"], "model_name": m["name"],
+                             "error": str(e)}, status_code=503)
 
 
 def _sse(obj):
@@ -237,24 +617,37 @@ def _sse(obj):
 @app.post("/api/chat")
 async def chat(request: Request):
     body = await request.json()
+    m = chat_model(body.pop("model_id", None))
     messages, needs_vision = build_messages(body.get("messages", []))
     body["messages"] = messages
     body["stream"] = True
     body.setdefault("stream_options", {"include_usage": True})
-    mode = "vision" if needs_vision else "text"
+    gguf = m.get("backend") == "gguf"
+    mode = "gguf" if gguf else ("vision" if needs_vision else "text")
 
     async def relay():
-        if running_mode() != mode or not await asyncio.to_thread(_engine_ready, mode):
-            yield _sse({"x_engine": {"status": "switching", "mode": mode}})
+        if needs_vision and not m.get("vision"):
+            yield _sse({"error": f"{m['name']} can't read images. Switch to a model marked Vision "
+                                 f"(for example Qwen3.8 27B) from the model menu."})
+            return
+        if not model_installed(m):
+            yield _sse({"error": f"{m['name']} isn't downloaded yet. Get it from the Model library."})
+            return
+        st = await asyncio.to_thread(engine_state)
+        if st.get("mode") != mode or st.get("model_id") != m["id"] or not await asyncio.to_thread(_engine_ready, mode):
+            yield _sse({"x_engine": {"status": "switching", "mode": mode, "model": m["name"]}})
             try:
-                await asyncio.to_thread(ensure_engine, mode)
+                await asyncio.to_thread(ensure_engine, mode, m)
             except Exception as e:
-                yield _sse({"error": f"Could not start the {mode} engine: {e}"})
+                yield _sse({"error": str(e)})
                 return
-            yield _sse({"x_engine": {"status": "ready", "mode": mode}})
+            yield _sse({"x_engine": {"status": "ready", "mode": mode, "model": m["name"]}})
         url = ENGINES[mode]["url"]
         if mode == "vision":
-            body["model"] = LLM_MODEL
+            body["model"] = m["repo"]
+        if mode == "gguf":
+            body["model"] = m["id"]
+            body["chat_template_kwargs"] = {"enable_thinking": bool(body.get("enable_thinking", True))}
         t0 = time.time()
         first, n_out, last_timings, usage = None, 0, None, None
         try:
@@ -268,7 +661,7 @@ async def chat(request: Request):
                         async for chunk in r.aiter_raw():
                             yield chunk
                         return
-                    # vision: pass through, and synthesize the per-reply stats block the UI shows
+                    # vision / gguf: pass through and synthesize the per-reply stats block
                     async for line in r.aiter_lines():
                         if not line.startswith("data:"):
                             continue
@@ -290,13 +683,21 @@ async def chat(request: Request):
             yield _sse({"error": f"Engine unreachable: {e}"})
             return
         end = time.time()
-        tps = (last_timings or {}).get("predicted_per_second")
-        out = (usage or {}).get("completion_tokens") or n_out
-        yield _sse({"x_mlx_dspark": {
-            "mode": "vision", "decode_tokens_per_sec": round(tps or (out / max(end - (first or end), 1e-6)), 1),
-            "tokens_per_sec": round(out / max(end - t0, 1e-6), 1), "completion_tokens": out,
-            "prompt_tokens": (usage or {}).get("prompt_tokens"),
-            "ttft_seconds": round((first or end) - t0, 3), "decode_seconds": round(end - (first or end), 3)}})
+        t = last_timings or {}
+        tps = t.get("predicted_per_second")
+        out = (usage or {}).get("completion_tokens") or t.get("predicted_n") or n_out
+        stats = {"mode": mode, "engine": "llama.cpp" if gguf else "mlx-vlm", "model": m["name"],
+                 "decode_tokens_per_sec": round(tps or (out / max(end - (first or end), 1e-6)), 1),
+                 "tokens_per_sec": round(out / max(end - t0, 1e-6), 1), "completion_tokens": out,
+                 "prompt_tokens": (usage or {}).get("prompt_tokens") or t.get("prompt_n"),
+                 "ttft_seconds": round((first or end) - t0, 3), "decode_seconds": round(end - (first or end), 3)}
+        if t.get("prompt_per_second"):
+            stats["prefill_tokens_per_sec"] = round(t["prompt_per_second"], 1)
+        if t.get("cache_n") is not None:
+            stats["cached_tokens"] = t["cache_n"]
+        if t.get("draft_n"):
+            stats["accept_len"] = round(t.get("draft_n_accepted", 0) / max(t["draft_n"], 1), 2)
+        yield _sse({"x_mlx_dspark": stats})
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(relay(), media_type="text/event-stream")
@@ -338,7 +739,7 @@ def _extract(path: Path, ext: str, aid: str) -> dict:
         pages = [(p.extract_text() or "").strip() for p in reader.pages]
         text_chars = sum(len(t) for t in pages)
         if text_chars < 80 * max(1, len(pages)) and len(pages) and text_chars < 2000:
-            # scanned / image-only PDF: hand the first pages to the vision engine
+            # scanned / image-only PDF: hand the first pages to a vision engine
             import pypdfium2 as pdfium
             doc = pdfium.PdfDocument(str(path))
             imgs = []
@@ -434,8 +835,7 @@ def _attachment_meta(aid):
 
 def build_messages(messages):
     """Expand attachment ids into model input. Documents become <document> blocks in the
-    text; images become image_url parts (which also means the vision engine is needed)."""
-    import base64
+    text; images become image_url parts (which also means a vision engine is needed)."""
     out, needs_vision = [], False
     for m in messages:
         atts = [a for a in (m.get("attachments") or [])]
@@ -584,17 +984,19 @@ def run_image_job(job_id, cmd, meta):
 async def create_image(prompt: str = Form(...), width: int = Form(1024), height: int = Form(1024),
                        steps: int = Form(20), seed: str = Form(""), guidance: str = Form(""),
                        negative_prompt: str = Form(""), step_cache: str = Form(""),
-                       mode: str = Form("generate"), images: list[UploadFile] = File(default=[])):
+                       mode: str = Form("generate"), model_id: str = Form(""),
+                       images: list[UploadFile] = File(default=[])):
     if mode == "edit" and not EDIT_MODEL:
         raise HTTPException(400, "Editing needs the full Qwen-Image-2.1 checkpoint; the 4-bit "
                                  "weights installed here are text-to-image only.")
-    if mode != "edit" and not repo_dir(IMAGE_MODEL).exists():
-        raise HTTPException(409, "Image model not downloaded. Get it under Models.")
+    im = image_model(model_id or None)
+    if mode != "edit" and not model_installed(im):
+        raise HTTPException(409, f"{im['name']} isn't downloaded. Get it from the Model library.")
     seed_val = int(seed) if seed.strip() else int(time.time()) % 2**31
     stamp = time.strftime("%Y%m%d-%H%M%S")
     fname = f"{stamp}-{seed_val}.png"
     meta = {"prompt": prompt, "mode": mode, "width": width, "height": height, "steps": steps,
-            "seed": seed_val, "model": IMAGE_MODEL, "file": fname, "low_ram": True}
+            "seed": seed_val, "model": im["repo"], "model_name": im["name"], "file": fname, "low_ram": True}
 
     if mode == "edit":
         if not images:
@@ -607,10 +1009,12 @@ async def create_image(prompt: str = Form(...), width: int = Form(1024), height:
         cmd = [str(BIN / "mflux-generate-qwen-2.1-edit"), "--image-paths", *paths, "--quantize", "4"]
         meta["references"] = [Path(p).name for p in paths]
     else:
-        cmd = [str(BIN / "mflux-generate-qwen-2.1")]
+        cmd = [str(BIN / im["command"])]
+        if im.get("base_model"):
+            cmd += ["--base-model", im["base_model"]]
     # --low-ram evicts the text encoder/transformer between phases and tiles the VAE:
-    # peak ~10 GB instead of ~38 GB, ~10% slower — it keeps the LLM server out of swap.
-    cmd += ["--low-ram", "--model", EDIT_MODEL if mode == "edit" else IMAGE_MODEL,
+    # peak ~10 GB instead of ~38 GB for Qwen-Image, ~10% slower — it keeps chat out of swap.
+    cmd += ["--low-ram", "--model", EDIT_MODEL if mode == "edit" else im["repo"],
             "--prompt", prompt, "--steps", str(steps), "--seed", str(seed_val),
             "--width", str(width), "--height", str(height), "--output", str(GALLERY / fname)]
     if negative_prompt.strip():
@@ -619,7 +1023,7 @@ async def create_image(prompt: str = Form(...), width: int = Form(1024), height:
     if guidance.strip():
         cmd += ["--guidance", guidance]
         meta["guidance"] = float(guidance)
-    if step_cache.strip() and mode != "edit":
+    if step_cache.strip() and mode != "edit" and im["id"] == "qwen-image-2.1":
         cmd += ["--step-cache-ratio", step_cache]
         meta["step_cache_ratio"] = float(step_cache)
 
@@ -673,96 +1077,66 @@ def delete_image(name: str):
     (GALLERY / (Path(name).stem + ".json")).unlink(missing_ok=True)
     return {"ok": True}
 
-# ---------------------------------------------------------------- models on disk
+# ---------------------------------------------------------------- versions & updates
+
+update_job: dict = {"status": "idle"}
 
 
-def repo_dir(repo: str) -> Path:
-    return HF_HUB / ("models--" + repo.replace("/", "--"))
+def _versions():
+    v = {"app": APP_VERSION}
+    try:
+        out = subprocess.run([UV, "tool", "list"], capture_output=True, text=True, timeout=20).stdout
+        for name in ("mlx-dspark", "mflux"):
+            m = re.search(rf"^{re.escape(name)} v(\S+)", out, re.M)
+            v[name] = m.group(1) if m else None
+    except Exception:
+        pass
+    try:
+        out = subprocess.run([LLAMA_SERVER, "--version"], capture_output=True, text=True, timeout=10)
+        m = re.search(r"version: (\S+)", out.stdout + out.stderr)
+        v["llama.cpp"] = m.group(1) if m else None
+    except Exception:
+        v["llama.cpp"] = None
+    try:
+        out = subprocess.run([str(DSPARK_PY), "-c", "import importlib.metadata as m; print(m.version('mlx-vlm'), m.version('mlx'))"],
+                             capture_output=True, text=True, timeout=20).stdout.split()
+        v["mlx-vlm"], v["mlx"] = out[0], out[1]
+    except Exception:
+        pass
+    return v
 
 
-def _repo_files(d: Path) -> set[Path]:
-    """Every real file a cached repo uses. Snapshot symlinks resolve into the repo's own
-    blobs/ or the hub-wide shared blobs/ store, so resolve them all."""
-    files = set()
-    for p in d.rglob("*"):
-        try:
-            r = p.resolve()
-            if r.is_file():
-                files.add(r)
-        except OSError:
-            pass
-    return files
+@app.get("/api/versions")
+async def versions():
+    return {**(await asyncio.to_thread(_versions)), "update": {k: v for k, v in update_job.items() if k != "proc"}}
 
 
-def _repo_for_dir(name: str) -> str:
-    return name[len("models--"):].replace("--", "/", 1)
+def _run_update():
+    log = open(LOGS / "update.log", "w")
+    steps = [[UV, "tool", "upgrade", "mlx-dspark"], [UV, "tool", "upgrade", "mflux"]]
+    if Path(BREW).exists():
+        steps.append([BREW, "upgrade", "llama.cpp"] if Path(LLAMA_SERVER).exists() else [BREW, "install", "llama.cpp"])
+    before = _versions()
+    for cmd in steps:
+        update_job["step"] = " ".join(Path(c).name if i == 0 else c for i, c in enumerate(cmd))
+        log.write(f"$ {update_job['step']}\n")
+        log.flush()
+        rc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode
+        if rc != 0 and "upgrade" in cmd and cmd[0] == BREW:
+            continue                                  # brew upgrade exits 0 when already current
+    after = _versions()
+    changed = {k: [before.get(k), after.get(k)] for k in after if before.get(k) != after.get(k)}
+    update_job.update(status="done", finished=time.time(), changed=changed, step=None)
 
 
-@app.get("/api/models")
-def models():
-    known = {m["repo"] for m in MODELS}
-    rows = []
-    for m in MODELS:
-        d = repo_dir(m["repo"])
-        files = _repo_files(d) if d.exists() else set()
-        incomplete = d.exists() and any(p.name.endswith(".incomplete") for p in d.rglob("*"))
-        dl = downloads.get(m["repo"], {})
-        rows.append({**m, "installed": bool(files) and not incomplete, "incomplete": incomplete,
-                     "size_bytes": sum(f.stat().st_size for f in files),
-                     "downloading": dl.get("status") == "running", "download_error": dl.get("status") == "error"})
-    if HF_HUB.exists():
-        for d in sorted(HF_HUB.glob("models--*")):
-            repo = _repo_for_dir(d.name)
-            if repo in known:
-                continue
-            files = _repo_files(d)
-            rows.append({"repo": repo, "role": "Other cached model", "group": "other", "installed": True,
-                         "incomplete": False, "downloading": False,
-                         "size_bytes": sum(f.stat().st_size for f in files)})
-    return rows
-
-
-@app.delete("/api/models")
-def delete_model(repo: str):
-    d = repo_dir(repo)
-    if not d.exists():
-        raise HTTPException(404, "not downloaded")
-    group = next((m["group"] for m in MODELS if m["repo"] == repo), "other")
-    if group == "llm" and engine_running():
-        raise HTTPException(409, "Stop the engine before deleting its model.")
-    mine = _repo_files(d)
-    others = set()
-    for od in HF_HUB.glob("models--*"):
-        if od != d:
-            others |= _repo_files(od)
-    freed = 0
-    for f in mine - others:
-        if HF_HUB in f.parents:                     # never touch anything outside the cache
-            freed += f.stat().st_size
-            f.unlink(missing_ok=True)
-    shutil.rmtree(d, ignore_errors=True)
-    return {"ok": True, "freed_bytes": freed}
-
-
-downloads: dict[str, dict] = {}
-
-
-def _download(repo):
-    log = LOGS / f"download-{repo.replace('/', '--')}.log"
-    with open(log, "w") as fh:
-        rc = subprocess.run([str(HF_CLI), "download", repo], stdout=fh, stderr=subprocess.STDOUT).returncode
-    downloads[repo].update(status="done" if rc == 0 else "error", returncode=rc)
-
-
-@app.post("/api/models/download")
-def download_model(repo: str = Body(..., embed=True)):
-    if repo not in {m["repo"] for m in MODELS}:
-        raise HTTPException(400, "unknown model")
-    if downloads.get(repo, {}).get("status") == "running":
-        return downloads[repo]
-    downloads[repo] = {"repo": repo, "status": "running", "started": time.time()}
-    threading.Thread(target=_download, args=(repo,), daemon=True).start()
-    return downloads[repo]
+@app.post("/api/versions/update")
+def update_engines():
+    if update_job.get("status") == "running":
+        return update_job
+    update_job.clear()
+    update_job.update(status="running", started=time.time())
+    threading.Thread(target=_run_update, daemon=True).start()
+    return update_job
 
 # ---------------------------------------------------------------- storage & uninstall
 
@@ -772,7 +1146,7 @@ def storage():
     engine_cache = HOME / ".cache/mlx_dspark"
     return {
         "gallery": {"bytes": dir_size(GALLERY), "count": len(list(GALLERY.glob("*.png")))},
-        "uploads": {"bytes": dir_size(UPLOADS), "count": sum(1 for p in UPLOADS.iterdir() if p.is_file())},
+        "uploads": {"bytes": dir_size(UPLOADS), "count": len(list(UPLOADS.glob("*.json")))},
         "chats": {"bytes": dir_size(CHATS), "count": len(list(CHATS.glob("*.json")))},
         "logs": {"bytes": dir_size(LOGS), "count": len(list(LOGS.glob("*.log")))},
         "engine_cache": {"bytes": dir_size(engine_cache) if engine_cache.exists() else 0},

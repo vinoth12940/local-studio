@@ -5,7 +5,7 @@
 set -e
 HERE="${0:A:h}"; ROOT="${HERE:h}"
 APP="$ROOT/build/Local Studio.app"
-VERSION=$(git -C "$ROOT" describe --tags --always 2>/dev/null || echo 1.0)
+VERSION=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' "$ROOT/app.py")
 
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
@@ -16,7 +16,7 @@ xcrun swiftc -O -target arm64-apple-macos13.0 -framework Cocoa -framework WebKit
 echo "==> Icon"
 ICONSET="$ROOT/build/AppIcon.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
 UV=$(command -v uv || echo ~/.local/bin/uv)
-$UV run -q --python 3.12 --with pillow python "$HERE/make_icon.py" "$ROOT/build/icon_1024.png" >/dev/null
+$UV run -q --python 3.12 --with pillow python "$HERE/logos.py" B "$ROOT/build/icon_1024.png" >/dev/null
 for s in 16 32 128 256 512; do
   sips -z $s $s "$ROOT/build/icon_1024.png" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
   sips -z $((s*2)) $((s*2)) "$ROOT/build/icon_1024.png" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
@@ -33,7 +33,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>LocalStudio</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>

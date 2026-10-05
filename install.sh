@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Local Studio installer: engine (mlx-dspark), image tool (mflux) and the three models.
+# Local Studio installer: engines (mlx-dspark, mflux, llama.cpp) and the default models.
 #   ./install.sh              install everything (~27 GB of downloads)
 #   ./install.sh --no-models  install the tools only; download models later from the UI
 set -e
@@ -20,6 +20,13 @@ UV=$(command -v uv || echo ~/.local/bin/uv)
 echo "==> Installing mlx-dspark (chat engine) and mflux (image engine)"
 $UV tool install --python 3.12 --upgrade mlx-dspark
 $UV tool install --python 3.12 --upgrade "mflux>=0.20"
+
+if command -v brew >/dev/null 2>&1; then
+  echo "==> Installing llama.cpp (runs GGUF models)"
+  brew list llama.cpp >/dev/null 2>&1 || brew install llama.cpp
+else
+  echo "   Homebrew not found: skipping llama.cpp (GGUF models). Install https://brew.sh, then: brew install llama.cpp"
+fi
 
 if [[ "${1:-}" != "--no-models" ]]; then
   HF=~/.local/share/uv/tools/mlx-dspark/bin/hf

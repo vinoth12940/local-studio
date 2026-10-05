@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Local Studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f2f2f4'/%3E%3Cg stroke='%2312121a' stroke-width='3.4' stroke-linecap='round'%3E%3Cpath d='M24 9v8M32 9v8M40 9v8M24 47v8M32 47v8M40 47v8M9 24h8M9 32h8M9 40h8M47 24h8M47 32h8M47 40h8'/%3E%3C/g%3E%3Crect x='16' y='16' width='32' height='32' rx='7' fill='%2312121a'/%3E%3Cpath d='M32 21c1 6 5 10 11 11-6 1-10 5-11 11-1-6-5-10-11-11 6-1 10-5 11-11z' fill='%23f2f2f4'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -46,8 +47,9 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 
 .sb-top { display: flex; align-items: center; justify-content: space-between; padding: 10px 10px 6px 14px; height: 52px; }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14.5px; letter-spacing: -.01em; }
-.brand .mark { width: 24px; height: 24px; border-radius: 7px; background: var(--ink); color: var(--bg); display: grid; place-items: center; }
-.brand .mark svg { width: 14px; height: 14px; stroke-width: 2.2; }
+.brand .mark { width: 26px; height: 26px; color: var(--ink); display: grid; place-items: center; }
+.brand .mark svg { width: 26px; height: 26px; }
+.brand .ver { font-size: 11px; font-weight: 500; color: var(--muted); border: 1px solid var(--line-2); border-radius: 6px; padding: 0 5px; }
 .iconbtn { width: 34px; height: 34px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 .iconbtn:hover { background: var(--hover); color: var(--ink); }
 .sb-actions { padding: 4px 8px; display: flex; flex-direction: column; gap: 1px; }
@@ -268,6 +270,44 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .gitem .tools svg { width: 15px; height: 15px; }
 .empty { border: 1px dashed var(--line-2); border-radius: 14px; padding: 40px; text-align: center; color: var(--muted); font-size: 14px; grid-column: 1 / -1; }
 
+/* library */
+.libbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.tabs2 { display: inline-flex; background: var(--soft); border-radius: 11px; padding: 3px; }
+.tabs2 button { border: 0; background: transparent; padding: 6px 14px; border-radius: 8px; font-size: 13.5px; color: var(--muted); cursor: pointer; font-weight: 500; }
+.tabs2 button.on { background: var(--raised); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+.mcard { border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
+.mcard.active { border-color: var(--ink-2); box-shadow: 0 0 0 1px var(--ink-2) inset; }
+.mcard .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.mcard h4 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.mcard .repo { font-size: 12px; color: var(--muted); font-family: "JetBrains Mono", monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.mcard p { margin: 0; font-size: 13.5px; color: var(--ink-2); line-height: 1.5; flex: 1; }
+.mcard .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.mcard .facts { display: flex; gap: 14px; font-size: 12.5px; color: var(--muted); }
+.mcard .facts b { color: var(--ink-2); font-weight: 500; }
+.mcard .acts { display: flex; gap: 8px; align-items: center; }
+.mcard .acts .grow { flex: 1; }
+.tag { font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-2); white-space: nowrap; }
+.tag.accel { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.tag.gguf { background: color-mix(in srgb, #6366f1 14%, transparent); color: #6366f1; border-color: transparent; }
+.tag.vision { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); border-color: transparent; }
+.dlbar { height: 6px; border-radius: 6px; background: var(--line); overflow: hidden; }
+.dlbar i { display: block; height: 100%; background: var(--ink); border-radius: 6px; transition: width .6s; }
+.searchbar { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line-2); border-radius: 14px; padding: 6px 6px 6px 14px; background: var(--raised); }
+.searchbar svg { color: var(--muted); }
+.searchbar input { flex: 1; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 14.5px; min-width: 0; }
+.hfrow { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+.hfrow .grow { flex: 1; min-width: 200px; }
+.hfrow .ttl { font-weight: 500; font-size: 14px; word-break: break-all; }
+.hfrow .sub { font-size: 12.5px; color: var(--muted); }
+.hfrow select { height: 32px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px; padding: 0 8px; max-width: 320px; }
+.mmrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px; cursor: pointer; font-size: 13.5px; }
+.mmrow:hover { background: var(--hover); }
+.mmrow .nm { flex: 1; }
+.mmrow .d { color: var(--muted); font-size: 12px; }
+.mmrow .ck { width: 16px; height: 16px; color: var(--ink); visibility: hidden; }
+.mmrow.on .ck { visibility: visible; }
+
 /* manage */
 .section { border: 1px solid var(--line); border-radius: 16px; margin-bottom: 18px; overflow: hidden; }
 .section > .sh { padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
@@ -282,8 +322,8 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500; padding: 2px 8px; border-radius: 999px; background: var(--soft); color: var(--ink-2); white-space: nowrap; }
 .badge.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
 .badge.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
-.kvs { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
-.kvs div { background: var(--bg); padding: 12px 20px; }
+.kvs { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); border-bottom: 1px solid var(--line); overflow: hidden; }
+.kvs div { background: var(--bg); padding: 12px 20px; box-shadow: inset -1px 0 0 var(--line), 0 1px 0 var(--line); }
 .kvs .l { font-size: 12px; color: var(--muted); }
 .kvs .v { font-size: 14px; font-weight: 500; margin-top: 2px; font-family: "JetBrains Mono", monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .codeline { display: flex; align-items: center; gap: 8px; background: var(--soft); border-radius: 9px; padding: 6px 6px 6px 12px; font-family: "JetBrains Mono", monospace; font-size: 12.5px; }
@@ -339,7 +379,7 @@ dialog::backdrop { background: var(--overlay); }
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
-  <symbol id="i-logo" viewBox="0 0 24 24"><path d="M12 3l1.9 5.8L20 10l-6.1 1.2L12 17l-1.9-5.8L4 10l6.1-1.2z"/></symbol>
+  <symbol id="i-logo" viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"><path d="M9 2.5v3M12 2.5v3M15 2.5v3M9 18.5v3M12 18.5v3M15 18.5v3M2.5 9h3M2.5 12h3M2.5 15h3M18.5 9h3M18.5 12h3M18.5 15h3"/></g><rect x="5.5" y="5.5" width="13" height="13" rx="3" fill="currentColor" stroke="none"/><path d="M12 7.6c.4 2.4 2 4 4.4 4.4-2.4.4-4 2-4.4 4.4-.4-2.4-2-4-4.4-4.4 2.4-.4 4-2 4.4-4.4z" fill="var(--side)" stroke="none"/></symbol>
   <symbol id="i-side" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
   <symbol id="i-new" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
@@ -377,20 +417,21 @@ dialog::backdrop { background: var(--overlay); }
   <div class="scrim" id="scrim"></div>
   <aside class="sidebar">
     <div class="sb-top">
-      <div class="brand"><span class="mark"><svg class="i"><use href="#i-logo"/></svg></span>Local Studio</div>
+      <div class="brand"><span class="mark"><svg><use href="#i-logo"/></svg></span>Local Studio<span class="ver" id="verBadge">1.1</span></div>
       <button class="iconbtn" id="collapse" title="Close sidebar"><svg class="i"><use href="#i-side"/></svg></button>
     </div>
     <div class="sb-actions">
       <button class="navitem" id="newChat"><svg class="i"><use href="#i-new"/></svg>New chat<span class="kbd">⇧⌘O</span></button>
       <button class="navitem" data-view="images"><svg class="i"><use href="#i-image"/></svg>Images</button>
-      <button class="navitem" data-view="manage"><svg class="i"><use href="#i-box"/></svg>Models &amp; storage</button>
+      <button class="navitem" data-view="library"><svg class="i"><use href="#i-box"/></svg>Model library</button>
+      <button class="navitem" data-view="manage"><svg class="i"><use href="#i-sliders"/></svg>Settings</button>
     </div>
     <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="search" placeholder="Search chats"></div>
     <div class="history" id="history"></div>
     <div class="sb-foot">
-      <div class="engine" id="engineCard" title="Open Models & storage">
+      <div class="engine" id="engineCard" title="Open Settings">
         <span class="dot" id="engDot"></span>
-        <div class="meta"><div class="name">Qwen3.8-27B</div><div class="st" id="engSt">Checking…</div></div>
+        <div class="meta"><div class="name" id="engName">–</div><div class="st" id="engSt">Checking…</div></div>
         <button class="iconbtn" id="themeBtn" title="Toggle theme"><svg class="i"><use href="#i-moon" id="themeIcon"/></svg></button>
       </div>
       <div class="ram"><span>Memory</span><span id="ramTxt">–</span></div>
@@ -408,8 +449,9 @@ dialog::backdrop { background: var(--overlay); }
     </header>
 
     <div class="menu" id="modelMenu" style="top:48px; left:12px">
-      <div class="mlabel">Chat model</div>
-      <div class="mrow"><div><div>Qwen3.8-27B · 4-bit</div><div class="d">DFlash 2 speculative decoding · 32k context</div></div><span class="badge" id="mmBadge" style="margin-left:auto">–</span></div>
+      <div class="mlabel" style="display:flex;justify-content:space-between">Chat model<span class="badge" id="mmBadge">–</span></div>
+      <div id="mmList"></div>
+      <div class="mrow click" data-view="library"><svg class="i"><use href="#i-box"/></svg>Browse model library…</div>
       <div class="sep"></div>
       <label class="mrow click"><div><div>Thinking</div><div class="d">Reason step by step before answering</div></div><span class="switch"><input type="checkbox" id="thinkSw" checked><span></span></span></label>
       <div class="mrow"><div><div>Effort</div><div class="d">How long it may think</div></div>
@@ -417,7 +459,7 @@ dialog::backdrop { background: var(--overlay); }
       <div class="sep"></div>
       <div class="mrow click" id="mmEngine"><svg class="i"><use href="#i-power"/></svg><span id="mmEngineTxt">Stop engine</span></div>
       <div class="mrow click" id="mmSettings"><svg class="i"><use href="#i-sliders"/></svg>Chat settings…</div>
-      <div class="mrow click" data-view="manage"><svg class="i"><use href="#i-box"/></svg>Models &amp; storage</div>
+      <div class="mrow click" data-view="manage"><svg class="i"><use href="#i-sliders"/></svg>Settings</div>
     </div>
 
     <div class="inspector" id="inspector">
@@ -453,7 +495,7 @@ dialog::backdrop { background: var(--overlay); }
       <div class="composer-wrap" id="composerWrap">
         <div class="composer">
           <div class="atts" id="atts"></div>
-          <textarea id="input" rows="1" placeholder="Message Qwen3.8"></textarea>
+          <textarea id="input" rows="1" placeholder="Message"></textarea>
           <div class="crow">
             <button class="iconbtn" id="attachBtn" title="Attach images or documents (PDF, Word, Excel, text, code)" style="width:36px;height:36px;border:1px solid var(--line);border-radius:50%"><svg class="i"><use href="#i-clip"/></svg></button>
             <input type="file" id="fileInput" multiple hidden accept="image/*,.pdf,.docx,.xlsx,.xlsm,.txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.css,.js,.ts,.tsx,.jsx,.py,.rb,.go,.rs,.java,.kt,.swift,.c,.h,.cpp,.hpp,.cs,.php,.sh,.zsh,.sql,.toml,.ini,.cfg,.log,.r,.scala,.lua,.dart,.vue,.svelte">
@@ -470,10 +512,11 @@ dialog::backdrop { background: var(--overlay); }
     <section class="view" id="v-images">
       <div class="scroll"><div class="page">
         <h2>Images</h2>
-        <p class="lead">Qwen-Image 2.1 · 4-bit · generated on-device with mflux</p>
+        <p class="lead" id="imgLead">Generated on-device with mflux</p>
         <div class="prompt-card">
           <textarea id="imgPrompt" rows="2" placeholder="Describe an image in detail: subject, setting, lighting, style…"></textarea>
           <div class="opts">
+            <div class="sel"><select id="imgModel" title="Image model"></select></div>
             <div class="sel"><select id="imgAspect">
               <option value="1024x1024">Square · 1024</option><option value="1152x864">Landscape 4:3</option><option value="864x1152">Portrait 3:4</option>
               <option value="1344x768">Wide 16:9</option><option value="768x1344">Tall 9:16</option><option value="768x768">Draft · 768</option></select></div>
@@ -503,29 +546,56 @@ dialog::backdrop { background: var(--overlay); }
       </div></div>
     </section>
 
+    <section class="view" id="v-library">
+      <div class="scroll"><div class="page">
+        <h2>Model library</h2>
+        <p class="lead">Download, switch and remove models. Everything runs on this Mac. <span id="libDisk"></span></p>
+        <div class="libbar">
+          <div class="tabs2" id="libTabs"><button data-t="chat" class="on">Chat models</button><button data-t="image">Image models</button><button data-t="search">Search Hugging Face</button></div>
+          <div class="sel" id="libFilterWrap"><select id="libFilter"><option value="all">All engines</option><option value="mlx">MLX (accelerated)</option><option value="gguf">GGUF (llama.cpp)</option><option value="installed">Downloaded</option></select></div>
+        </div>
+        <div id="libChat" class="cards"></div>
+        <div id="libImage" class="cards" style="display:none"></div>
+        <div id="libSearch" style="display:none">
+          <div class="searchbar">
+            <svg class="i"><use href="#i-search"/></svg>
+            <input id="hfQ" placeholder="Search Hugging Face, e.g. Qwen3.5, gemma, mistral, coder…">
+            <div class="seg" id="hfKind" style="margin:0"><button data-v="mlx" class="on">MLX</button><button data-v="gguf">GGUF</button></div>
+            <button class="btn primary sm" id="hfGo">Search</button>
+          </div>
+          <p class="sub" style="margin:10px 2px 14px">MLX models run on the accelerated engine (vision models also on mlx-vlm). GGUF models run on llama.cpp. Check the size: a model needs roughly its file size in free memory.</p>
+          <div id="hfResults"></div>
+        </div>
+        <div id="libOtherWrap" style="display:none">
+          <div class="ghead"><h3>Other files in the model cache</h3><span class="sub">Not used by Local Studio</span></div>
+          <div class="section" id="libOther"></div>
+        </div>
+      </div></div>
+    </section>
+
     <section class="view" id="v-manage">
       <div class="scroll"><div class="page" style="max-width:880px">
-        <h2>Models &amp; storage</h2>
-        <p class="lead">Control the engine, manage downloaded models, free up space, or uninstall.</p>
+        <h2>Settings</h2>
+        <p class="lead">Engine, storage, versions and updates.</p>
 
         <div class="section">
-          <div class="sh"><div><h3>Engine</h3><p>mlx-dspark server for chat · OpenAI and Anthropic compatible</p></div>
+          <div class="sh"><div><h3>Engine</h3><p id="engDesc">Runs the active chat model</p></div>
             <button class="btn" id="engToggle"><svg class="i"><use href="#i-power"/></svg><span id="engToggleTxt">Stop</span></button></div>
           <div class="kvs">
+            <div><div class="l">Model</div><div class="v" id="mModel">–</div></div>
             <div><div class="l">Status</div><div class="v" id="mStatus">–</div></div>
             <div><div class="l">Memory in use</div><div class="v" id="mRes">–</div></div>
             <div><div class="l">Average speed</div><div class="v" id="mSpeed">–</div></div>
             <div><div class="l">Requests served</div><div class="v" id="mReq">–</div></div>
           </div>
           <div class="row" style="flex-direction:column; align-items:stretch; gap:8px">
-            <div class="sub">API endpoint for Claude Code, scripts or other apps on this Mac</div>
-            <div class="codeline"><span>http://127.0.0.1:8080/v1</span><button class="iconbtn" data-copy="http://127.0.0.1:8080/v1" style="width:28px;height:28px" title="Copy"><svg class="i" style="width:15px;height:15px"><use href="#i-copy"/></svg></button></div>
+            <div class="sub">OpenAI-compatible API for scripts and other apps on this Mac (port depends on the engine: 8080 MLX, 8081 vision, 8082 llama.cpp)</div>
+            <div class="codeline"><span id="apiUrl">http://127.0.0.1:8080/v1</span><button class="iconbtn" id="apiCopy" style="width:28px;height:28px" title="Copy"><svg class="i" style="width:15px;height:15px"><use href="#i-copy"/></svg></button></div>
           </div>
         </div>
 
         <div class="section">
-          <div class="sh"><div><h3>Models</h3><p id="modelsSum">Stored in ~/.cache/huggingface/hub</p></div><button class="btn sm" id="modelsRefresh">Refresh</button></div>
-          <div id="modelRows"></div>
+          <div class="sh"><div><h3>Models</h3><p id="modelsSum">–</p></div><button class="btn sm" data-view="library">Open model library</button></div>
         </div>
 
         <div class="section">
@@ -533,8 +603,15 @@ dialog::backdrop { background: var(--overlay); }
           <div id="storageRows"></div>
         </div>
 
+        <div class="section">
+          <div class="sh"><div><h3>About &amp; updates</h3><p id="updDesc">Local Studio and the engines it runs on</p></div>
+            <button class="btn" id="updBtn"><svg class="i"><use href="#i-redo"/></svg><span>Update engines</span></button></div>
+          <div class="kvs" id="verKvs"></div>
+          <div class="row" id="updRow" style="display:none"><div class="sub" id="updStatus"></div></div>
+        </div>
+
         <div class="section danger">
-          <div class="sh"><div><h3>Uninstall</h3><p>Stops everything, removes mlx-dspark and mflux, and deletes the three models (~27 GB).</p></div></div>
+          <div class="sh"><div><h3>Uninstall</h3><p>Stops everything, removes mlx-dspark, mflux and llama.cpp, the Mac app, and every model downloaded through Local Studio.</p></div></div>
           <div class="row" style="flex-direction:column; align-items:stretch; gap:14px">
             <label class="check"><input type="checkbox" id="unApp"><span>Also delete the Local Studio folder, including your images and chats <span class="mono" style="font-size:12px; color:var(--muted)" id="unPath"></span></span></label>
             <label class="field"><span>Type <b style="color:var(--ink)">uninstall</b> to confirm</span><input id="unConfirm" autocomplete="off" style="max-width:260px"></label>
@@ -624,11 +701,11 @@ function showView(v) {
   view = v;
   document.querySelectorAll(".view").forEach((s) => s.classList.toggle("on", s.id === "v-" + v));
   document.querySelectorAll(".navitem[data-view]").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
-  $("hdrTitle").textContent = v === "images" ? "Qwen-Image" : v === "manage" ? "Local Studio" : "Qwen3.8";
-  $("hdrSub").textContent = v === "images" ? "2.1 · 4-bit" : v === "manage" ? "Settings" : "27B · DFlash";
+  updateHeader();
   $("modelBtn").querySelector("svg").style.display = v === "chat" ? "" : "none";
   closeMenus();
-  if (v === "images") loadGallery();
+  if (v === "images") { loadGallery(); loadLibrary(); }
+  if (v === "library") loadLibrary();
   if (v === "manage") loadManage();
   if (v === "chat") setTimeout(() => $("input").focus(), 0);
   renderHistory();
@@ -653,9 +730,16 @@ async function poll() {
   metrics = null;
   if (engineState === "ready") { try { metrics = await (await fetch("/api/llm/metrics")).json(); } catch {} }
   const dotCls = engineState === "ready" ? "ok" : engineState === "loading" ? "warn" : "bad";
-  const vision = health?.mode === "vision";
-  const label = engineState === "ready" ? (vision ? "Ready · Vision" : "Ready") : engineState === "loading" ? (health?.phase === "warming_up" ? "Warming up…" : "Loading model…") : "Engine stopped";
-  if (view === "chat") $("hdrSub").textContent = vision ? "27B · Vision" : "27B · DFlash";
+  const emode = health?.mode, vision = emode === "vision";
+  const label = engineState === "ready" ? (vision ? "Ready · Vision" : emode === "gguf" ? "Ready · llama.cpp" : "Ready") : engineState === "loading" ? (health?.phase === "warming_up" ? "Warming up…" : "Loading model…") : "Engine stopped";
+  runningName = engineState === "down" ? null : (health?.model_name || null);
+  runningMode = engineState === "down" ? null : emode;
+  updateHeader();
+  $("engName").textContent = runningName || activeChat()?.name || "No model";
+  $("mModel").textContent = runningName || activeChat()?.name || "–";
+  $("engDesc").textContent = emode === "gguf" ? "llama.cpp server (GGUF)" : vision ? "mlx-vlm server (images + text)" : "mlx-dspark with speculative decoding";
+  const port = emode === "gguf" ? 8082 : vision ? 8081 : 8080;
+  $("apiUrl").textContent = `http://127.0.0.1:${port}/v1`;
   for (const id of ["engDot", "hdrDot"]) $(id).className = "dot " + dotCls;
   $("hdrStatusTxt").textContent = label;
   const mean = metrics?.mean_decode_tokens_per_sec;
@@ -665,7 +749,7 @@ async function poll() {
   $("engToggleTxt").textContent = engineState === "down" ? "Start" : "Stop";
   $("mStatus").textContent = label;
   if (health && engineState === "ready") {
-    $("eDr").textContent = (health.drafter || "none").split("/").pop(); $("eMode").textContent = health.mode || "–";
+    $("eDr").textContent = (health.drafter || "none").split("/").pop(); $("eMode").textContent = emode === "gguf" ? "llama.cpp" : (health.mode || "–");
     $("eCap").textContent = health.max_draft ?? "–"; $("eKv").textContent = health.kv_bits ? `${health.kv_bits}-bit` : "bf16";
     ctxWindow = health.context_window || ctxWindow; $("ctxMax").textContent = `${Math.round(ctxWindow / 1024)}k`;
     $("eWarn").textContent = (health.warnings || []).map((w) => w.message || w).join(" ");
@@ -775,7 +859,7 @@ function renderThread() {
     if (w) { $("v-chat").appendChild(wrap); w.remove(); }
     scroll.style.display = "";
     $("thread").innerHTML = current.messages.map((m, i) => turnHTML(m, i)).join("");
-    $("input").placeholder = "Message Qwen3.8";
+    $("input").placeholder = `Message ${activeChat()?.name || ""}`;
     const last = [...current.messages].reverse().find((m) => m.stats);
     showPerf(last?.stats); drawSpark();
   }
@@ -784,12 +868,12 @@ function renderThread() {
 function perfLine(x) {
   if (!x) return "";
   const up = x.ceiling_tokens_per_sec ? ` · <b>${(x.decode_tokens_per_sec / x.ceiling_tokens_per_sec).toFixed(1)}×</b> vs plain` : "";
-  const eng = x.mode === "vision" ? " · vision engine" : "";
+  const eng = x.mode === "vision" ? " · vision engine" : x.mode === "gguf" ? " · llama.cpp" : "";
   return `<button class="perf" data-perf title="Show details"><span><b>${x.decode_tokens_per_sec}</b> tok/s${up} · ${x.completion_tokens ?? "–"} tokens · ${x.ttft_seconds}s to first token${eng}</span></button>`;
 }
 function perfGrid(x) {
   if (!x) return "";
-  const cells = [["Engine", x.mode === "vision" ? "Vision (mlx-vlm)" : "Text (DFlash)"], ["Decode", `${x.decode_tokens_per_sec} tok/s`], ["End-to-end", `${x.tokens_per_sec} tok/s`], ["Speed-up vs plain", x.ceiling_tokens_per_sec ? `${(x.decode_tokens_per_sec / x.ceiling_tokens_per_sec).toFixed(2)}×` : "–"],
+  const cells = [["Engine", x.mode === "vision" ? "Vision (mlx-vlm)" : x.mode === "gguf" ? "llama.cpp" : `MLX (${x.mode || "dspark"})`], ["Model", x.model || activeChat()?.name || "–"], ["Decode", `${x.decode_tokens_per_sec} tok/s`], ["End-to-end", `${x.tokens_per_sec} tok/s`], ["Speed-up vs plain", x.ceiling_tokens_per_sec ? `${(x.decode_tokens_per_sec / x.ceiling_tokens_per_sec).toFixed(2)}×` : "–"],
     ["Accept length", x.accept_len ?? "–"], ["First token", `${x.ttft_seconds}s`], ["Prefill", x.prefill_tokens_per_sec ? `${x.prefill_tokens_per_sec} tok/s` : "–"],
     ["Prompt tokens", x.prompt_tokens ?? "–"], ["Cached tokens", x.cached_tokens ?? "–"], ["Output tokens", x.completion_tokens ?? "–"], ["Decode time", x.decode_seconds != null ? `${x.decode_seconds}s` : "–"], ["Target passes", x.target_forwards ?? "–"], ["Draft cap", x.cap ?? "–"]];
   return `<div class="perfgrid">${cells.map(([l, v]) => `<div><div class="l">${l}</div><div class="v">${esc(v)}</div></div>`).join("")}</div>`;
@@ -808,7 +892,7 @@ function turnHTML(m, i, live = false) {
     return `<div class="turn user">${imgs || docs ? `<div class="uatts">${imgs}${docs}</div>` : ""}${m.content ? `<div class="bubble">${esc(m.content)}</div>` : ""}</div>`;
   }
   const waiting = live && !m.content && !m.reasoning;
-  const body = m.switching ? `<span class="shimmer">${m.switching === "vision" ? "Loading the vision engine to read your image… (about 10 s)" : "Starting the fast text engine… (about 10 s)"}</span>` : waiting ? `<span class="shimmer">${(current?.messages || []).some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span>` : md(m.content);
+  const body = m.switching ? `<span class="shimmer">${m.switching === "vision" ? `Loading ${esc(m.switchModel || "the vision engine")} with vision… (about 10 s)` : `Loading ${esc(m.switchModel || "the model")}… (first load takes 10–30 s)`}</span>` : waiting ? `<span class="shimmer">${(current?.messages || []).some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span>` : md(m.content);
   const tail = live && m.content ? '<span class="caret"></span>' : "";
   const actions = live ? "" : `<div class="actions"><button class="iconbtn" data-act="copy" title="Copy">${icon("i-copy")}</button><button class="iconbtn" data-act="regen" title="Regenerate">${icon("i-redo")}</button>${perfLine(m.stats)}</div>${perfGrid(m.stats)}`;
   return `<div class="turn bot" data-i="${i}">${thoughtHTML(m, live)}<div class="content">${body}${tail}</div>${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${actions}</div>`;
@@ -953,7 +1037,7 @@ async function generate() {
           const data = line.slice(5).trim(); if (data === "[DONE]") continue;
           let j; try { j = JSON.parse(data); } catch { continue; }
           if (j.error) { bot.error = typeof j.error === "string" ? j.error : (j.error.message || JSON.stringify(j.error)); continue; }
-          if (j.x_engine) { bot.switching = j.x_engine.status === "switching" ? j.x_engine.mode : null; if (bot.switching) poll(); repaint(); continue; }
+          if (j.x_engine) { bot.switching = j.x_engine.status === "switching" ? j.x_engine.mode : null; bot.switchModel = j.x_engine.model; if (bot.switching) poll(); repaint(); continue; }
           const d = j.choices?.[0]?.delta;
           const rc = d?.reasoning_content ?? d?.reasoning;
           if (rc) { if (!thinkStart) thinkStart = performance.now(); bot.reasoning += rc; }
@@ -967,7 +1051,7 @@ async function generate() {
   if (raf) cancelAnimationFrame(raf);
   if (thinkStart) bot.thoughtSecs = ((thinkEnd || performance.now()) - thinkStart) / 1000;
   if (!bot.error) delete bot.error;
-  delete bot.switching;
+  delete bot.switching; delete bot.switchModel;
   streaming = null; updateSend();
   renderThread(); scrollBottom();
   await saveChat(); poll();
@@ -982,7 +1066,7 @@ let activeJob = null;
 $("imgGo").onclick = async () => {
   const prompt = $("imgPrompt").value.trim(); if (!prompt) return $("imgPrompt").focus();
   const [w, h] = $("imgAspect").value.split("x"), fd = new FormData();
-  Object.entries({ prompt, width: w, height: h, steps: $("imgSteps").value, seed: $("imgSeed").value, guidance: $("imgGuidance").value, negative_prompt: $("imgNeg").value, step_cache: $("imgCache").value, mode: "generate" }).forEach(([k, v]) => fd.append(k, v));
+  Object.entries({ prompt, model_id: $("imgModel").value, width: w, height: h, steps: $("imgSteps").value, seed: $("imgSeed").value, guidance: $("imgGuidance").value, negative_prompt: $("imgNeg").value, step_cache: $("imgCache").value, mode: "generate" }).forEach(([k, v]) => fd.append(k, v));
   $("imgGo").disabled = true;
   try { const j = await api("/api/image", { method: "POST", body: fd }); activeJob = j.job; $("job").classList.add("on"); $("jobTitle").textContent = "Starting…"; $("jobSub").textContent = prompt; $("jobBar").style.width = "0"; $("jobPct").textContent = ""; track(j.job); }
   catch (e) { toast(e.message); $("imgGo").disabled = false; }
@@ -1013,7 +1097,7 @@ async function loadGallery() {
   $("gCount").textContent = gallery.length ? `${gallery.length} image${gallery.length > 1 ? "s" : ""}` : "";
   $("gallery").innerHTML = gallery.length ? gallery.map((m, i) => `<div class="gitem" data-i="${i}"><img src="${m.url}" loading="lazy" alt="">
     <div class="tools"><a href="${m.url}" download title="Download" data-stop>${icon("i-dl")}</a><button data-del="${i}" title="Delete">${icon("i-trash")}</button></div>
-    <div class="hov"><p>${esc(m.prompt)}</p><div class="s">${m.width}×${m.height} · ${m.steps} steps${m.elapsed ? " · " + Math.round(m.elapsed) + "s" : ""}</div></div></div>`).join("")
+    <div class="hov"><p>${esc(m.prompt)}</p><div class="s">${esc(m.model_name || "Qwen-Image 2.1")} · ${m.width}×${m.height} · ${m.steps} steps${m.elapsed ? " · " + Math.round(m.elapsed) + "s" : ""}</div></div></div>`).join("")
     : `<div class="empty">No images yet. Describe one above to get started.</div>`;
 }
 $("gallery").onclick = async (e) => {
@@ -1030,7 +1114,7 @@ async function deleteImage(m) {
 let lbItem = null;
 function openLightbox(m) {
   lbItem = m; $("lbImg").src = m.url; $("lbDl").href = m.url; $("lbPrompt").textContent = m.prompt;
-  const rows = [["Size", `${m.width} × ${m.height}`], ["Steps", m.steps], ["Seed", m.seed], ["Time", m.elapsed ? `${m.elapsed}s` : null], ["Per step", m.sec_per_step ? `${m.sec_per_step}s` : null],
+  const rows = [["Model", m.model_name || "Qwen-Image 2.1"], ["Size", `${m.width} × ${m.height}`], ["Steps", m.steps], ["Seed", m.seed], ["Time", m.elapsed ? `${m.elapsed}s` : null], ["Per step", m.sec_per_step ? `${m.sec_per_step}s` : null],
     ["Peak memory", m.peak_bytes ? `${gib(m.peak_bytes)} GB` : null], ["Guidance", m.guidance], ["Step cache", m.step_cache_ratio], ["Created", m.created ? new Date(m.created * 1000).toLocaleString() : null]];
   $("lbKv").innerHTML = rows.filter(([, v]) => v != null && v !== "").map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
   $("lbDlg").showModal();
@@ -1046,32 +1130,160 @@ $("lbReuse").onclick = () => {
   $("imgPrompt").focus(); document.querySelector("#v-images .scroll").scrollTop = 0;
 };
 
-// ---------------- manage
-async function loadManage() { loadModels(); loadStorage(); }
-async function loadModels() {
-  let rows = []; try { rows = await api("/api/models"); } catch {}
-  const total = rows.reduce((a, r) => a + (r.size_bytes || 0), 0);
-  $("modelsSum").textContent = `${human(total)} on disk · ~/.cache/huggingface/hub`;
-  $("modelRows").innerHTML = rows.map((r, i) => {
-    const badge = r.downloading ? `<span class="badge warn">Downloading…</span>` : r.installed ? `<span class="badge ok">Installed</span>` : r.incomplete ? `<span class="badge warn">Incomplete</span>` : r.download_error ? `<span class="badge warn">Download failed</span>` : `<span class="badge">Not downloaded</span>`;
-    const act = r.downloading ? "" : (r.installed || r.incomplete)
-      ? `<button class="btn danger sm" data-mdel="${i}">${icon("i-trash")}Delete</button>`
-      : r.group !== "other" ? `<button class="btn sm" data-mdl="${i}">${icon("i-dl")}Download${r.approx_gb ? ` · ${r.approx_gb} GB` : ""}</button>` : "";
-    return `<div class="row"><div class="grow"><div class="ttl">${esc(r.repo)}</div><div class="sub">${esc(r.role)}</div></div>${badge}<div class="size">${r.size_bytes ? human(r.size_bytes) : "—"}</div>${act}</div>`;
-  }).join("") || `<div class="row"><div class="sub">No models found.</div></div>`;
-  $("modelRows").onclick = async (e) => {
-    const d = e.target.closest("[data-mdel]"), g = e.target.closest("[data-mdl]");
-    if (d) {
-      const r = rows[+d.dataset.mdel];
-      if (!(await confirmBox(`Delete ${r.repo.split("/").pop()}?`, `Frees ${human(r.size_bytes)}. You can download it again later from this page.`))) return;
-      try { const res = await api(`/api/models?repo=${encodeURIComponent(r.repo)}`, { method: "DELETE" }); toast(`Deleted · freed ${human(res.freed_bytes)}`); } catch (err) { toast(err.message); }
-      loadModels();
-    }
-    if (g) { const r = rows[+g.dataset.mdl]; try { await jpost("/api/models/download", { repo: r.repo }); toast("Download started"); } catch (err) { toast(err.message); } loadModels(); }
-  };
-  if (rows.some((r) => r.downloading)) setTimeout(() => view === "manage" && loadModels(), 5000);
+// ---------------- library
+let lib = null, libTab = "chat", runningName = null, runningMode = null;
+const activeChat = () => lib?.chat.find((m) => m.active);
+const activeImage = () => lib?.image.find((m) => m.active);
+function updateHeader() {
+  if (view === "chat") {
+    const a = activeChat();
+    $("hdrTitle").textContent = runningName || a?.name || "Local Studio";
+    $("hdrSub").textContent = runningMode === "vision" ? "Vision" : runningMode === "gguf" ? "llama.cpp" : (a?.accel || "");
+  } else if (view === "images") { $("hdrTitle").textContent = activeImage()?.name || "Images"; $("hdrSub").textContent = "mflux"; }
+  else if (view === "library") { $("hdrTitle").textContent = "Model library"; $("hdrSub").textContent = ""; }
+  else { $("hdrTitle").textContent = "Settings"; $("hdrSub").textContent = ""; }
 }
-$("modelsRefresh").onclick = loadModels;
+async function loadLibrary() {
+  try { lib = await api("/api/models"); } catch { return; }
+  renderMenu(); renderImgModels(); updateHeader();
+  if (view === "library") renderLibrary();
+  if (!current?.messages?.length) $("input").placeholder = `Ask ${activeChat()?.name || "anything"}`;
+  clearTimeout(loadLibrary._t);
+  if ([...lib.chat, ...lib.image].some((m) => m.downloading)) loadLibrary._t = setTimeout(loadLibrary, 3000);
+}
+function tagsHTML(m) {
+  const t = [];
+  if (m.accel) t.push(`<span class="tag ${m.backend === "gguf" ? "gguf" : "accel"}">${esc(m.accel)}</span>`);
+  if (m.vision) t.push(`<span class="tag vision">Vision</span>`);
+  if (m.custom) t.push(`<span class="tag">Custom</span>`);
+  return t.join("");
+}
+function cardHTML(m) {
+  const inst = m.installed, dl = m.downloading;
+  const size = inst ? human(m.size_bytes) : `${m.size_gb} GB`;
+  let acts;
+  if (dl) acts = `<div style="flex:1"><div class="dlbar"><i style="width:${Math.round((m.progress || 0) * 100)}%"></i></div><div class="sub" style="margin-top:5px">Downloading · ${human(m.size_bytes)} of ~${m.size_gb} GB</div></div><button class="btn sm" data-cancel="${m.id}">Cancel</button>`;
+  else if (!inst) acts = `<button class="btn primary sm" data-dl="${m.id}">${icon("i-dl")}Download · ${m.size_gb} GB</button>${m.download_error ? `<span class="sub" style="color:var(--bad)">Download failed, try again</span>` : ""}<span class="grow"></span>${m.custom ? `<button class="btn sm danger" data-del="${m.id}">Remove</button>` : ""}`;
+  else acts = `${m.active ? `<span class="badge ok">${icon("i-check", "width:13px;height:13px")}Active</span>` : `<button class="btn primary sm" data-use="${m.id}" data-kind="${m.kind}">Use</button>`}<span class="grow"></span><button class="btn sm danger" data-del="${m.id}">${icon("i-trash")}Delete</button>`;
+  const facts = [`<span>Size <b>${size}</b></span>`];
+  if (m.ram_gb) facts.push(`<span>Memory <b>~${m.ram_gb} GB</b></span>`);
+  if (m.steps) facts.push(`<span>Default <b>${m.steps} steps</b></span>`);
+  return `<div class="mcard${m.active ? " active" : ""}"><div class="top"><div style="min-width:0"><h4>${esc(m.name)}</h4><div class="repo" title="${esc(m.repo)}">${esc(m.repo)}${m.file ? " · " + esc(m.file.replace(/\.gguf$/, "")) : ""}</div></div><div class="tags">${tagsHTML(m)}</div></div>
+    <p>${esc(m.blurb || "")}</p><div class="facts">${facts.join("")}</div><div class="acts">${acts}</div></div>`;
+}
+function renderLibrary() {
+  $("libDisk").textContent = `${human(lib.disk_free_bytes)} free.`;
+  ["chat", "image", "search"].forEach((t) => { $("lib" + t[0].toUpperCase() + t.slice(1)).style.display = t === libTab ? "" : "none"; });
+  $("libTabs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.t === libTab));
+  $("libFilterWrap").style.display = libTab === "chat" ? "" : "none";
+  const f = $("libFilter").value;
+  const chat = lib.chat.filter((m) => f === "all" || (f === "installed" ? m.installed : f === "gguf" ? m.backend === "gguf" : m.backend !== "gguf"));
+  let html = chat.map(cardHTML).join("");
+  if (!lib.llama_cpp && chat.some((m) => m.backend === "gguf")) html = `<div class="empty" style="grid-column:1/-1">llama.cpp isn't installed, so GGUF models can't run yet. Use Settings → Update engines to install it.</div>` + html;
+  $("libChat").innerHTML = html || `<div class="empty">No models match this filter.</div>`;
+  $("libImage").innerHTML = lib.image.map(cardHTML).join("");
+  $("libOtherWrap").style.display = lib.other.length && libTab !== "search" ? "" : "none";
+  $("libOther").innerHTML = lib.other.map((o) => `<div class="row"><div class="grow"><div class="ttl">${esc(o.repo)}</div></div><div class="size">${human(o.size_bytes)}</div><button class="btn sm danger" data-delrepo="${esc(o.repo)}">Delete</button></div>`).join("");
+}
+$("libTabs").onclick = (e) => { const b = e.target.closest("button"); if (b) { libTab = b.dataset.t; renderLibrary(); if (libTab === "search") $("hfQ").focus(); } };
+$("libFilter").onchange = renderLibrary;
+document.querySelector("#v-library .page").addEventListener("click", async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const find = (id) => [...lib.chat, ...lib.image].find((m) => m.id === id);
+  try {
+    if (b.dataset.dl) { await jpost("/api/models/download", { id: b.dataset.dl }); toast(`Downloading ${find(b.dataset.dl).name}…`); }
+    else if (b.dataset.cancel) { await jpost("/api/models/cancel", { id: b.dataset.cancel }); toast("Download cancelled"); }
+    else if (b.dataset.use) { await setActive(b.dataset.use, b.dataset.kind); }
+    else if (b.dataset.del) {
+      const m = find(b.dataset.del);
+      if (!(await confirmBox(`Delete ${m.name}?`, m.installed ? `Frees about ${human(m.size_bytes)}. You can download it again any time.` : "Removes it from your library.", "Delete"))) return;
+      const r = await api(`/api/models?id=${encodeURIComponent(m.id)}`, { method: "DELETE" }); toast(`Deleted · freed ${human(r.freed_bytes)}`);
+    } else if (b.dataset.delrepo) {
+      if (!(await confirmBox(`Delete ${b.dataset.delrepo}?`, "Removes these cached files from disk.", "Delete"))) return;
+      const r = await api(`/api/models?repo=${encodeURIComponent(b.dataset.delrepo)}`, { method: "DELETE" }); toast(`Freed ${human(r.freed_bytes)}`);
+    } else return;
+  } catch (err) { toast(err.message); }
+  loadLibrary();
+});
+async function setActive(id, kind = "chat") {
+  await jpost("/api/models/active", { id, kind });
+  const m = [...lib.chat, ...lib.image].find((x) => x.id === id);
+  toast(kind === "image" ? `Images now use ${m.name}` : engineState === "down" ? `${m.name} selected` : `Switching to ${m.name}…`);
+  await loadLibrary(); setTimeout(poll, 600);
+}
+function renderMenu() {
+  const inst = lib.chat.filter((m) => m.installed);
+  $("mmList").innerHTML = inst.map((m) => `<div class="mmrow${m.active ? " on" : ""}" data-mm="${m.id}">${icon("i-check", "").replace('class="i"', 'class="i ck"')}<div class="nm">${esc(m.name)}<div class="d">${esc(m.accel || "")}${m.vision ? " · Vision" : ""} · ~${m.ram_gb || m.size_gb} GB</div></div></div>`).join("") || `<div class="mmrow"><div class="nm d">No chat models downloaded yet</div></div>`;
+}
+$("mmList").onclick = async (e) => { const r = e.target.closest("[data-mm]"); if (!r) return; closeMenus(); if (streaming) return toast("Wait for the reply to finish"); try { await setActive(r.dataset.mm); } catch (err) { toast(err.message); } };
+function renderImgModels() {
+  const sel = $("imgModel"), cur = sel.value;
+  const inst = lib.image.filter((m) => m.installed);
+  sel.innerHTML = inst.map((m) => `<option value="${m.id}"${m.active ? " selected" : ""}>${esc(m.name)}</option>`).join("") + `<option value="__lib">Get more models…</option>`;
+  if (cur && inst.some((m) => m.id === cur)) sel.value = cur;
+  const m = lib.image.find((x) => x.id === sel.value) || activeImage();
+  if (m) { $("imgLead").textContent = `${m.name} · ${m.blurb}`; setStepOptions(m.steps); }
+}
+function setStepOptions(def) {
+  const opts = [...new Set([def, 4, 8, 20, 30, 40].filter(Boolean))].sort((a, b) => a - b);
+  $("imgSteps").innerHTML = opts.map((n) => `<option value="${n}"${n === def ? " selected" : ""}>${n} steps${n === def ? " · recommended" : ""}</option>`).join("");
+}
+$("imgModel").onchange = async () => {
+  if ($("imgModel").value === "__lib") { libTab = "image"; showView("library"); return; }
+  try { await setActive($("imgModel").value, "image"); } catch (err) { toast(err.message); }
+};
+// Hugging Face search
+let hfKind = "mlx";
+$("hfKind").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; hfKind = b.dataset.v; $("hfKind").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); if ($("hfQ").value.trim()) hfSearch(); };
+$("hfGo").onclick = () => hfSearch();
+$("hfQ").addEventListener("keydown", (e) => { if (e.key === "Enter") hfSearch(); });
+async function hfSearch() {
+  const q = $("hfQ").value.trim(); if (!q) return;
+  $("hfResults").innerHTML = `<div class="sub">Searching…</div>`;
+  let rows; try { rows = await api(`/api/hf/search?q=${encodeURIComponent(q)}&kind=${hfKind}`); } catch (e) { $("hfResults").innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  $("hfResults").innerHTML = rows.length ? rows.map((r) => `<div class="hfrow" data-repo="${esc(r.repo)}"><div class="grow"><div class="ttl">${esc(r.repo)}</div><div class="sub">${r.downloads.toLocaleString()} downloads · ${r.likes} likes${r.pipeline ? " · " + esc(r.pipeline) : ""}</div></div><span class="hfact"><button class="btn sm" data-inspect>Choose…</button></span></div>`).join("") : `<div class="empty">No ${hfKind.toUpperCase()} models found for “${esc(q)}”.</div>`;
+}
+$("hfResults").onclick = async (e) => {
+  const row = e.target.closest(".hfrow"); if (!row) return;
+  const repo = row.dataset.repo, act = row.querySelector(".hfact");
+  if (e.target.closest("[data-inspect]")) {
+    act.innerHTML = `<span class="sub">Checking files…</span>`;
+    let info; try { info = await api(`/api/hf/files?repo=${encodeURIComponent(repo)}`); } catch (err) { act.innerHTML = `<span class="err">${esc(err.message)}</span>`; return; }
+    if (hfKind === "gguf") {
+      if (!info.ggufs.length) { act.innerHTML = `<span class="sub">No GGUF files</span>`; return; }
+      const pick = info.ggufs.find((g) => /Q4_K_M/i.test(g.file)) || info.ggufs[0];
+      act.innerHTML = `<select data-file>${info.ggufs.map((g) => `<option value="${esc(g.file)}"${g === pick ? " selected" : ""}>${esc(g.file.split("/").pop())} · ${human(g.size)}</option>`).join("")}</select>
+        ${info.mmproj.length ? `<label class="sub" style="display:inline-flex;gap:5px;align-items:center"><input type="checkbox" data-mmproj="${esc((info.mmproj.find((m) => /F16/i.test(m.file)) || info.mmproj[0]).file)}" checked>Vision</label>` : ""}
+        <button class="btn primary sm" data-add>Download</button>`;
+    } else {
+      act.innerHTML = `<span class="sub">${human(info.total)}</span> ${info.has_config ? `<button class="btn primary sm" data-add>Download</button>` : `<span class="sub">Not an MLX model</span>`}`;
+    }
+    return;
+  }
+  if (e.target.closest("[data-add]")) {
+    const body = { repo, backend: hfKind };
+    if (hfKind === "gguf") { body.file = act.querySelector("[data-file]").value; const mm = act.querySelector("[data-mmproj]"); if (mm?.checked) body.mmproj = mm.dataset.mmproj; }
+    try { const m = await jpost("/api/models/custom", body); toast(`Downloading ${m.name}…`); act.innerHTML = `<span class="badge warn">Downloading — see Chat models</span>`; loadLibrary(); }
+    catch (err) { toast(err.message); }
+  }
+};
+// ---------------- settings
+async function loadManage() { loadStorage(); loadVersions(); loadLibrary().then(() => {
+  const inst = lib.chat.concat(lib.image).filter((m) => m.installed);
+  $("modelsSum").textContent = `${inst.length} downloaded · ${human(inst.reduce((a, m) => a + m.size_bytes, 0))} on disk · ${human(lib.disk_free_bytes)} free`;
+}); }
+$("apiCopy").onclick = () => { navigator.clipboard.writeText($("apiUrl").textContent); toast("Copied"); };
+async function loadVersions() {
+  let v; try { v = await api("/api/versions"); } catch { return; }
+  const rows = [["Local Studio", v.app], ["mlx-dspark", v["mlx-dspark"]], ["mlx-vlm", v["mlx-vlm"]], ["MLX", v.mlx], ["mflux", v.mflux], ["llama.cpp", v["llama.cpp"] || "not installed"]];
+  $("verKvs").innerHTML = rows.map(([l, val]) => `<div><div class="l">${l}</div><div class="v">${esc(val || "–")}</div></div>`).join("");
+  const u = v.update || {};
+  $("updRow").style.display = u.status && u.status !== "idle" ? "" : "none";
+  $("updBtn").disabled = u.status === "running";
+  if (u.status === "running") { $("updStatus").textContent = `Updating… ${u.step || ""}`; setTimeout(loadVersions, 3000); }
+  if (u.status === "done") { const ch = Object.entries(u.changed || {}); $("updStatus").textContent = ch.length ? "Updated: " + ch.map(([k, [a, b]]) => `${k} ${a || "–"} → ${b}`).join(", ") + ". Restart the engine to use the new versions." : "Everything is already up to date."; }
+}
+$("updBtn").onclick = async () => { try { await jpost("/api/versions/update"); toast("Checking for updates…"); loadVersions(); } catch (e) { toast(e.message); } };
 const STORAGE = [["gallery", "Generated images", "Images in your library and their settings"], ["chats", "Conversations", "Saved chat history"], ["uploads", "Uploads", "Reference images you uploaded"], ["logs", "Logs", "Server and download logs"], ["engine_cache", "Engine calibration", "mlx-dspark speed calibration, rebuilt automatically"]];
 async function loadStorage() {
   let s; try { s = await api("/api/storage"); } catch { return; }
@@ -1092,13 +1304,15 @@ async function loadStorage() {
 $("unConfirm").oninput = () => $("unBtn").disabled = $("unConfirm").value.trim().toLowerCase() !== "uninstall";
 $("unBtn").onclick = async () => {
   const removeApp = $("unApp").checked;
-  if (!(await confirmBox("Uninstall Local Studio?", `This removes the engine, the image tool and ~27 GB of models${removeApp ? ", and deletes the app folder with your images and chats" : ""}. This page will stop working.`, "Uninstall"))) return;
+  if (!(await confirmBox("Uninstall Local Studio?", `This removes the engines, the Mac app and every downloaded model${removeApp ? ", and deletes the app folder with your images and chats" : ""}. This page will stop working.`, "Uninstall"))) return;
   try { const r = await jpost("/api/uninstall", { remove_app: removeApp }); document.body.innerHTML = `<div style="height:100vh;display:grid;place-items:center;font:15px Inter,system-ui;color:#555;text-align:center;padding:24px"><div><h2 style="color:#111;font-weight:600">Uninstalling…</h2><p>Progress is written to <code>${esc(r.log)}</code>.<br>You can close this tab.</p></div></div>`; }
   catch (e) { toast(e.message); }
 };
 
 // ---------------- boot
 (async () => {
+  api("/api/system").then((s) => { $("verBadge").textContent = s.version; });
+  await loadLibrary();
   showView("chat");
   renderThread();
   await loadChats();
