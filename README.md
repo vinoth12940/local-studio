@@ -7,7 +7,7 @@ accelerated by **DFlash/DSpark** speculative decoding or any **GGUF** model on *
 about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Image Turbo** or
 **FLUX.2 Klein**. Everything runs locally; nothing leaves your Mac.
 
-**Version 1.2.0**
+**Version 1.2.1**
 
 ![Chat](docs/chat.jpg)
 
@@ -44,7 +44,7 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 
 ### The easy way (recommended)
 
-1. Download **Local-Studio-1.2.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+1. Download **Local-Studio-1.2.1.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
 2. Open it and drag **Local Studio** into **Applications**.
 3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
    engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew

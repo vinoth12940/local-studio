@@ -12,6 +12,10 @@ BUILD=$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)
 
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 
+echo "==> Checking UI script"
+if command -v node >/dev/null 2>&1; then node "$HERE/check_ui.js" "$ROOT/index.html"; else echo "   (node not found, skipped)"; fi
+python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$ROOT/app.py" && echo "   app.py OK"
+
 echo "==> Compiling"
 xcrun swiftc -O -target arm64-apple-macos14.0 -framework Cocoa -framework WebKit \
   "$HERE/main.swift" -o "$APP/Contents/MacOS/LocalStudio"

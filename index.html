@@ -176,6 +176,14 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .perfgrid .l { font-size: 11.5px; color: var(--muted); }
 .perfgrid .v { font-family: "JetBrains Mono", monospace; font-size: 13px; }
 .err { color: var(--bad); font-size: 14px; margin-top: 6px; }
+.err[hidden], .thought[hidden] { display: none; }
+.cutoff { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--warn); }
+.thought summary .tw { color: var(--muted); font-size: 12.5px; }
+.thought .tb { overscroll-behavior: contain; scrollbar-width: thin; }
+.thought .tb::-webkit-scrollbar { width: 6px; } .thought .tb::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 6px; }
+.jump { position: absolute; left: 50%; transform: translateX(-50%); bottom: 150px; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--raised); color: var(--ink); box-shadow: var(--shadow); cursor: pointer; display: none; font-size: 17px; z-index: 5; }
+.jump.on { display: block; }
+.pillbtn:disabled, .sel select:disabled { opacity: .45; cursor: default; }
 
 .welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 24px 8vh; }
 .welcome h1 { font-size: 28px; font-weight: 500; letter-spacing: -.02em; margin: 0 0 28px; text-align: center; }
@@ -492,6 +500,7 @@ dialog::backdrop { background: var(--overlay); }
     <section class="view" id="v-chat">
       <div class="dropzone" id="dropzone"><div><b>Drop files to attach</b>Images, PDF, Word, Excel, text and code</div></div>
       <div class="scroll" id="chatScroll"><div class="thread" id="thread"></div></div>
+      <button class="jump" id="jumpBtn" title="Jump to latest">&#8595;</button>
       <div class="composer-wrap" id="composerWrap">
         <div class="composer">
           <div class="atts" id="atts"></div>
@@ -629,7 +638,7 @@ dialog::backdrop { background: var(--overlay); }
   <div style="display:flex; flex-direction:column; gap:12px; margin:14px 0 18px">
     <label class="field">System prompt<input id="sysPrompt" placeholder="Optional instructions for every reply"></label>
     <div style="display:flex; gap:12px">
-      <label class="field" style="flex:1">Max tokens<input id="maxTok" type="number" min="64" step="256" value="4096"></label>
+      <label class="field" style="flex:1">Max tokens (thinking + answer)<input id="maxTok" type="number" min="256" step="1024" value="16384"></label>
       <label class="field" style="flex:1">Temperature<input id="temp" placeholder="Model default"></label>
     </div>
   </div>
@@ -644,6 +653,7 @@ dialog::backdrop { background: var(--overlay); }
 
 <script>
 const $ = (id) => document.getElementById(id);
+const DEFAULT_MAX_TOKENS = 16384;   // thinking + answer; the server trims it to fit the context
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const gib = (b) => (b / 2 ** 30).toFixed(1);
 const human = (b) => b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GB` : b >= 2 ** 20 ? `${(b / 2 ** 20).toFixed(1)} MB` : b >= 1024 ? `${(b / 1024).toFixed(0)} KB` : `${b} B`;
@@ -719,7 +729,7 @@ $("inspBtn").onclick = (e) => { e.stopPropagation(); $("inspector").classList.to
 $("inspClose").onclick = () => $("inspector").classList.remove("on");
 $("mmSettings").onclick = () => { closeMenus(); $("settingsDlg").showModal(); };
 $("settingsDone").onclick = () => { $("settingsDlg").close(); store.set("settings", { sys: $("sysPrompt").value, max: $("maxTok").value, temp: $("temp").value }); toast("Settings saved"); };
-{ const s = store.get("settings", {}); $("sysPrompt").value = s.sys || ""; $("maxTok").value = s.max || 4096; $("temp").value = s.temp || ""; }
+{ const s = store.get("settings", {}); $("sysPrompt").value = s.sys || ""; $("maxTok").value = s.max || DEFAULT_MAX_TOKENS; $("temp").value = s.temp || ""; }
 
 // ---------------- engine status
 let health = null, metrics = null, engineState = "down";
@@ -835,7 +845,7 @@ $("newChat").onclick = newChat;
 document.addEventListener("keydown", (e) => { if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); newChat(); } });
 async function saveChat() {
   if (!current) return;
-  const msgs = current.messages.map(({ role, content, reasoning, stats, thoughtSecs, error, attachments }) => ({ role, content, reasoning, stats, thoughtSecs, error, attachments }));
+  const msgs = current.messages.map(({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish }) => ({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish }));
   await jpost(`/api/chats/${current.id}`, { title: current.title, messages: msgs }, "PUT");
   loadChats();
 }
@@ -911,8 +921,9 @@ function perfGrid(x) {
 function thoughtHTML(m, live) {
   if (!m.reasoning) return "";
   const thinkingNow = live && !m.content;
-  const label = thinkingNow ? `<span class="shimmer">Thinking…</span>` : `Thought for ${m.thoughtSecs ? (Math.max(1, Math.round(m.thoughtSecs)) === 1 ? "1 second" : Math.round(m.thoughtSecs) + " seconds") : "a moment"}`;
-  return `<details class="thought"${thinkingNow ? " open" : ""}><summary>${label}${icon("i-right")}</summary><div class="tb">${esc(m.reasoning)}</div></details>`;
+  const words = m.reasoning.trim().split(/\s+/).length;
+  const label = thinkingNow ? `<span class="shimmer">Thinking…</span>` : `${m.thoughtSecs ? `Thought for ${fmtSecs(m.thoughtSecs)}` : "Thought process"} <span class="tw">· ${words.toLocaleString()} words</span>`;
+  return `<details class="thought"${thinkingNow || m.thoughtOpen ? " open" : ""}><summary>${label}${icon("i-right")}</summary><div class="tb">${esc(m.reasoning)}</div></details>`;
 }
 function turnHTML(m, i, live = false) {
   if (m.role === "user") {
@@ -925,7 +936,8 @@ function turnHTML(m, i, live = false) {
   const body = m.switching ? `<span class="shimmer">${m.switching === "vision" ? `Loading ${esc(m.switchModel || "the vision engine")} with vision… (about 10 s)` : `Loading ${esc(m.switchModel || "the model")}… (first load takes 10–30 s)`}</span>` : waiting ? `<span class="shimmer">${(current?.messages || []).some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span>` : md(m.content);
   const tail = live && m.content ? '<span class="caret"></span>' : "";
   const actions = live ? "" : `<div class="actions"><button class="iconbtn" data-act="copy" title="Copy">${icon("i-copy")}</button><button class="iconbtn" data-act="regen" title="Regenerate">${icon("i-redo")}</button>${perfLine(m.stats)}</div>${perfGrid(m.stats)}`;
-  return `<div class="turn bot" data-i="${i}">${thoughtHTML(m, live)}<div class="content">${body}${tail}</div>${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${actions}</div>`;
+  const cut = !live && m.finish === "length" ? `<div class="cutoff">${icon("i-x", "width:14px;height:14px")}The reply hit the length limit. <button class="btn sm" data-act="continue">Continue</button></div>` : "";
+  return `<div class="turn bot" data-i="${i}">${thoughtHTML(m, live)}<div class="content">${body}${tail}</div>${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
 }
 $("thread").onclick = (e) => {
   const full = e.target.closest(".uatts img[data-full]");
@@ -934,6 +946,9 @@ $("thread").onclick = (e) => {
   if (e.target.closest("[data-perf]")) { turn.querySelector(".perfgrid")?.classList.toggle("on"); return; }
   const act = e.target.closest("[data-act]")?.dataset.act, m = current.messages[+turn.dataset.i];
   if (act === "copy") { navigator.clipboard.writeText(m.content); toast("Copied to clipboard"); }
+  if (act === "continue" && !streaming) {
+    $("input").value = "Continue exactly where you left off."; autosize(); send(); return;
+  }
   if (act === "regen" && !streaming) {
     current.messages = current.messages.slice(0, +turn.dataset.i); renderThread(); generate();
   }
@@ -951,7 +966,23 @@ function drawSpark() {
   const d = pts.map((v, i) => `${i ? "L" : "M"}${(i / (pts.length - 1) * W).toFixed(1)} ${(H - v / max * (H - 4) - 2).toFixed(1)}`).join(" ");
   svg.innerHTML = `<path d="${d} L${W} ${H} L0 ${H}Z" fill="currentColor" opacity=".07"/><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
 }
-function scrollBottom(force) { const s = $("chatScroll"); if (force || s.scrollHeight - s.scrollTop - s.clientHeight < 140) s.scrollTop = s.scrollHeight; }
+// Auto-scroll only while the reader is at the bottom; scrolling up pauses it (a "↓" button returns).
+let stick = true;
+const fmtSecs = (x) => { const n = Math.max(1, Math.round(x || 0)); return n === 1 ? "1 second" : n < 90 ? `${n} seconds` : `${Math.round(n / 60)} minutes`; };
+function scrollBottom(force) {
+  const s = $("chatScroll");
+  if (force) stick = true;
+  if (stick) { s.scrollTop = s.scrollHeight; }
+  $("jumpBtn").classList.toggle("on", !stick && s.scrollHeight - s.scrollTop - s.clientHeight > 80);
+}
+$("chatScroll").addEventListener("scroll", () => {
+  const s = $("chatScroll"), gap = s.scrollHeight - s.scrollTop - s.clientHeight;
+  stick = gap < 40;
+  $("jumpBtn").classList.toggle("on", gap > 80);
+}, { passive: true });
+$("chatScroll").addEventListener("wheel", (e) => { if (e.deltaY < 0) stick = false; }, { passive: true });
+$("jumpBtn").onclick = () => scrollBottom(true);
+function modelThinks() { try { const a = activeChat(); return !a || a.thinking !== false; } catch { return true; } }   // lib may not exist yet at start-up
 
 // attachments
 let pending = [];            // {key, name, busy, meta?, error?, preview?}
@@ -1008,7 +1039,13 @@ function updateSend() {
   b.disabled = !streaming && (busy || (!$("input").value.trim() && !ready));
 }
 $("send").onclick = () => streaming ? streaming.abort() : send();
-function syncThink() { $("thinkPill").classList.toggle("on", thinking); $("thinkSw").checked = thinking; store.set("think", thinking); }
+function syncThink() {
+  const can = modelThinks();
+  $("thinkPill").classList.toggle("on", thinking && can);
+  $("thinkPill").disabled = !can; $("effortSel").disabled = !can;
+  $("thinkPill").title = can ? "Reason step by step before answering" : `${activeChat()?.name || "This model"} doesn't have a thinking mode`;
+  $("thinkSw").checked = thinking; store.set("think", thinking);
+}
 $("thinkPill").onclick = () => { thinking = !thinking; syncThink(); };
 $("thinkSw").onchange = () => { thinking = $("thinkSw").checked; syncThink(); };
 function syncEffort() { $("effortSel").value = effort; $("effortSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.v === effort)); store.set("effort", effort); }
@@ -1031,29 +1068,46 @@ async function generate() {
   const bot = { role: "assistant", content: "", reasoning: "" };
   current.messages.push(bot);
   const idx = current.messages.length - 1;
-  $("thread").insertAdjacentHTML("beforeend", turnHTML(bot, idx, true));
-  let el = $("thread").lastElementChild;
-  scrollBottom(true);
+  // Stable DOM for the live reply: the thinking panel and answer are updated in place, so the
+  // panel keeps its open/closed state and its own scroll position while tokens stream in.
+  $("thread").insertAdjacentHTML("beforeend", `<div class="turn bot" data-i="${idx}" data-live="1">
+    <details class="thought" hidden><summary><span class="tl shimmer">Thinking…</span>${icon("i-right")}</summary><div class="tb"></div></details>
+    <div class="content"><span class="shimmer">${current.messages.some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span></div>
+    <div class="err" hidden></div></div>`);
+  const el = $("thread").lastElementChild;
+  const th = el.querySelector(".thought"), tl = th.querySelector(".tl"), tb = th.querySelector(".tb");
+  const contentEl = el.querySelector(".content"), errEl = el.querySelector(".err");
+  let userToggled = false;                               // a click on the header means "leave it as I set it"
+  th.querySelector("summary").addEventListener("click", () => { userToggled = true; });
+  const setOpen = (v) => { th.open = v; };
+  stick = true; scrollBottom(true);
+
   const s = store.get("settings", {});
   const messages = [];
   if (s.sys) messages.push({ role: "system", content: s.sys });
   current.messages.slice(0, -1).forEach((m) => messages.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map((a) => a.id) } : {}) }));
-  const body = { messages, max_tokens: +s.max || 4096, enable_thinking: thinking };
-  if (effort) body.reasoning_effort = effort;
+  const body = { messages, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
+  if (effort && modelThinks()) body.reasoning_effort = effort;
   if (s.temp) body.temperature = +s.temp;
   streaming = new AbortController(); updateSend();
-  let thinkStart = 0, thinkEnd = 0, raf = 0;
-  const repaint = () => {
-    if (raf) return;
-    raf = requestAnimationFrame(() => {
-      raf = 0;
-      const prevOpen = el.querySelector(".thought")?.open;
-      const tmp = document.createElement("div"); tmp.innerHTML = turnHTML(bot, idx, true);
-      const n = tmp.firstElementChild; el.replaceWith(n); el = n;
-      const th = n.querySelector(".thought"); if (th && bot.content && prevOpen !== undefined) th.open = prevOpen;
-      scrollBottom();
-    });
+  let thinkStart = 0, thinkEnd = 0, raf = 0, pendingThought = "";
+
+  const paint = () => {
+    raf = 0;
+    if (pendingThought) {
+      const atEnd = tb.scrollHeight - tb.scrollTop - tb.clientHeight < 24;
+      tb.append(pendingThought); pendingThought = "";
+      if (atEnd) tb.scrollTop = tb.scrollHeight;        // follow the thinking unless the user scrolled up in it
+    }
+    if (bot.switching) contentEl.innerHTML = `<span class="shimmer">${bot.switching === "vision" ? `Loading ${esc(bot.switchModel || "the model")} with vision… (about 10 s)` : `Loading ${esc(bot.switchModel || "the model")}… (first load takes 10–30 s)`}</span>`;
+    else if (bot.content) contentEl.innerHTML = md(bot.content) + '<span class="caret"></span>';
+    else if (bot.reasoning) contentEl.innerHTML = "";
+    scrollBottom();
   };
+  // rAF pauses while the window is hidden or covered; fall back to a timer so the reply keeps
+  // rendering (and is complete when the user comes back).
+  const repaint = () => { if (!raf) raf = document.hidden ? -setTimeout(paint, 150) : requestAnimationFrame(paint); };
+  const thoughtLabel = () => `Thought for ${fmtSecs(bot.thoughtSecs)}`;
   try {
     const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: streaming.signal });
     const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
@@ -1068,22 +1122,39 @@ async function generate() {
           let j; try { j = JSON.parse(data); } catch { continue; }
           if (j.error) { bot.error = typeof j.error === "string" ? j.error : (j.error.message || JSON.stringify(j.error)); continue; }
           if (j.x_engine) { bot.switching = j.x_engine.status === "switching" ? j.x_engine.mode : null; bot.switchModel = j.x_engine.model; if (bot.switching) poll(); repaint(); continue; }
-          const d = j.choices?.[0]?.delta;
+          const ch = j.choices?.[0], d = ch?.delta;
+          if (ch?.finish_reason) bot.finish = ch.finish_reason;
           const rc = d?.reasoning_content ?? d?.reasoning;
-          if (rc) { if (!thinkStart) thinkStart = performance.now(); bot.reasoning += rc; }
-          if (d?.content) { if (thinkStart && !thinkEnd) thinkEnd = performance.now(); bot.content += d.content; }
+          if (rc) {
+            if (!thinkStart) { thinkStart = performance.now(); th.hidden = false; if (!userToggled) setOpen(true); }
+            bot.reasoning += rc; pendingThought += rc;
+          }
+          if (d?.content) {
+            if (thinkStart && !thinkEnd) {
+              thinkEnd = performance.now(); bot.thoughtSecs = (thinkEnd - thinkStart) / 1000;
+              tl.className = "tl"; tl.textContent = thoughtLabel();
+              if (!userToggled) setOpen(false);              // collapse once the answer starts, unless the user opened it
+            }
+            bot.content += d.content;
+          }
           if (j.x_mlx_dspark) bot.stats = j.x_mlx_dspark;
           repaint();
         }
       }
     }
   } catch (e) { bot.error = e.name === "AbortError" ? (bot.content ? "" : "Stopped.") : String(e.message || e); }
-  if (raf) cancelAnimationFrame(raf);
-  if (thinkStart) bot.thoughtSecs = ((thinkEnd || performance.now()) - thinkStart) / 1000;
+  if (raf) { raf < 0 ? clearTimeout(-raf) : cancelAnimationFrame(raf); paint(); }
+  if (thinkStart && !thinkEnd) bot.thoughtSecs = (performance.now() - thinkStart) / 1000;
   if (!bot.error) delete bot.error;
   delete bot.switching; delete bot.switchModel;
+  bot.thoughtOpen = th.open;                               // keep the panel as the user left it
   streaming = null; updateSend();
-  renderThread(); scrollBottom();
+  // Swap in the finished turn (actions + stats) without touching the rest of the thread.
+  const tbScroll = tb.scrollTop;
+  const tmp = document.createElement("div"); tmp.innerHTML = turnHTML(bot, idx);
+  const done = tmp.firstElementChild; el.replaceWith(done);
+  const ntb = done.querySelector(".thought .tb"); if (ntb) ntb.scrollTop = tbScroll;
+  showPerf(bot.stats); drawSpark(); scrollBottom();
   await saveChat(); poll();
 }
 
@@ -1175,7 +1246,7 @@ function updateHeader() {
 }
 async function loadLibrary() {
   try { lib = await api("/api/models"); } catch { return; }
-  renderMenu(); renderImgModels(); updateHeader();
+  renderMenu(); renderImgModels(); updateHeader(); syncThink();
   if (view === "library") renderLibrary();
   const noModel = !lib.chat.some((m) => m.installed);
   if (!current?.messages?.length && view === "chat" && (noModel || loadLibrary._noModel)) renderThread();   // onboarding only

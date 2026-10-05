@@ -25,7 +25,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 ROOT = Path(__file__).resolve().parent                       # code (inside the .app when bundled)
 STATE = Path(os.environ.get("LOCAL_STUDIO_HOME", ROOT))      # user data: images, chats, logs
@@ -633,6 +633,17 @@ async def chat(request: Request):
     m = chat_model(body.pop("model_id", None))
     messages, needs_vision = build_messages(body.get("messages", []))
     body["messages"] = messages
+    # Keep prompt + reply inside the context window: long documents leave less room to answer.
+    prompt_chars, images = 0, 0
+    for msg in messages:
+        c = msg.get("content")
+        if isinstance(c, list):
+            prompt_chars += sum(len(p.get("text", "")) for p in c if p.get("type") == "text")
+            images += sum(1 for p in c if p.get("type") == "image_url")
+        else:
+            prompt_chars += len(c or "")
+    room = CONTEXT - int(prompt_chars / 3.2) - images * 1200 - 512
+    body["max_tokens"] = max(512, min(int(body.get("max_tokens") or 16384), room))
     body["stream"] = True
     body.setdefault("stream_options", {"include_usage": True})
     gguf = m.get("backend") == "gguf"

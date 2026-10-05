@@ -77,7 +77,8 @@
       "vision": false,
       "size_gb": 2.9,
       "ram_gb": 4,
-      "blurb": "Tiny and very fast (200+ tok/s). Good for quick rewrites and summaries."
+      "blurb": "Tiny and very fast (200+ tok/s). Good for quick rewrites and summaries.",
+      "thinking": false
     },
     {
       "id": "gguf-qwen3-coder-30b",
@@ -89,7 +90,8 @@
       "vision": false,
       "size_gb": 18.6,
       "ram_gb": 20,
-      "blurb": "Coding specialist, Q4_K_M quantization. Runs on llama.cpp."
+      "blurb": "Coding specialist, Q4_K_M quantization. Runs on llama.cpp.",
+      "thinking": false
     },
     {
       "id": "gguf-qwen3.6-35b-a3b",
