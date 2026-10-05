@@ -163,8 +163,8 @@ From the UI: **Models & storage → Uninstall**. Or from the terminal:
 ./uninstall.sh --remove-app  # also delete this folder (images and chats)
 ```
 
-Also delete `/Applications/Local Studio.app` if you installed it. This stops the servers, runs `uv tool uninstall` for mlx-dspark and mflux, deletes the Qwen
-models from the Hugging Face cache, and removes `~/.cache/mlx_dspark`. uv itself is left installed.
+This stops the servers, runs `uv tool uninstall` for mlx-dspark and mflux, deletes the Qwen
+models from the Hugging Face cache, removes `~/.cache/mlx_dspark`, and deletes `/Applications/Local Studio.app` if present. uv itself is left installed.
 
 ## Project layout
 

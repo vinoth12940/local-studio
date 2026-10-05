@@ -52,6 +52,10 @@ for d in targets:
 print(f"   freed {freed / 2**30:.1f} GB")
 PY
 rm -rf ~/.cache/mlx_dspark
+if [[ -d "/Applications/Local Studio.app" ]]; then
+  echo "==> Removing /Applications/Local Studio.app"
+  rm -rf "/Applications/Local Studio.app"
+fi
 
 if (( REMOVE_APP )); then
   echo "==> Deleting $APP_DIR"
