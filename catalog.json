@@ -67,6 +67,17 @@
       "blurb": "Fast, light everyday assistant. Leaves plenty of memory for image generation."
     },
     {
+      "id": "lfm2.5-24b-a2b",
+      "name": "LFM2.5 24B-A2B",
+      "backend": "mlx",
+      "repo": "LiquidAI/LFM2.5-24B-A2B-MLX-4bit",
+      "accel": "MLX",
+      "vision": false,
+      "size_gb": 13.6,
+      "ram_gb": 15,
+      "blurb": "Liquid AI's reasoning MoE: only 2B active per token, so it's fast for its size (~85 tok/s). Built for agents and tool use."
+    },
+    {
       "id": "lfm2.5-1.2b",
       "name": "LFM2.5 1.2B",
       "backend": "mlx",

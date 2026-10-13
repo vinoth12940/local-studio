@@ -122,6 +122,7 @@ Chat models (one-click in the Model library; sizes are download sizes):
 | Nemotron 3.5 Lightning 30B-A3B | MLX + DSpark | 19.7 GB | Fast hybrid MoE |
 | Gemma 4 12B | MLX + DFlash | 14.2 GB | Multilingual writing, vision |
 | Qwen3 8B | MLX + DFlash | 10.8 GB | Light everyday model |
+| LFM2.5 24B-A2B | MLX | 13.6 GB | Reasoning MoE (2B active), agents and tool use, ~85 tok/s (measured) |
 | LFM2.5 1.2B | MLX + DSpark | 2.9 GB | Tiny, ~200 tok/s (measured) |
 | Qwen3 Coder 30B-A3B | llama.cpp (GGUF Q4_K_M) | 18.6 GB | Coding |
 | Qwen3.6 35B-A3B | llama.cpp (GGUF UD-Q4_K_M) | 23.0 GB | Vision via mmproj |
