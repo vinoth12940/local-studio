@@ -9,6 +9,7 @@ Image jobs run the mflux CLI one at a time. Also manages models, storage, update
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import re
@@ -53,6 +54,11 @@ BREW = shutil.which("brew") or "/opt/homebrew/bin/brew"
 CONTEXT = 32768
 # mflux editing needs a complete checkpoint; the q4 export used here is text-to-image only.
 EDIT_MODEL = os.environ.get("EDIT_MODEL")
+SEARCH_URL = "http://127.0.0.1:8083"                         # search.py, see the search section
+SEARCH_DIR = DATA / "search"                                 # its index
+SEARCH_REQS = ROOT / "search-requirements.txt"
+SEARCH_DEPS_OK = DATA / "search-deps.ok"                     # written by setup.sh --search
+SEARCH_DEFAULTS = {"enabled": False, "folders": [], "removed": [], "paused": False, "on_battery": False}
 
 CATALOG = json.loads((ROOT / "catalog.json").read_text())
 
@@ -114,6 +120,7 @@ def load_settings():
     s.setdefault("chat_model", next(m["id"] for m in CATALOG["chat"] if m.get("default")))
     s.setdefault("image_model", next(m["id"] for m in CATALOG["image"] if m.get("default")))
     s.setdefault("custom", [])
+    s["search"] = {**SEARCH_DEFAULTS, **(s.get("search") or {})}
     return s
 
 
@@ -134,6 +141,15 @@ def chat_model(mid=None):
 def image_model(mid=None):
     mid = mid or load_settings()["image_model"]
     return next((m for m in CATALOG["image"] if m["id"] == mid), CATALOG["image"][0])
+
+
+def search_model():
+    return CATALOG["search"][0]
+
+
+def all_models():
+    """Everything the app can download: chat models (catalog and custom), image models, the search embedder."""
+    return chat_models() + CATALOG["image"] + CATALOG["search"]
 
 
 @app.get("/api/system")
@@ -234,7 +250,13 @@ def _download(mid, parts, kind=None):
             job.update(status="error", returncode=rc)
             return
     job.update(status="done", finished=time.time())
-    # First model of its kind on this Mac: make it the active one automatically.
+    _activate_first(mid, kind)
+
+
+def _activate_first(mid, kind):
+    """First model of its kind on this Mac: make it the active one automatically."""
+    if kind == "search":                              # the embedder is never the chat or image model
+        return
     s = load_settings()
     key = "image_model" if kind == "image" else "chat_model"
     current = image_model(s[key]) if kind == "image" else chat_model(s[key])
@@ -248,7 +270,7 @@ def start_download(m):
     if downloads.get(mid, {}).get("status") == "running":
         return downloads[mid]
     downloads[mid] = {"id": mid, "status": "running", "started": time.time()}
-    kind = "image" if any(i["id"] == mid for i in CATALOG["image"]) else "chat"
+    kind = next((k for k in ("image", "search") if any(i["id"] == mid for i in CATALOG[k])), "chat")
     threading.Thread(target=_download, args=(mid, model_parts(m), kind), daemon=True).start()
     return downloads[mid]
 
@@ -275,7 +297,7 @@ def models():
             for m in chat_models()]
     image = [_row(m, "image", s["image_model"], False) for m in CATALOG["image"]]
     known = set()
-    for m in chat_models() + CATALOG["image"]:
+    for m in all_models():
         known |= {repo for repo, _ in model_parts(m)}
     other = []
     if HF_HUB.exists():
@@ -283,12 +305,12 @@ def models():
             repo = _repo_for_dir(d.name)
             if repo not in known:
                 other.append({"repo": repo, "size_bytes": _repo_bytes(repo)})
-    return {"chat": chat, "image": image, "other": other, "llama_cpp": Path(LLAMA_SERVER).exists(),
-            "disk_free_bytes": shutil.disk_usage(HOME).free}
+    return {"chat": chat, "image": image, "search": [_row(m, "search", None, False) for m in CATALOG["search"]],
+            "other": other, "llama_cpp": Path(LLAMA_SERVER).exists(), "disk_free_bytes": shutil.disk_usage(HOME).free}
 
 
 def _find_any(mid):
-    m = next((m for m in chat_models() + CATALOG["image"] if m["id"] == mid), None)
+    m = next((m for m in all_models() if m["id"] == mid), None)
     if not m:
         raise HTTPException(404, "unknown model")
     return m
@@ -341,15 +363,17 @@ def _delete_repo(repo):
 def delete_model(id: str = "", repo: str = ""):
     """Delete a catalog/custom model by id, or any cached repo by name."""
     if repo:
-        if any(repo in {r for r, _ in model_parts(m)} for m in chat_models() + CATALOG["image"]):
+        if any(repo in {r for r, _ in model_parts(m)} for m in all_models()):
             raise HTTPException(400, "Delete it from the model library instead.")
         return {"ok": True, "freed_bytes": _delete_repo(repo)}
     m = _find_any(id)
+    if m in CATALOG["search"] and load_settings()["search"]["enabled"]:
+        raise HTTPException(409, "Search is using this model. Turn Search off first.")
     eng = engine_state()
     if eng.get("model_id") == m["id"] and eng.get("mode"):
         raise HTTPException(409, "This model is running. Stop the engine or switch models first.")
     shared = set()
-    for other in chat_models() + CATALOG["image"]:
+    for other in all_models():
         if other["id"] != m["id"] and model_installed(other):
             shared |= {r for r, _ in model_parts(other)}
     freed = sum(_delete_repo(r) for r, _ in model_parts(m) if r not in shared)

@@ -176,5 +176,14 @@
       "size_gb": 4.6,
       "blurb": "Black Forest Labs' distilled model: images in ~4 steps."
     }
+  ],
+  "search": [
+    {
+      "id": "embeddinggemma-2",
+      "name": "EmbeddingGemma 2",
+      "repo": "mlx-community/embeddinggemma-2-8bit",
+      "size_gb": 1.3,
+      "blurb": "Finds your files by meaning: text, images and audio. Used by Search."
+    }
   ]
 }

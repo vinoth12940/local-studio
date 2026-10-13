@@ -30,7 +30,7 @@ hub = Path(os.environ.get("HF_HUB_CACHE", Path.home() / ".cache/huggingface/hub"
 repos = {"Qwen/Qwen-Image-2.1"}
 try:
     cat = json.loads((app / "catalog.json").read_text())
-    entries = cat["chat"] + cat["image"]
+    entries = cat["chat"] + cat["image"] + cat.get("search", [])
 except Exception:
     entries = []
 try:
