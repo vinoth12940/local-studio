@@ -38,6 +38,7 @@ QUERIES = [
     ("what did I say about sales in Europe", "voice_memo_3.aiff"),
     ("warranty period for the washing machine", "warranty.pdf"), ("monthly grocery and electricity spending", "budget.xlsx"),
     ("cover letter for the nursing job", "cover_letter.docx"), ("scanned parking fine", "scan_0042.pdf"),
+    ("closing balance on my savings account", "bank_statement.pdf"),
 ]
 
 
@@ -86,6 +87,16 @@ def main(out):
     text_pdf(out / "warranty.pdf", ["Warranty certificate", "Product: Bosch Series 6 washing machine, model WAU28T64.",
                                     "The warranty period is 24 months from the date of purchase, 3 March 2026.",
                                     "It covers parts and labour for manufacturing faults. Keep this certificate with your receipt."])
+
+    # Protected against editing but openable without a password, as many bank and government PDFs are.
+    from pypdf import PdfWriter
+    plain = out / "statement_plain.pdf"
+    text_pdf(plain, ["Savings account statement for September", "Opening balance 4,120 dollars. Interest paid 11 dollars.",
+                     "Closing balance 5,890 dollars."])
+    writer = PdfWriter(clone_from=str(plain))
+    writer.encrypt("", owner_password="owner", algorithm="AES-256")
+    writer.write(str(out / "bank_statement.pdf"))
+    plain.unlink()
 
     wb = openpyxl.Workbook()
     ws = wb.active

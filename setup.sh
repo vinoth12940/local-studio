@@ -89,7 +89,7 @@ install_search() {
   [[ -x "$UV" ]] || { say "@error uv is not installed"; return 1; }
   say "@log Installing search components"
   ( cd "$CODE" && "$UV" run --no-project --python 3.12 --with-requirements search-requirements.txt python -c \
-      "import mlx_vlm, torchvision, soundfile, pillow_heif, pypdf, pypdfium2, docx, openpyxl, fastapi, uvicorn; from transformers import EmbeddingGemma2Processor; print('search components OK')" ) 2>&1 | log_lines
+      "import mlx_vlm, torchvision, soundfile, pillow_heif, pypdf, cryptography, pypdfium2, docx, openpyxl, fastapi, uvicorn; from transformers import EmbeddingGemma2Processor; print('search components OK')" ) 2>&1 | log_lines
   [[ ${pipestatus[1]} -eq 0 ]] || { say "@error Search components failed to install"; return 1; }
   mkdir -p "$STATE/data"
   shasum -a 256 "$CODE/search-requirements.txt" | awk '{print $1}' > "$STATE/data/search-deps.ok"

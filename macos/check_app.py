@@ -279,6 +279,28 @@ def the_page_is_never_served_from_a_stale_cache():
     assert r.headers.get("cache-control") == "no-cache", f"cache-control is {r.headers.get('cache-control')!r}"
 
 
+@check
+def search_sets_itself_up_again_after_an_update():
+    """A new version can change the search components. With Search already on, the app installs
+    them at launch by itself; the user should not have to turn Search off and on."""
+    calls, real = [], (app._start_search, app._enable_search, app.model_installed)
+    app.SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    app.SETTINGS.write_text(json.dumps({"search": {"enabled": True}}))
+    app._start_search, app._enable_search, app.model_installed = (lambda: calls.append("start")), (lambda: calls.append("setup")), (lambda m: True)
+    try:
+        app.SEARCH_DEPS_OK.write_text("the previous version's components")
+        app.search_job.clear(); app.search_job.update(status="idle")
+        assert app.search_start() == {"status": "setting up"}
+        time.sleep(0.2)
+        assert calls == ["setup"], calls
+        app.SEARCH_DEPS_OK.write_text(hashlib.sha256(app.SEARCH_REQS.read_bytes()).hexdigest())
+        assert app.search_start() == {"status": "starting"} and calls == ["setup", "start"]
+    finally:
+        app._start_search, app._enable_search, app.model_installed = real
+        app.SETTINGS.unlink(); app.SEARCH_DEPS_OK.unlink(missing_ok=True)
+        app.search_job.clear(); app.search_job.update(status="idle")
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

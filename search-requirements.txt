@@ -9,6 +9,7 @@ soundfile
 fastapi
 uvicorn
 pypdf
+cryptography
 pypdfium2
 python-docx
 openpyxl

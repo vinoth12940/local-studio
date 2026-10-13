@@ -1342,10 +1342,13 @@ def search_disable():
 @app.post("/api/search/start")
 def search_start():
     """Called by start.sh: bring the service up if the user has Search turned on."""
-    if load_settings()["search"]["enabled"] and search_deps_installed() and model_installed(search_model()):
+    if not load_settings()["search"]["enabled"]:
+        return {"status": "off"}
+    if search_deps_installed() and model_installed(search_model()):
         _start_search()
         return {"status": "starting"}
-    return {"status": "off"}
+    search_enable()                                   # an update changed the components (or the model is gone): set up again
+    return {"status": "setting up"}
 
 
 @app.put("/api/search/settings")

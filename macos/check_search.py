@@ -693,6 +693,47 @@ def copied_node_modules_are_skipped():
         assert len(list(search.walk([str(few)]))) == 8
 
 
+# ---- found when the first real index finished
+
+@check
+def unreadable_files_are_retried_after_an_upgrade():
+    """A file that failed because the app could not read its format yet gets another go when a new
+    version can, without the user having to rebuild."""
+    with tempfile.TemporaryDirectory() as d:
+        db = Path(d) / "index.db"
+        st = search.Store(db)
+        st.sync([("/r/statement.pdf", 1, 1.0, "document"), ("/r/ok.txt", 1, 1.0, "document")])
+        fid = {f["name"]: f["id"] for f in st.pending()}
+        st.mark_error(fid["statement.pdf"], "DependencyError: cryptography>=3.1 is required for AES algorithm")
+        st.replace_chunks(fid["ok.txt"], [("text", "fine", "", _unit(1))])
+        assert search.Store(db).pending() == [], "same version: a failed file is left alone"
+        real = search.EXTRACT_VERSION
+        search.EXTRACT_VERSION = real + 1
+        try:
+            st2 = search.Store(db)
+            assert [f["name"] for f in st2.pending()] == ["statement.pdf"] and st2.errors() == []
+            assert search.Store(db).pending() == [f for f in st2.pending()], "and only once per version"
+            st2.mark_error(fid["statement.pdf"], "still broken")
+            assert search.Store(db).pending() == []
+        finally:
+            search.EXTRACT_VERSION = real
+
+
+@check
+def index_shrinks_after_a_large_removal():
+    with tempfile.TemporaryDirectory() as d:
+        st = search.Store(Path(d) / "index.db")
+        files = [(f"/r/lib/f{i}.py", 1, 1.0, "document") for i in range(1500)] + [("/r/mine.txt", 1, 1.0, "document")]
+        st.sync(files)
+        for f in st.pending():
+            st.replace_chunks(f["id"], [("text", "some library code " * 20, "", _unit(f["id"]))])
+        before = st.counts()["index_bytes"]
+        assert st.sync([files[-1]])["deleted"] == 1500
+        after = st.counts()["index_bytes"]
+        assert after < before * 0.5, f"index is {after} bytes after dropping 1,500 of 1,501 files (was {before})"
+        assert st.counts()["chunks"] == 1 and len(search.Store(Path(d) / "index.db").vector_top(_unit(1), 5)) == 1
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

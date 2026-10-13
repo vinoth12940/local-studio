@@ -235,6 +235,8 @@ def walk(roots, removed=(), no_access=None, failed=None):
 # are also kept in one float32 matrix in memory, so a query is a single matrix product.
 
 KIND_ORDER = {"document": 0, "image": 1, "audio": 2, "name": 3}
+EXTRACT_VERSION = 2               # bump when a version can read files an earlier one could not: failed files get another go
+VACUUM_AFTER = 1000               # files deleted in one crawl before the database file is compacted
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
   id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL,
@@ -264,6 +266,10 @@ class Store:
             self.db.executescript("DROP TABLE chunks; DROP TABLE files; DROP TABLE fts; DROP TABLE meta;" + SCHEMA)
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO meta VALUES ('model', ?)", (want,))
+            row = self.db.execute("SELECT value FROM meta WHERE key='extract_version'").fetchone()
+            if row is None or row[0] != str(EXTRACT_VERSION):     # this version may read what an older one could not
+                self.db.execute("UPDATE files SET status='pending', error=NULL WHERE status='error'")
+                self.db.execute("INSERT OR REPLACE INTO meta VALUES ('extract_version', ?)", (str(EXTRACT_VERSION),))
         self._load()
 
     # -- in-memory matrix
@@ -329,7 +335,15 @@ class Store:
     def sync(self, found, keep_prefixes=()):
         """Bring the files table in line with a crawl. Files under `keep_prefixes` (folders that
         could not be listed this time) are kept even though the crawl did not see them."""
-        with self.lock, self.db:
+        with self.lock:
+            result = self._sync(found, keep_prefixes)
+            if result["deleted"] >= VACUUM_AFTER:         # a folder was removed or excluded: hand the space back
+                self.db.execute("VACUUM")
+                self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            return result
+
+    def _sync(self, found, keep_prefixes):
+        with self.db:
             known = {p: (i, s, m, k) for i, p, s, m, k in self.db.execute("SELECT id, path, size, mtime, kind FROM files")}
             seen, new, changed = set(), 0, 0
             for path, size, mtime, kind in found:
