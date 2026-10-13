@@ -730,6 +730,71 @@ class Indexer:
                 "error": self.error, **self.store.counts()}
 
 
+# ---------------------------------------------------------------- HTTP API
+
+def make_app(store, embedder, indexer, searcher):
+    import io
+    from fastapi import Body, FastAPI, HTTPException
+    from fastapi.responses import Response
+
+    app = FastAPI()
+
+    @app.get("/health")
+    def health():
+        return {"ok": True}
+
+    @app.get("/status")
+    def status():
+        return indexer.status()
+
+    @app.post("/search")
+    def search(body: dict = Body(...)):
+        if indexer.error:
+            raise HTTPException(503, indexer.error)
+        limit = max(1, min(int(body.get("limit") or RESULT_LIMIT), 100))
+        return {"results": searcher.search(body.get("query"), body.get("kind") or None, body.get("folder") or None, limit)}
+
+    @app.post("/passages")
+    def passages(body: dict = Body(...)):
+        if indexer.error:
+            raise HTTPException(503, indexer.error)
+        return {"passages": searcher.passages(body.get("query"), int(body.get("limit") or 6), int(body.get("max_chars") or 12000))}
+
+    @app.post("/reload")
+    def reload():
+        indexer.wake.set()
+        return {"ok": True}
+
+    @app.get("/errors")
+    def errors():
+        return {"errors": store.errors()}
+
+    @app.get("/file/{file_id}")
+    def file(file_id: int):
+        f = store.file_info([file_id]).get(file_id)
+        if not f:
+            raise HTTPException(404, "not in the index")
+        return f
+
+    @app.get("/thumb/{file_id}")
+    def thumb(file_id: int):
+        f = store.file_info([file_id]).get(file_id)
+        if not f or f["kind"] != "image":
+            raise HTTPException(404, "not an indexed image")
+        try:
+            im = _load_image(Path(f["path"]))
+        except Exception:
+            im = None
+        if im is None:
+            raise HTTPException(404, "image unavailable")
+        im.thumbnail((320, 320))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=80)
+        return Response(buf.getvalue(), media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+    return app
+
+
 # ---------------------------------------------------------------- command line
 
 def run_eval(folder):
@@ -766,6 +831,20 @@ def main():
     if args.eval:
         sys.exit(run_eval(args.eval))
 
+    store, embedder = Store(INDEX_DIR / "index.db"), Embedder()
+    indexer, searcher = Indexer(store, embedder), Searcher(store, embedder)
+
+    def boot():
+        try:                                              # a broken install must not index garbage vectors
+            if not embedder.selftest():
+                indexer.error = "The embedding model returned an invalid vector."
+        except Exception as e:
+            indexer.error = f"The embedding model failed to load: {type(e).__name__}: {e}"[:400]
+        indexer.run()
+
+    threading.Thread(target=boot, daemon=True).start()
+    import uvicorn
+    uvicorn.run(make_app(store, embedder, indexer, searcher), host="127.0.0.1", port=args.port, log_level="warning")
 
 if __name__ == "__main__":
     main()
