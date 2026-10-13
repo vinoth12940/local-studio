@@ -174,6 +174,139 @@ def store_sync():
         assert st.keyword_top(["beta"], 5) == [] and st.vector_top(_unit(2), 5)[0][1] < 0.5
 
 
+class FakeEmbedder:
+    """Bag-of-words vectors: each word maps to a fixed random direction, so texts that share
+    words score high. Images and audio are embedded from a label string."""
+    loaded, last_used = True, 0.0
+    IGNORE = search.STOPWORDS | {"title", "text", "none", "txt", "task", "query"}
+
+    def _vec(self, text):
+        v = np.zeros(search.DIM, np.float32)
+        for w in re.findall(r"[a-z0-9]+", str(text).lower()):
+            if len(w) >= 3 and w not in self.IGNORE:
+                seed = int(hashlib.md5(w.encode()).hexdigest()[:8], 16)
+                v += np.random.default_rng(seed).standard_normal(search.DIM).astype(np.float32)
+        n = np.linalg.norm(v)
+        return v / n if n else v
+
+    def embed_texts(self, texts):
+        return np.stack([self._vec(t) for t in texts])
+
+    def embed_query(self, q):
+        return self._vec(q)
+
+    embed_image = embed_audio = embed_query
+
+    def unload(self):
+        pass
+
+
+def _library(d):
+    """A small indexed store: three documents, one image, one name-only file."""
+    st, emb = search.Store(Path(d) / "index.db"), FakeEmbedder()
+    docs = {"/r/docs/plumber.txt": ["plumber invoice kitchen sink valve", "payment bank transfer november"],
+            "/r/docs/lease.txt": ["tenancy agreement harbour street rent bond"],
+            "/r/trips/tokyo.txt": ["japan itinerary haneda shinjuku kyoto cherry blossoms"]}
+    st.sync([(p, 1, 1.0, "document") for p in docs] + [("/r/pics/IMG_0001.jpg", 1, 1.0, "image"), ("/r/holiday.mp4", 1, 1.0, "name")])
+    for f in st.pending():
+        if f["kind"] == "document":
+            st.replace_chunks(f["id"], [("text", c, f"p{i + 1}", v) for i, (c, v) in enumerate(
+                zip(docs[f["path"]], emb.embed_texts([search.doc_text(f["name"], c) for c in docs[f["path"]]])))])
+        elif f["kind"] == "image":
+            st.replace_chunks(f["id"], [("image", None, "", emb.embed_image("desert plant night succulents"))])
+        else:
+            st.replace_chunks(f["id"], [])
+    return st, search.Searcher(st, emb)
+
+
+@check
+def ranking():
+    assert search.keyword_tokens("What did I say about sales in Europe?") == ["say", "sales", "europe"]
+    assert search.keyword_tokens("the and for of to") == []
+    chunk_file = {1: 10, 2: 10, 3: 20, 4: 30, 5: 40}
+    files = lambda r: [x["file_id"] for x in r]                                                  # noqa: E731
+
+    r = search.fuse([(1, 0.80), (3, 0.75), (2, 0.70), (4, 0.66), (5, 0.55)], [], chunk_file)
+    assert files(r) == [10, 20], files(r)                  # 0.66 is under top - 0.08; 0.55 is under the floor too
+    assert r[0]["chunk"] == 1 and r[0]["vec"] == 0.80 and r[0]["kw"] is False
+
+    assert files(search.fuse([(1, 0.58), (3, 0.57), (4, 0.56)], [], chunk_file)) == [10], "a weak top match still shows, alone"
+    assert files(search.fuse([(1, 0.70), (3, 0.63), (4, 0.61)], [], chunk_file)) == [10, 20], "the floor applies even inside the margin"
+
+    r = search.fuse([(1, 0.80)], [4, -40], chunk_file)     # keyword-only files are kept after the vector match
+    assert files(r) == [10, 30, 40] and r[1]["kw"] and r[1]["chunk"] == 4 and r[2]["chunk"] is None and r[2]["vec"] is None
+
+    assert files(search.fuse([(1, 0.80), (3, 0.79)], [3], chunk_file)) == [20, 10], "matching both ways outranks a slightly better vector"
+    assert files(search.fuse([(99, 0.90), (1, 0.80)], [98], chunk_file)) == [10], "ids deleted mid-search are ignored"
+    assert len(search.fuse([(1, 0.80)], [-i for i in range(100, 130)], chunk_file)) == 11, "at most 10 keyword-only files"
+    assert search.fuse([], [], chunk_file) == []
+
+
+@check
+def searcher():
+    with tempfile.TemporaryDirectory() as d:
+        st, s = _library(d)
+        r = s.search("how much is the plumber invoice")
+        assert r[0]["name"] == "plumber.txt" and r[0]["snippet"].startswith("plumber invoice") and r[0]["locator"] == "p1"
+        assert set(r[0]) == {"file_id", "path", "name", "kind", "score", "snippet", "locator", "mtime"}
+        assert s.search("japan cherry blossoms itinerary")[0]["name"] == "tokyo.txt"
+        img = s.search("desert plant night", kind="image")
+        assert [x["name"] for x in img] == ["IMG_0001.jpg"] and img[0]["snippet"] == ""
+        assert [x["name"] for x in s.search("holiday")] [-1] == "holiday.mp4", "a name-only file is found by its name"
+        assert all(x["path"].startswith("/r/trips/") for x in s.search("japan itinerary", folder="/r/trips"))
+        assert s.search("plumber invoice", folder="/r/trips") == []
+        assert s.search("   ") == []
+        assert len(s.search("plumber invoice kitchen", limit=1)) == 1
+
+        p = s.passages("plumber invoice kitchen sink")
+        assert p[0]["text"] == "plumber invoice kitchen sink valve" and p[0]["name"] == "plumber.txt" and p[0]["locator"] == "p1"
+        assert set(p[0]) == {"file_id", "name", "path", "locator", "text"}
+        assert s.passages("completely unrelated zebra astronomy") == [], "no passages when nothing clears the floor"
+        assert len(s.passages("plumber invoice kitchen sink valve payment bank transfer november", max_chars=40)) == 1
+
+
+@check
+def no_relevant_file():
+    with tempfile.TemporaryDirectory() as d:
+        _, s = _library(d)
+        assert len(s.search("zebra astronomy quantum")) <= 1, "a query that matches nothing must not list every file"
+        assert len(s.search("the and for of to")) <= 1, "an all-stopword query must not list every file"
+
+
+@check
+def concurrency():
+    with tempfile.TemporaryDirectory() as d:
+        st, s = _library(d)
+        fid = st.keyword_top(["tokyo"], 1)[0] * -1
+        emb, stop, errors = FakeEmbedder(), threading.Event(), []
+
+        def writer():
+            i = 0
+            while not stop.is_set():
+                try:
+                    st.replace_chunks(fid, [("text", f"japan kyoto revision {i}", "p1", emb.embed_query(f"japan kyoto revision {i}"))] * 20)
+                    st.sync([(p, 1, 1.0, "document") for p in ("/r/docs/plumber.txt", "/r/docs/lease.txt", "/r/trips/tokyo.txt")]
+                            + [("/r/pics/IMG_0001.jpg", 1, 1.0, "image"), ("/r/holiday.mp4", 1, 1.0, "name")])
+                except Exception as e:                     # noqa: BLE001
+                    errors.append(e)
+                i += 1
+
+        t = threading.Thread(target=writer)
+        t.start()
+        try:
+            slowest = 0.0
+            for _ in range(100):
+                t0 = time.time()
+                assert s.search("plumber invoice kitchen")[0]["name"] == "plumber.txt"
+                s.passages("japan kyoto")
+                slowest = max(slowest, time.time() - t0)
+        finally:
+            stop.set()
+            t.join()
+        assert not errors, errors[:1]
+        assert slowest < 2.0, f"a search took {slowest:.2f}s while indexing"
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

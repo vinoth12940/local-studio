@@ -347,3 +347,118 @@ class Store:
         with self.lock:
             return [{"path": p, "error": e} for p, e in
                     self.db.execute("SELECT path, error FROM files WHERE status='error' ORDER BY path LIMIT 500")]
+
+
+# ---------------------------------------------------------------- ranking
+# Meaning (vectors) and exact words (FTS5) are fused by rank. Vector scores sit in a narrow band
+# (related ~0.65-0.8, unrelated ~0.6), so the cut-off is relative to the best match, with a floor.
+
+STOPWORDS = frozenset("the and for are was were with that this from have has had you your what when where which "
+                      "who how why did does about into out not but can all any our its".split())
+POOL = 200                        # chunks taken from each ranking before fusing
+RRF_K = 60
+MARGIN = 0.08                     # keep files within this of the best vector score...
+FLOOR = 0.62                      # ...but never below this (both from the feasibility test; tune on real files)
+KEYWORD_ONLY_MAX = 10
+RESULT_LIMIT = 30
+
+
+def doc_text(name, chunk):
+    return f"title: {name} | text: {chunk}"
+
+
+def keyword_tokens(query):
+    return [t for t in re.findall(r"\w+", query.lower()) if len(t) >= 3 and t not in STOPWORDS][:12]
+
+
+def fuse(vec_hits, kw_rowids, chunk_file):
+    """Combine a vector ranking [(chunk_id, score)] and a keyword ranking [rowid] (negative =
+    a hit on file -rowid's name) into one per-file ranking, applying the cut-off."""
+    vec_hits = [(c, s) for c, s in vec_hits if c in chunk_file]
+    kw_rowids = [r for r in kw_rowids if r < 0 or r in chunk_file]
+    chunk_score, files = {}, {}
+
+    def slot(fid):
+        return files.setdefault(fid, {"file_id": fid, "fused": 0.0, "chunk": None, "vec": None, "kw": False})
+
+    for rank, (cid, score) in enumerate(vec_hits):
+        chunk_score[cid] = 1.0 / (RRF_K + rank + 1)
+        f = slot(chunk_file[cid])
+        f["vec"] = score if f["vec"] is None else max(f["vec"], score)
+    name_bonus = {}
+    for rank, rowid in enumerate(kw_rowids):
+        r = 1.0 / (RRF_K + rank + 1)
+        if rowid < 0:
+            name_bonus[-rowid] = r
+            slot(-rowid)["kw"] = True
+        else:
+            chunk_score[rowid] = chunk_score.get(rowid, 0.0) + r
+            slot(chunk_file[rowid])["kw"] = True
+    for cid, score in chunk_score.items():
+        f = files[chunk_file[cid]]
+        if score > f["fused"]:
+            f["fused"], f["chunk"] = score, cid
+    for fid, bonus in name_bonus.items():
+        files[fid]["fused"] += bonus
+
+    top = vec_hits[0] if vec_hits else None
+    threshold = max(top[1] - MARGIN, FLOOR) if top else None
+    order = lambda f: (f["fused"], f["vec"] if f["vec"] is not None else -1.0)                    # noqa: E731
+    strong = [f for f in files.values()
+              if top and (f["file_id"] == chunk_file[top[0]] or (f["vec"] is not None and f["vec"] >= threshold))]
+    kept = {f["file_id"] for f in strong}
+    kw_only = sorted((f for f in files.values() if f["kw"] and f["file_id"] not in kept), key=order, reverse=True)
+    return sorted(strong + kw_only[:KEYWORD_ONLY_MAX], key=order, reverse=True)
+
+
+class Searcher:
+    def __init__(self, store, embedder):
+        self.store, self.embedder = store, embedder
+
+    def search(self, query, kind=None, folder=None, limit=RESULT_LIMIT):
+        query = (query or "").strip()
+        if not query:
+            return []
+        vec = self.store.vector_top(self.embedder.embed_query(query), POOL, file_kind=kind)
+        kw = self.store.keyword_top(keyword_tokens(query), POOL)
+        chunks = self.store.chunk_info([c for c, _ in vec] + [r for r in kw if r > 0])
+        chunk_file = {c: i["file_id"] for c, i in chunks.items()}
+        files = self.store.file_info(set(chunk_file.values()) | {-r for r in kw if r < 0})
+        if kind:                                          # the vector side is already filtered; filter the keyword side
+            kw = [r for r in kw if files.get(-r if r < 0 else chunk_file.get(r), {}).get("kind") == kind]
+        out = []
+        for r in fuse(vec, kw, chunk_file):
+            f = files.get(r["file_id"])
+            if f is None or (folder and not _under(f["path"], folder)):
+                continue
+            c = chunks.get(r["chunk"]) or {}
+            out.append({"file_id": r["file_id"], "path": f["path"], "name": f["name"], "kind": f["kind"],
+                        "score": round(r["vec"], 3) if r["vec"] is not None else None,
+                        "snippet": c.get("text") or "", "locator": c.get("locator") or "", "mtime": f["mtime"]})
+            if len(out) == limit:
+                break
+        return out
+
+    def passages(self, query, limit=6, max_chars=12000):
+        """The best text chunks for a question, ungrouped, for "My files" in chat."""
+        query = (query or "").strip()
+        if not query:
+            return []
+        vec = self.store.vector_top(self.embedder.embed_query(query), POOL, text_only=True)
+        if not vec:
+            return []
+        threshold = max(vec[0][1] - MARGIN, FLOOR)
+        hits = [c for c, s in vec if s >= threshold][:limit]
+        chunks = self.store.chunk_info(hits)
+        files = self.store.file_info({c["file_id"] for c in chunks.values()})
+        out, used = [], 0
+        for cid in hits:
+            c = chunks.get(cid)
+            f = files.get(c["file_id"]) if c else None
+            if not f or not c["text"]:
+                continue
+            if out and used + len(c["text"]) > max_chars:
+                break
+            used += len(c["text"])
+            out.append({"file_id": c["file_id"], "name": f["name"], "path": f["path"], "locator": c["locator"] or "", "text": c["text"]})
+        return out
