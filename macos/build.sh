@@ -24,7 +24,7 @@ xcrun swiftc -O -target arm64-apple-macos14.0 -framework Cocoa -framework WebKit
   "$HERE/main.swift" -o "$APP/Contents/MacOS/LocalStudio"
 
 echo "==> Bundling code"
-for f in app.py index.html catalog.json setup.sh start.sh stop.sh uninstall.sh; do
+for f in app.py index.html catalog.json search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh; do
   cp "$ROOT/$f" "$APP/Contents/Resources/app/"
 done
 chmod +x "$APP/Contents/Resources/app/"*.sh
@@ -55,6 +55,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>NSDesktopFolderUsageDescription</key><string>Local Studio indexes your files on this Mac so you can search them. Nothing leaves your computer.</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>Local Studio indexes your files on this Mac so you can search them. Nothing leaves your computer.</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>Local Studio indexes your files on this Mac so you can search them. Nothing leaves your computer.</string>
+  <key>NSFileProviderDomainUsageDescription</key><string>Local Studio indexes your files on this Mac so you can search them. Nothing leaves your computer.</string>
   <key>NSHumanReadableCopyright</key><string>Runs AI models locally on Apple Silicon.</string>
 </dict></plist>
 PLIST

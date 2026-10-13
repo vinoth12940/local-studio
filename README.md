@@ -7,7 +7,7 @@ accelerated by **DFlash/DSpark** speculative decoding or any **GGUF** model on *
 about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Image Turbo** or
 **FLUX.2 Klein**. Everything runs locally; nothing leaves your Mac.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.2.2**
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.3.0**
 
 ![Chat](docs/chat.jpg)
 
@@ -44,7 +44,7 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 
 ### The easy way (recommended)
 
-1. Download **Local-Studio-1.2.2.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+1. Download **Local-Studio-1.3.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
 2. Open it and drag **Local Studio** into **Applications**.
 3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
    engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
@@ -110,6 +110,26 @@ any Mac without warnings:
 ```
 
 The servers listen on `127.0.0.1` only and are not reachable from other devices.
+
+## Search your files
+
+Turn on **Search** in Settings and Local Studio indexes your Documents, Desktop, Downloads,
+Pictures, Movies, Music and iCloud Drive in the background, on this Mac. You can then:
+
+- **Find** a file by describing it: "the invoice from the plumber", "photo of a desert plant at
+  night", "voice memo about the dentist". Text, images and spoken audio are all searchable.
+- **Ask** in chat with the **My files** switch on. The active chat model answers from your files
+  and lists the ones it used.
+
+Search uses [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) on MLX. It is off
+until you turn it on; doing so downloads the model (1.3 GB) and its components (about 1 GB) once.
+Indexing pauses while you chat or generate images, and on battery power unless you allow it.
+Add or remove folders, see what could not be read, and rebuild or delete the index in
+Settings → Search. The index lives in `data/search/`.
+
+Not indexed: hidden files, `Library`, apps and other packages (including the Photos library),
+developer folders such as `node_modules` and `.git`, private keys, and iCloud files that are not
+downloaded. Video files and unrecognised types are found by name only.
 
 ## Models
 
