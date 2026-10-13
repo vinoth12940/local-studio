@@ -128,7 +128,8 @@ Add or remove folders, see what could not be read, and rebuild or delete the ind
 Settings → Search. The index lives in `data/search/`.
 
 Not indexed: hidden files, `Library`, apps and other packages (including the Photos library),
-developer folders such as `node_modules` and `.git`, and private keys. Video files, unrecognised
+developer folders such as `node_modules` and `.git`, Python environments (recognised by their
+contents, whatever they are called), copied `node_modules` contents, and private keys. Video files, unrecognised
 types and iCloud files that are not downloaded to this Mac are found by name only.
 
 ## Models

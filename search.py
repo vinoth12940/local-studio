@@ -140,6 +140,42 @@ def _python_env(path):
     return os.path.exists(os.path.join(path, "pyvenv.cfg")) or os.path.isdir(os.path.join(path, "conda-meta"))
 
 
+PROJECT_MARKERS = (".git", "node_modules", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock")
+PACKAGE_DUMP_MIN = 5              # this many installed packages side by side means "the contents of a node_modules"
+
+
+def _installed_package(path):
+    """An npm package as it sits in node_modules: a package.json, and none of the things a project
+    someone is working on has (a lockfile, its own node_modules, git)."""
+    return (os.path.exists(os.path.join(path, "package.json"))
+            and not any(os.path.exists(os.path.join(path, m)) for m in PROJECT_MARKERS))
+
+
+def _package_dump(entries):
+    """Names of the sub-folders that are installed npm packages, when there are enough of them side
+    by side to be sure this folder is a node_modules under another name. One or two folders with a
+    package.json are far more likely to be the user's own, so those are left alone."""
+    dirs = []
+    for e in entries:
+        try:
+            if not e.name.startswith(".") and not e.is_symlink() and e.is_dir(follow_symlinks=False):
+                dirs.append(e)
+        except OSError:
+            pass
+    found = {e.name for e in dirs if not e.name.startswith("@") and _installed_package(e.path)}
+    if len(found) < PACKAGE_DUMP_MIN:
+        return set()
+    for e in dirs:                                        # scopes: @babel/core, @types/node, ...
+        if e.name.startswith("@"):
+            try:
+                subs = [x.path for x in os.scandir(e.path) if x.is_dir(follow_symlinks=False)]
+            except OSError:
+                continue
+            if subs and all(_installed_package(x) for x in subs):
+                found.add(e.name)
+    return found
+
+
 def walk(roots, removed=(), no_access=None, failed=None):
     """Yield (path, size, mtime, kind) once for every file worth indexing under `roots`. Kind is
     "placeholder" for an iCloud file that isn't downloaded. Roots macOS won't let us list go to
@@ -172,12 +208,14 @@ def walk(roots, removed=(), no_access=None, failed=None):
                 if no_access is not None and d == root and isinstance(err, PermissionError):
                     no_access.append(d)
                 continue
+            dumped = _package_dump(entries)
             for e in entries:
                 try:
                     if e.name.startswith(".") or e.is_symlink():
                         continue
                     if e.is_dir(follow_symlinks=False):
                         if (e.path not in root_set                   # another root: its own walk covers it
+                                and e.name not in dumped
                                 and e.name not in SKIP_DIRS and not e.name.lower().endswith(PACKAGE_SUFFIXES)
                                 and not off_limits(e.path) and not _python_env(e.path)):
                             stack.append(e.path)

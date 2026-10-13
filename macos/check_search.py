@@ -663,6 +663,36 @@ def a_normal_quit_is_not_a_crash():
         assert ix.stop.is_set() and st.get_meta("in_flight") in (None, "")
 
 
+@check
+def copied_node_modules_are_skipped():
+    """The contents of a node_modules folder copied somewhere under another name (found at the top
+    of an iCloud Drive) are library code. A project the user is working on is never skipped."""
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d).resolve() / "drive"
+        files = ["notes.txt"]
+        for pkg in ("es-abstract", "caniuse-lite", "eslint", "aria-query", "resolve", "axe-core"):
+            files += [f"{pkg}/package.json", f"{pkg}/index.js", f"{pkg}/lib/rules/a.js", f"{pkg}/README.md"]
+        files += ["@swc/core/package.json", "@swc/core/index.js", "@swc/helpers/package.json", "@swc/helpers/h.js"]
+        files += ["my-app/package.json", "my-app/package-lock.json", "my-app/src/app.js"]        # a project with a lockfile
+        files += ["site/package.json", "site/main.js", "site/.git/HEAD"]                          # a project under git
+        files += ["experiments/tiny/package.json", "experiments/tiny/a.js"]                       # one package.json on its own
+        files += ["@home/photos/list.txt"]                                                        # an @folder that is not a package scope
+        for f in files:
+            (root / f).parent.mkdir(parents=True, exist_ok=True)
+            (root / f).write_text("x")
+        got = sorted(p[len(str(root)) + 1:] for p, _, _, _ in search.walk([str(root)]))
+        assert got == ["@home/photos/list.txt", "experiments/tiny/a.js", "experiments/tiny/package.json", "my-app/package-lock.json",
+                       "my-app/package.json", "my-app/src/app.js", "notes.txt", "site/main.js", "site/package.json"], got
+        assert len(list(search.walk([str(root / "eslint")]))) == 4, "a package folder the user adds on purpose is indexed"
+
+        few = Path(d).resolve() / "few"                    # four look-alikes are not enough to call it a copied node_modules
+        for pkg in ("a", "b", "c", "d"):
+            (few / pkg).mkdir(parents=True)
+            (few / pkg / "package.json").write_text("{}")
+            (few / pkg / "x.js").write_text("x")
+        assert len(list(search.walk([str(few)]))) == 8
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:
