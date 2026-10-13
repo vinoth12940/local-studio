@@ -60,6 +60,40 @@ def chunking():
     assert search._under("/a/b/c", "/a/b") and search._under("/a/b", "/a/b") and not search._under("/a/bc", "/a/b")
 
 
+@check
+def crawler():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d).resolve() / "root"
+        files = ["notes.txt", "photo.jpg", "song.mp3", "movie.mp4", "talk.key", "sub/deep.md", ".hidden.txt",
+                 ".git/config", "node_modules/x.js", "My.app/Contents/x.txt", "Pics.photoslibrary/db.txt",
+                 "id_rsa", "cert.pem", "removed/a.txt"]
+        for f in files:
+            (root / f).parent.mkdir(parents=True, exist_ok=True)
+            (root / f).write_text("x")
+        with open(root / "big.log", "wb") as fh:
+            fh.truncate(6 * 2 ** 20)                       # sparse 6 MB: text-like but over the 5 MB limit
+        (root / "link.txt").symlink_to(root / "notes.txt")
+        locked = root.parent / "locked"
+        locked.mkdir()
+        locked.chmod(0)
+        no_access = []
+        try:
+            got = {p[len(str(root)) + 1:]: k for p, _, _, k in
+                   search.walk([str(root), str(locked)], removed=[str(root / "removed")], no_access=no_access)}
+        finally:
+            locked.chmod(0o700)
+        assert got == {"notes.txt": "document", "photo.jpg": "image", "song.mp3": "audio", "movie.mp4": "name",
+                       "talk.key": "name", "sub/deep.md": "document", "big.log": "name"}, got
+        assert no_access == [str(locked)], no_access
+        row = next(search.walk([str(root)]))
+        assert isinstance(row[1], int) and isinstance(row[2], float)
+    assert search.classify("a.PDF", 10) == "document" and search.classify("a.pdf", 200 * 2 ** 20) == "name"
+    assert search._dataless(types.SimpleNamespace(st_flags=0x40000000)) and not search._dataless(types.SimpleNamespace(st_flags=0))
+    # the app's own data and anything under ~/Library (except iCloud Drive) are never walked
+    assert list(search.walk([str(search.STATE / "data")])) == []
+    assert list(search.walk([str(search.HOME / "Library" / "Preferences")])) == []
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:
