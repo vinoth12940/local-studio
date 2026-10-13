@@ -576,7 +576,7 @@ dialog::backdrop { background: var(--overlay); }
         <h2>Search</h2>
         <p class="lead">Find your files by what they contain. Runs entirely on this Mac.</p>
         <div class="section" id="srOff" style="display:none">
-          <div class="sh"><div><h3>Search is off</h3><p id="srOffMsg"></p></div>
+          <div class="sh"><div><h3 id="srOffTtl">Search is off</h3><p id="srOffMsg"></p></div>
             <button class="btn primary" id="srEnable">Turn on Search</button></div>
         </div>
         <div id="srOn" style="display:none">
@@ -1010,6 +1010,7 @@ $("thread").onclick = (e) => {
   const act = e.target.closest("[data-act]")?.dataset.act, m = current.messages[+turn.dataset.i];
   if (act === "copy") { navigator.clipboard.writeText(m.content); toast("Copied to clipboard"); }
   if (act === "continue" && !streaming) {
+    noFilesOnce = true;                                    // "continue" is not a question to look up in the user's files
     $("input").value = "Continue exactly where you left off."; autosize(); send(); return;
   }
   if (act === "regen" && !streaming) {
@@ -1152,7 +1153,8 @@ async function generate() {
   const body = { messages, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
   if (effort && modelThinks()) body.reasoning_effort = effort;
   if (s.temp) body.temperature = +s.temp;
-  if (useFiles && sr?.running && !sr.error) body.use_files = true;
+  if (useFiles && sr?.running && !sr.error && !noFilesOnce) body.use_files = true;
+  noFilesOnce = false;
   streaming = new AbortController(); updateSend();
   let thinkStart = 0, thinkEnd = 0, raf = 0, pendingThought = "";
 
@@ -1496,7 +1498,7 @@ $("unBtn").onclick = async () => {
 };
 
 // ---------------- search
-let sr = null, srTimer = 0, srSeq = 0, useFiles = store.get("useFiles", false);
+let sr = null, srTimer = 0, srSeq = 0, useFiles = store.get("useFiles", false), noFilesOnce = false;
 function syncFiles() {
   const can = !!(sr && sr.enabled && sr.running && !sr.error);
   $("filesPill").classList.toggle("on", useFiles && can);
@@ -1515,6 +1517,7 @@ function srStatusLine(s, buttons = true) {
   if (s.setup?.status === "running") return esc(s.setup.step || "Setting up");
   if (!s.running) return s.setup?.status === "error" ? bad(s.setup.error) : "";
   if (s.error) return bad(s.error);
+  if (s.problem && s.state !== "indexing") return bad(s.problem);
   if (s.state === "starting") return "Starting";
   const done = (s.files_done + s.files_error).toLocaleString(), total = s.files_total.toLocaleString();
   const btn = (v, label) => buttons ? ` <button class="btn sm" data-srpause="${v}">${label}</button>` : "";
@@ -1524,10 +1527,11 @@ function srStatusLine(s, buttons = true) {
 }
 async function loadSearch() {
   try { sr = await api("/api/search/status"); } catch { return; }
-  const on = sr.enabled && sr.running, busy = sr.setup?.status === "running";
+  const on = sr.enabled && sr.running, busy = sr.setup?.status === "running", starting = sr.enabled && !sr.running && !busy;
   $("srOn").style.display = on ? "" : "none"; $("srOff").style.display = on ? "none" : "";
   $("srEnable").disabled = busy; $("srEnable").textContent = busy ? "Setting up" : "Turn on Search";
-  $("srOffMsg").innerHTML = srStatusLine(sr) || SR_OFF;
+  $("srOffTtl").textContent = starting ? "Search is starting" : "Search is off";
+  $("srOffMsg").innerHTML = srStatusLine(sr) || (starting ? "This takes up to a minute after the app opens. If it stays here, turn it on again." : SR_OFF);
   $("srStatus").innerHTML = srStatusLine(sr);
   $("srSw").checked = sr.enabled || busy; $("srSw").disabled = busy;
   $("srSetSum").innerHTML = (sr.enabled || busy ? srStatusLine(sr, false) : "") || `Find your files by what they contain. Uses about ${Math.ceil(sr.model.size_gb + 1)} GB for the model and search components.`;
@@ -1603,7 +1607,8 @@ $("srQuery").addEventListener("input", () => { clearTimeout(srTimer); srTimer = 
 $("srQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") { clearTimeout(srTimer); runSearch(); } });
 $("srKind").onchange = runSearch;
 $("srResults").onclick = (e) => { const b = e.target.closest("[data-open]"); if (b) srOpen(b); };
-setInterval(() => { if (view === "search" || view === "manage" || sr?.setup?.status === "running") loadSearch(); }, 3000);
+// Also while the service is still coming up after launch, so the My files pill enables without a visit to Search.
+setInterval(() => { if (view === "search" || view === "manage" || sr?.setup?.status === "running" || (sr?.enabled && !sr.running)) loadSearch(); }, 3000);
 
 // ---------------- boot
 (async () => {

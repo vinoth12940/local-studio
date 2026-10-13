@@ -134,41 +134,56 @@ def _dataless(st):
     return bool(getattr(st, "st_flags", 0) & SF_DATALESS)
 
 
-def walk(roots, removed=(), no_access=None):
-    """Yield (path, size, mtime, kind) for every file worth indexing under `roots`. Roots that
-    can't be listed (macOS privacy, unplugged drive) are appended to `no_access`."""
-    blocked = [str(STATE / d) for d in ("data", "uploads", "logs", "gallery")] + [str(HF_HUB)] + list(removed)
-    library, icloud = str(HOME / "Library"), str(ICLOUD)
+def walk(roots, removed=(), no_access=None, failed=None):
+    """Yield (path, size, mtime, kind) once for every file worth indexing under `roots`. Kind is
+    "placeholder" for an iCloud file that isn't downloaded. Roots macOS won't let us list go to
+    `no_access`; every folder that couldn't be listed (denied, unplugged, missing) goes to `failed`,
+    so the caller can keep what it already knows about the files inside."""
+    app_data = [str(STATE / d) for d in ("data", "uploads", "logs", "gallery")] + [str(HF_HUB)]
+    library = str(HOME / "Library")
+    roots = list(dict.fromkeys(str(r).rstrip("/") or "/" for r in roots))
+    root_set = set(roots)
+    for root in roots:
+        # A folder the user added is indexed even inside one they removed, and even under ~/Library
+        # (iCloud Drive, ~/Library/CloudStorage); walking down from above never enters either.
+        gone = [x for x in removed if not _under(root, x)]
+        in_library = _under(root, library)
 
-    def off_limits(path):
-        return any(_under(path, b) for b in blocked) or (_under(path, library) and not _under(path, icloud))
+        def off_limits(path):
+            return (any(_under(path, b) for b in app_data) or any(_under(path, x) for x in gone)
+                    or (not in_library and _under(path, library)))
 
-    roots = [str(r) for r in roots]
-    stack = [r for r in roots if not off_limits(r)]
-    while stack:
-        d = stack.pop()
-        try:
-            entries = list(os.scandir(d))
-        except OSError:
-            if no_access is not None and d in roots:
-                no_access.append(d)
+        if off_limits(root):
             continue
-        for e in entries:
+        stack = [root]
+        while stack:
+            d = stack.pop()
             try:
-                if e.name.startswith(".") or e.is_symlink():
-                    continue
-                if e.is_dir(follow_symlinks=False):
-                    if e.name not in SKIP_DIRS and not e.name.lower().endswith(PACKAGE_SUFFIXES) and not off_limits(e.path):
-                        stack.append(e.path)
-                    continue
-                if any(fnmatch.fnmatch(e.name, g) for g in SECRET_GLOBS):
-                    continue
-                st = e.stat(follow_symlinks=False)
-                if not stat.S_ISREG(st.st_mode) or _dataless(st):
-                    continue
-                yield e.path, st.st_size, st.st_mtime, classify(e.name, st.st_size)
-            except OSError:
+                entries = list(os.scandir(d))
+            except OSError as err:
+                if failed is not None:
+                    failed.append(d)
+                if no_access is not None and d == root and isinstance(err, PermissionError):
+                    no_access.append(d)
                 continue
+            for e in entries:
+                try:
+                    if e.name.startswith(".") or e.is_symlink():
+                        continue
+                    if e.is_dir(follow_symlinks=False):
+                        if (e.path not in root_set                   # another root: its own walk covers it
+                                and e.name not in SKIP_DIRS and not e.name.lower().endswith(PACKAGE_SUFFIXES)
+                                and not off_limits(e.path)):
+                            stack.append(e.path)
+                        continue
+                    if any(fnmatch.fnmatch(e.name, g) for g in SECRET_GLOBS):
+                        continue
+                    st = e.stat(follow_symlinks=False)
+                    if not stat.S_ISREG(st.st_mode):
+                        continue
+                    yield e.path, st.st_size, st.st_mtime, "placeholder" if _dataless(st) else classify(e.name, st.st_size)
+                except OSError:
+                    continue
 
 
 # ---------------------------------------------------------------- store
@@ -196,6 +211,7 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=NORMAL")      # safe with WAL; the in-flight marker commits once per file
         self.db.execute("PRAGMA foreign_keys=ON")
         want = f"{model}:{dim}"
         self.db.executescript(SCHEMA)
@@ -239,6 +255,27 @@ class Store:
         self.db.execute("DELETE FROM fts WHERE rowid=?", (-fid,))
         self.db.execute("DELETE FROM chunks WHERE file_id=?", (fid,))
         self.alive[:self.n][self.fids[:self.n] == fid] = False
+        self._compact()
+
+    def _compact(self):
+        """Drop dead rows once they outnumber the live ones (a file that is rewritten on every scan)."""
+        keep = np.flatnonzero(self.alive[:self.n])
+        if self.n - len(keep) <= max(1024, len(keep)):
+            return
+        for name in ("M", "ids", "fids", "fkind", "is_text", "alive"):
+            a = getattr(self, name)
+            a[:len(keep)] = a[keep]
+        self.alive[len(keep):self.n] = False
+        self.n = len(keep)
+
+    def set_meta(self, key, value):
+        with self.lock, self.db:
+            self.db.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, value))
+
+    def get_meta(self, key):
+        with self.lock:
+            row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
 
     def _name_row(self, fid):
         path, name = self.db.execute("SELECT path, name FROM files WHERE id=?", (fid,)).fetchone()
@@ -249,16 +286,23 @@ class Store:
         """Bring the files table in line with a crawl. Files under `keep_prefixes` (folders that
         could not be listed this time) are kept even though the crawl did not see them."""
         with self.lock, self.db:
-            known = {p: (i, s, m) for i, p, s, m in self.db.execute("SELECT id, path, size, mtime FROM files")}
+            known = {p: (i, s, m, k) for i, p, s, m, k in self.db.execute("SELECT id, path, size, mtime, kind FROM files")}
             seen, new, changed = set(), 0, 0
             for path, size, mtime, kind in found:
+                if path in seen:
+                    continue
                 seen.add(path)
                 k = known.get(path)
+                if kind == "placeholder":                 # iCloud evicted it: keep what we have; a new one is name-only
+                    if k is not None:
+                        continue
+                    kind = "name"
                 if k is None:
-                    self.db.execute("INSERT INTO files(path, name, kind, size, mtime, status) VALUES (?,?,?,?,?,'pending')",
-                                    (path, Path(path).name, kind, size, mtime))
+                    fid = self.db.execute("INSERT INTO files(path, name, kind, size, mtime, status) VALUES (?,?,?,?,?,'pending')",
+                                          (path, Path(path).name, kind, size, mtime)).lastrowid
+                    self._name_row(fid)                   # findable by name before its turn in the queue
                     new += 1
-                elif (k[1], k[2]) != (size, mtime):
+                elif (k[1], k[2]) != (size, mtime) or (k[3] == "name" and kind != "name"):   # edited, or now downloaded
                     self.db.execute("UPDATE files SET kind=?, size=?, mtime=?, status='pending', error=NULL WHERE id=?",
                                     (kind, size, mtime, k[0]))
                     changed += 1
@@ -630,11 +674,16 @@ RESCAN_SECONDS = 300
 IDLE_UNLOAD_SECONDS = 600
 
 
+class EmbedFailure(Exception):
+    """The embedder itself raised, as opposed to one file being unreadable."""
+
+
 class Indexer:
     def __init__(self, store, embedder, config=load_config, app_url=APP_URL):
         self.store, self.embedder, self.config, self.app_url = store, embedder, config, app_url
         # "starting" until the first pass begins: an empty index must not read as "up to date"
         self.state, self.paused_reason, self.current, self.no_access, self.error = "starting", None, None, [], None
+        self.problem = None                               # why the last pass stopped early; cleared by the next one
         self.wake, self.stop = threading.Event(), threading.Event()
         self._ac = (0.0, True)
 
@@ -675,108 +724,158 @@ class Indexer:
             self.stop.wait(1)
         return False
 
+    def _embed(self, fn, *args):
+        try:
+            return fn(*args)
+        except Exception as e:
+            raise EmbedFailure(f"{type(e).__name__}: {e}"[:300]) from e
+
     def index_file(self, f):
+        """Index one file. Returns "ok", "stopped", "error" (the file is unreadable; recorded) or
+        ("embed_failed", message): the embedder raised and the file is left pending."""
         self.current = f["path"]
+        self.store.set_meta("inflight", str(f["id"]))     # if this file kills the process, skip it next time
         try:
             items = extract(f["path"], f["kind"]) if f["kind"] != "name" else []
             rows, texts = [], [i for i in items if i["kind"] == "text"]
             for i in range(0, len(texts), TEXT_BATCH):
                 if not self.wait_clear():
-                    return
+                    return "stopped"
                 batch = texts[i:i + TEXT_BATCH]
-                vecs = self.embedder.embed_texts([doc_text(f["name"], t["text"]) for t in batch])
+                vecs = self._embed(self.embedder.embed_texts, [doc_text(f["name"], t["text"]) for t in batch])
                 rows += [("text", t["text"], t["locator"], v) for t, v in zip(batch, vecs)]
             for item in items:                            # images and audio: one per call
                 if item["kind"] == "text":
                     continue
                 if not self.wait_clear():
-                    return
-                vec = self.embedder.embed_image(item["image"]) if item["kind"] == "image" else self.embedder.embed_audio(item["audio"])
+                    return "stopped"
+                vec = (self._embed(self.embedder.embed_image, item["image"]) if item["kind"] == "image"
+                       else self._embed(self.embedder.embed_audio, item["audio"]))
                 rows.append((item["kind"], None, item["locator"], vec))
             self.store.replace_chunks(f["id"], rows)
+            return "ok"
+        except EmbedFailure as e:
+            return "embed_failed", str(e)
         except Exception as e:                            # one unreadable file must not stop the crawl
             self.store.mark_error(f["id"], f"{type(e).__name__}: {e}"[:300])
+            return "error"
         finally:
             self.current = None
+            self.store.set_meta("inflight", "")
 
     def run_once(self):
-        cfg, no_access = self.config(), []
-        found = list(walk(cfg["roots"], cfg["removed"], no_access))
+        crashed = self.store.get_meta("inflight")
+        if crashed:                                       # the process died with this file in flight
+            self.store.mark_error(int(crashed), "Indexing this file stopped the service, so it was skipped.")
+            self.store.set_meta("inflight", "")
+        cfg, no_access, failed = self.config(), [], []
+        found = list(walk(cfg["roots"], cfg["removed"], no_access, failed))
         self.no_access = no_access
-        self.store.sync(found, keep_prefixes=no_access)
+        self.store.sync(found, keep_prefixes=failed)
         for f in self.store.pending():
+            if self.wake.is_set():                        # folders or settings changed: start over with them
+                return
             if not self.wait_clear():
                 return
-            self.index_file(f)
+            result = self.index_file(f)
+            if isinstance(result, tuple):
+                try:                                      # is it this file, or the embedder?
+                    self.embedder.embed_query("probe")
+                except Exception:
+                    self.problem = f"The embedding model is failing ({result[1]}). Indexing will try again in a few minutes."
+                    return
+                self.store.mark_error(f["id"], result[1])
+
+    def run_pass(self):
+        """One crawl-and-index pass. A failure is kept for /status instead of passing for "up to date"."""
+        self.problem = None
+        try:
+            self.run_once()
+        except Exception as e:
+            self.problem = f"Indexing failed: {type(e).__name__}: {e}"[:300]
+            print(self.problem, file=sys.stderr, flush=True)
 
     def run(self):
         while not self.stop.is_set():
+            self.wake.clear()
             if self.error is None:
-                try:
-                    self.run_once()
-                except Exception as e:
-                    print(f"index pass failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+                self.run_pass()
+            if self.wake.is_set():                        # changed during the pass: go again now
+                continue
             self.state, self.paused_reason = "idle", None
             deadline = time.time() + RESCAN_SECONDS
             while not self.stop.is_set() and not self.wake.is_set() and time.time() < deadline:
                 if self.embedder.loaded and time.time() - self.embedder.last_used > IDLE_UNLOAD_SECONDS:
                     self.embedder.unload()                # give the memory back until the next query or change
                 self.wake.wait(5)
-            self.wake.clear()
 
     def status(self):
         return {"state": self.state, "paused_reason": self.paused_reason, "current": self.current,
                 "model_loaded": self.embedder.loaded, "roots": self.config()["roots"], "no_access": self.no_access,
-                "error": self.error, **self.store.counts()}
+                "error": self.error, "problem": self.problem, **self.store.counts()}
 
 
 # ---------------------------------------------------------------- HTTP API
 
+def _local_request(host, origin):
+    """Only this Mac's own app calls the service: a loopback Host (no DNS rebinding) and no browser
+    Origin (app.py calls it server-side, a web page never should)."""
+    name = (host or "").rsplit(":", 1)[0].strip("[]")
+    return name in ("127.0.0.1", "localhost", "::1") and not origin
+
+
 def make_app(store, embedder, indexer, searcher):
     import io
     from fastapi import Body, FastAPI, HTTPException
-    from fastapi.responses import Response
+    from fastapi.responses import PlainTextResponse, Response
 
-    app = FastAPI()
+    api = FastAPI()
 
-    @app.get("/health")
+    async def app(scope, receive, send):                  # plain ASGI wrapper: these routes return the user's file contents
+        if scope["type"] == "http":
+            h = dict(scope["headers"])
+            if not _local_request(h.get(b"host", b"").decode("latin-1"), h.get(b"origin", b"").decode("latin-1")):
+                return await PlainTextResponse("forbidden", status_code=403)(scope, receive, send)
+        await api(scope, receive, send)
+
+    @api.get("/health")
     def health():
         return {"ok": True}
 
-    @app.get("/status")
+    @api.get("/status")
     def status():
         return indexer.status()
 
-    @app.post("/search")
+    @api.post("/search")
     def search(body: dict = Body(...)):
         if indexer.error:
             raise HTTPException(503, indexer.error)
         limit = max(1, min(int(body.get("limit") or RESULT_LIMIT), 100))
         return {"results": searcher.search(body.get("query"), body.get("kind") or None, body.get("folder") or None, limit)}
 
-    @app.post("/passages")
+    @api.post("/passages")
     def passages(body: dict = Body(...)):
         if indexer.error:
             raise HTTPException(503, indexer.error)
         return {"passages": searcher.passages(body.get("query"), int(body.get("limit") or 6), int(body.get("max_chars") or 12000))}
 
-    @app.post("/reload")
+    @api.post("/reload")
     def reload():
         indexer.wake.set()
         return {"ok": True}
 
-    @app.get("/errors")
+    @api.get("/errors")
     def errors():
         return {"errors": store.errors()}
 
-    @app.get("/file/{file_id}")
+    @api.get("/file/{file_id}")
     def file(file_id: int):
         f = store.file_info([file_id]).get(file_id)
         if not f:
             raise HTTPException(404, "not in the index")
         return f
 
-    @app.get("/thumb/{file_id}")
+    @api.get("/thumb/{file_id}")
     def thumb(file_id: int):
         f = store.file_info([file_id]).get(file_id)
         if not f or f["kind"] != "image":

@@ -65,6 +65,33 @@ CATALOG = json.loads((ROOT / "catalog.json").read_text())
 app = FastAPI()
 app.mount("/gallery", StaticFiles(directory=GALLERY), name="gallery")
 
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+def _local_origin(host, origin):
+    """A request from this app's own page or a local script: a loopback Host, and a loopback
+    Origin if a browser sent one."""
+    name = lambda netloc: (netloc or "").rsplit(":", 1)[0].strip("[]")                    # noqa: E731
+    return name(host) in LOOPBACK and (not origin or name(origin.split("://", 1)[-1]) in LOOPBACK)
+
+
+class LocalOnly:
+    """Search and "My files" return the text of the user's files, so a page on another site (or a
+    rebound DNS name) must not be able to call them. Plain ASGI, so streaming is untouched."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and (scope["path"].startswith("/api/search") or scope["path"] == "/api/chat"):
+            h = dict(scope["headers"])
+            if not _local_origin(h.get(b"host", b"").decode("latin-1"), h.get(b"origin", b"").decode("latin-1")):
+                return await JSONResponse({"detail": "Forbidden"}, status_code=403)(scope, receive, send)
+        await self.inner(scope, receive, send)
+
+
+app.add_middleware(LocalOnly)
+
 # ---------------------------------------------------------------- helpers
 
 
@@ -659,9 +686,8 @@ FILES_PROMPT = ("Answer using these excerpts from the user's files. Name the fil
 def _add_file_passages(messages):
     """"My files": put the best-matching passages from the search index in front of the latest
     user message. Returns the sources, or [] (message untouched) when Search is off or nothing matched."""
-    last = next((m for m in reversed(messages)
-                 if m.get("role") == "user" and isinstance(m.get("content"), str) and m["content"].strip()), None)
-    if last is None:
+    last = messages[-1] if messages else None             # only the turn being answered, never an earlier one
+    if not last or last.get("role") != "user" or not isinstance(last.get("content"), str) or not last["content"].strip():
         return []
     try:
         r = httpx.post(SEARCH_URL + "/passages", json={"query": last["content"], "limit": 6, "max_chars": 12000}, timeout=30)
@@ -1197,8 +1223,13 @@ def _search_running():
         return False
 
 
+def _search_process():
+    """True while a search.py process exists, including one that is still loading."""
+    return subprocess.run(["pgrep", "-f", r"^[^ ]*python[^ ]* search.py --port 8083"], capture_output=True).returncode == 0
+
+
 def _start_search():
-    if _search_running():
+    if _search_running() or _search_process():
         return
     log = open(LOGS / "search.log", "a")
     # Relative file names with cwd=ROOT: the bundled path contains a space, which would defeat

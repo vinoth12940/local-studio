@@ -89,9 +89,7 @@ def crawler():
         assert isinstance(row[1], int) and isinstance(row[2], float)
     assert search.classify("a.PDF", 10) == "document" and search.classify("a.pdf", 200 * 2 ** 20) == "name"
     assert search._dataless(types.SimpleNamespace(st_flags=0x40000000)) and not search._dataless(types.SimpleNamespace(st_flags=0))
-    # the app's own data and anything under ~/Library (except iCloud Drive) are never walked
-    assert list(search.walk([str(search.STATE / "data")])) == []
-    assert list(search.walk([str(search.HOME / "Library" / "Preferences")])) == []
+    assert list(search.walk([str(search.STATE / "data")])) == [], "the app's own data is never walked"
 
 
 def _unit(seed):
@@ -398,6 +396,241 @@ def indexer_holds():
 
         ix.error = "model failed its self-test"
         assert ix.status()["error"] == "model failed its self-test"
+
+
+# ---- checks added by the final review (each written to fail before its fix)
+
+def _names(rows):
+    return sorted(Path(r[0]).name for r in rows)
+
+
+@check
+def overlapping_roots():
+    """Adding a folder that contains (or is inside) another indexed folder must not break indexing."""
+    with tempfile.TemporaryDirectory() as d:
+        root, st, ix, cfg = _tree(d, {"a.txt": "plumber invoice", "work/b.txt": "japan itinerary", "work/deep/c.txt": "dentist"})
+        rows = list(search.walk([str(root), str(root / "work"), str(root / "work" / "deep")]))
+        assert _names(rows) == ["a.txt", "b.txt", "c.txt"], "each file is yielded once"
+        cfg["roots"] = [str(root), str(root / "work")]
+        ix.run_once()
+        assert st.counts()["files_done"] == 3
+        (root / "work" / "new.txt").write_text("a new file in the nested folder")
+        ix.run_once()
+        assert st.counts()["files_done"] == 4
+        assert st.sync([("/r/x.txt", 1, 1.0, "document"), ("/r/x.txt", 1, 1.0, "document")])["new"] == 1, "a repeated path is not an error"
+
+
+@check
+def failed_pass_is_reported():
+    with tempfile.TemporaryDirectory() as d:
+        _, st, ix, _ = _tree(d, {"a.txt": "plumber invoice"})
+
+        def boom(*a, **k):
+            raise RuntimeError("disk is full")
+
+        st.sync = boom
+        ix.run_pass()
+        assert "disk is full" in (ix.status()["problem"] or ""), "a failed pass must not look like 'up to date'"
+        del st.sync
+        ix.run_pass()
+        assert ix.status()["problem"] is None and st.counts()["files_done"] == 1
+
+
+@check
+def folder_removed_mid_pass():
+    """Removing a folder takes effect right away, not after the remaining files have been read."""
+    with tempfile.TemporaryDirectory() as d:
+        root, st, ix, cfg = _tree(d, {**{f"keep/k{i}.txt": "plumber invoice" for i in range(3)},
+                                      **{f"private/p{i:02d}.txt": "secret diary" for i in range(30)}})
+        cfg["roots"] = [str(root / "keep"), str(root / "private")]
+        seen, real = [], ix.index_file
+
+        def index_file(f):
+            seen.append(f["name"])
+            if len(seen) == 5:                             # the user removes the folder while it is being indexed
+                cfg["roots"] = [str(root / "keep")]
+                ix.wake.set()
+            return real(f)
+
+        ix.index_file = index_file
+        ix.run_once()
+        assert len(seen) == 5, f"{len(seen)} files were read after the folder was removed"
+        ix.wake.clear()
+        ix.run_once()
+        assert st.counts()["files_total"] == 3 and all(n.startswith("k") for n in seen[5:])
+        hits = search.Searcher(st, ix.embedder).search("secret diary", limit=50)
+        assert all(Path(r["path"]).parent.name != "private" for r in hits), "nothing from the removed folder is returned"
+
+
+@check
+def embedder_failure_is_not_a_file_error():
+    with tempfile.TemporaryDirectory() as d:
+        root, st, ix, _ = _tree(d, {f"f{i}.txt": "plumber invoice" for i in range(6)})
+        emb, state = ix.embedder, {"broken": True}
+        real_texts, real_query = emb.embed_texts, emb.embed_query
+
+        def texts(t):
+            if state["broken"]:
+                raise RuntimeError("Metal: out of memory")
+            return real_texts(t)
+
+        def query(q):
+            if state["broken"]:
+                raise RuntimeError("Metal: out of memory")
+            return real_query(q)
+
+        emb.embed_texts, emb.embed_query = texts, query
+        ix.run_pass()
+        c = st.counts()
+        assert c["files_error"] == 0 and c["files_done"] == 0, f"a failing embedder must not mark files as unreadable: {c}"
+        assert "out of memory" in ix.status()["problem"]
+        state["broken"] = False                            # memory comes back: everything indexes without a rebuild
+        ix.run_pass()
+        assert st.counts()["files_done"] == 6 and ix.status()["problem"] is None
+
+        (root / "poison.txt").write_text("this one file upsets the model")
+        emb.embed_texts = lambda t: (_ for _ in ()).throw(ValueError("bad input")) if any("upsets" in x for x in t) else real_texts(t)
+        (root / "after.txt").write_text("dentist appointment")
+        ix.run_pass()
+        c = st.counts()
+        assert c["files_error"] == 1 and c["files_done"] == 7, f"one bad file is an error for that file only: {c}"
+        assert st.errors()[0]["path"].endswith("poison.txt") and ix.status()["problem"] is None
+
+
+@check
+def crash_on_a_file_does_not_loop():
+    with tempfile.TemporaryDirectory() as d:
+        root, st, ix, cfg = _tree(d, {"a.txt": "plumber invoice", "killer.pdf.txt": "crashes a native library"})
+        st.sync(list(search.walk([str(root)])))             # real sizes and times, as the crawl records them
+        killer = next(f for f in st.pending() if f["name"] == "killer.pdf.txt")
+        st.set_meta("inflight", str(killer["id"]))         # the service died while this file was in flight
+        ix2 = search.Indexer(search.Store(Path(d) / "index.db"), FakeEmbedder(), config=lambda: cfg, app_url=None)
+        calls, real = [], search.extract
+        search.extract = lambda p, k: calls.append(Path(p).name) or real(p, k)
+        try:
+            ix2.run_once()
+        finally:
+            search.extract = real
+        assert "killer.pdf.txt" not in calls, "the file that crashed the service is not tried again"
+        errs = ix2.store.errors()
+        assert len(errs) == 1 and errs[0]["path"].endswith("killer.pdf.txt") and "stopped the service" in errs[0]["error"]
+        assert ix2.store.get_meta("inflight") in (None, "") and ix2.store.counts()["files_done"] == 1
+
+
+@check
+def explicit_folders_win():
+    with tempfile.TemporaryDirectory() as d:
+        home = Path(d).resolve() / "home"
+        for f in ("Documents/a.txt", "Documents/Taxes/2025.txt", "Library/Preferences/p.txt", "Library/CloudStorage/Dropbox/d.txt"):
+            (home / f).parent.mkdir(parents=True, exist_ok=True)
+            (home / f).write_text("x")
+        real_home, search.HOME = search.HOME, home
+        try:
+            assert _names(search.walk([str(home)])) == ["2025.txt", "a.txt"], "walking down from home never enters Library"
+            assert _names(search.walk([str(home)], removed=[str(home / "Documents")])) == []
+            got = _names(search.walk([str(home / "Documents" / "Taxes")], removed=[str(home / "Documents")]))
+            assert got == ["2025.txt"], "a folder the user added is indexed even inside a removed one"
+            both = _names(search.walk([str(home), str(home / "Documents" / "Taxes")], removed=[str(home / "Documents")]))
+            assert both == ["2025.txt"]
+            assert _names(search.walk([str(home / "Library" / "CloudStorage" / "Dropbox")])) == ["d.txt"], "an added cloud-storage folder is walked"
+        finally:
+            search.HOME = real_home
+
+
+@check
+def only_this_mac_may_call():
+    ok = search._local_request
+    assert ok("127.0.0.1:8083", None) and ok("localhost:8083", "") and ok("127.0.0.1", None)
+    assert not ok("evil.example:8083", None), "DNS rebinding: a foreign Host is refused"
+    assert not ok("127.0.0.1:8083", "https://evil.example"), "a web page (any Origin) is refused"
+    assert not ok("", None) and not ok(None, None)
+
+
+@check
+def icloud_eviction_keeps_the_index():
+    with tempfile.TemporaryDirectory() as d:
+        st = search.Store(Path(d) / "index.db")
+        st.sync([("/c/notes.txt", 10, 1.0, "document")])
+        fid = st.pending()[0]["id"]
+        st.replace_chunks(fid, [("text", "alpha", "", _unit(1))])
+        r = st.sync([("/c/notes.txt", 10, 1.0, "placeholder"), ("/c/never-downloaded.pdf", 5, 1.0, "placeholder")])
+        assert r == {"new": 1, "changed": 0, "deleted": 0}
+        assert st.counts()["chunks"] == 1 and st.vector_top(_unit(1), 1)[0][1] > 0.99, "an evicted file keeps its passages"
+        assert st.pending()[0]["kind"] == "name", "a file that was never downloaded is findable by name only"
+        st.replace_chunks(st.pending()[0]["id"], [])
+        assert st.sync([("/c/notes.txt", 10, 1.0, "placeholder"), ("/c/never-downloaded.pdf", 5, 1.0, "document")])["changed"] == 1, \
+            "once downloaded, a name-only file is indexed properly"
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d).resolve()
+        (root / "evicted.txt").write_text("x")
+        (root / "local.txt").write_text("x")
+        real = search._dataless
+        try:
+            marks = {"evicted.txt"}
+            search._dataless = lambda st_: getattr(st_, "_n", None) in marks
+            real_scandir = os.scandir
+
+            class E:
+                def __init__(self, e):
+                    self._e, self.name, self.path = e, e.name, e.path
+
+                def is_symlink(self):
+                    return self._e.is_symlink()
+
+                def is_dir(self, follow_symlinks=False):
+                    return self._e.is_dir(follow_symlinks=follow_symlinks)
+
+                def stat(self, follow_symlinks=False):
+                    s_ = self._e.stat(follow_symlinks=follow_symlinks)
+                    return types.SimpleNamespace(st_mode=s_.st_mode, st_size=s_.st_size, st_mtime=s_.st_mtime, st_flags=0, _n=self.name)
+
+            search.os.scandir = lambda p: [E(e) for e in real_scandir(p)]
+            got = {Path(p).name: k for p, _, _, k in search.walk([str(root)])}
+        finally:
+            search._dataless, search.os.scandir = real, real_scandir
+        assert got == {"evicted.txt": "placeholder", "local.txt": "document"}, got
+
+
+@check
+def unreadable_subfolder_keeps_its_files():
+    with tempfile.TemporaryDirectory() as d:
+        root, st, ix, cfg = _tree(d, {"a.txt": "plumber invoice", "sub/b.txt": "japan itinerary"})
+        cfg["roots"] = [str(root), str(Path(d) / "not-there")]
+        ix.run_once()
+        assert st.counts()["files_done"] == 2 and ix.no_access == [], "a folder that does not exist is not a permission problem"
+        (root / "sub").chmod(0)
+        try:
+            ix.run_once()
+        finally:
+            (root / "sub").chmod(0o700)
+        assert st.counts()["files_total"] == 2, "files in a folder that became unreadable stay in the index"
+
+
+@check
+def changing_file_does_not_leak():
+    with tempfile.TemporaryDirectory() as d:
+        st = search.Store(Path(d) / "index.db")
+        st.sync([("/r/log.txt", 1, 1.0, "document"), ("/r/keep.txt", 1, 1.0, "document")])
+        log, keep = (f["id"] for f in st.pending())
+        st.replace_chunks(keep, [("text", "keep me", "", _unit(999))])
+        for i in range(20):                                # a log file rewritten on every scan
+            st.replace_chunks(log, [("text", f"line {j}", "", _unit(j)) for j in range(200)])
+        assert st.n <= 1500, f"{st.n} rows held in memory for 201 live chunks"
+        top = st.vector_top(_unit(999), 1)
+        assert st.chunk_info([top[0][0]])[top[0][0]]["text"] == "keep me" and top[0][1] > 0.99
+        assert len(st.vector_top(_unit(5), 300)) == 201
+
+
+@check
+def found_by_name_before_indexing():
+    with tempfile.TemporaryDirectory() as d:
+        st = search.Store(Path(d) / "index.db")
+        st.sync([("/r/holiday-2024.mp4", 1, 1.0, "name"), ("/r/report.pdf", 1, 1.0, "document")])
+        fid = {f["name"]: f["id"] for f in st.pending()}
+        assert st.keyword_top(["holiday"], 5) == [-fid["holiday-2024.mp4"]], "a file is findable by name as soon as the crawl has seen it"
+        assert st.keyword_top(["report"], 5) == [-fid["report.pdf"]]
+        st.replace_chunks(fid["report.pdf"], [("text", "quarterly numbers", "p1", _unit(1))])
+        assert st.keyword_top(["report"], 5) == [-fid["report.pdf"]], "and still exactly once afterwards"
 
 
 if __name__ == "__main__":

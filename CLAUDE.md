@@ -106,6 +106,9 @@ patterns in sync. Its dependencies live in `search-requirements.txt` and are ins
 `data/search/index.db` under `STATE`. Module level in `search.py` imports only the standard
 library and numpy so `macos/check_search.py` can run without a model. For development set
 `LOCAL_STUDIO_SEARCH_ROOTS` to a sample folder so the real default folders are never crawled.
+Because these routes return the text of the user's files, `/api/search*` and `/api/chat` reject
+requests with a non-loopback `Host` or a foreign `Origin` (`LocalOnly` in `app.py`), and the
+service itself refuses any request that carries an `Origin` (`_local_request`).
 
 ### Models
 

@@ -213,6 +213,63 @@ def file_passages():
         app.httpx.post = real
 
 
+# ---- checks added by the final review (each written to fail before its fix)
+
+@check
+def my_files_uses_only_the_latest_turn():
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            return {"passages": [{"file_id": 1, "name": "lease.pdf", "path": "/r/lease.pdf", "locator": "", "text": "Rent is 2,450."}]}
+
+    posts, real = [], app.httpx.post
+    app.httpx.post = lambda url, **kw: posts.append(kw["json"]["query"]) or Resp()
+    try:
+        msgs = [{"role": "user", "content": "what is my rent?"}, {"role": "assistant", "content": "2,450 dollars."},
+                {"role": "user", "content": "", "attachments": ["0123456789abcdef"]}]      # a photo sent with no text
+        assert app._add_file_passages(msgs) == [] and posts == [], "an attachment-only turn must not search with an older question"
+        assert msgs[0]["content"] == "what is my rent?", "an earlier turn is never rewritten"
+        assert app._add_file_passages([{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]) == [] and posts == []
+    finally:
+        app.httpx.post = real
+
+
+@check
+def foreign_pages_cannot_drive_search():
+    from fastapi.testclient import TestClient
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    assert c.post("/api/search/start").json() == {"status": "off"}
+    assert c.post("/api/search/start", headers={"origin": "http://127.0.0.1:7860"}).status_code == 200, "the app's own page"
+    assert c.post("/api/search/start", headers={"origin": "https://evil.example"}).status_code == 403, "another web page"
+    assert c.post("/api/search/start", headers={"origin": "null"}).status_code == 403
+    assert c.post("/api/search/start", headers={"host": "evil.example:7860"}).status_code == 403, "DNS rebinding"
+    assert c.post("/api/chat", json={"messages": []}, headers={"origin": "https://evil.example"}).status_code == 403
+    assert c.get("/api/busy", headers={"origin": "https://evil.example"}).status_code == 200, "routes without file contents are unchanged"
+
+
+@check
+def search_is_not_started_twice():
+    """While the service is still loading (process up, /health not yet answering), a second
+    "turn on" must not launch another copy."""
+    started, real = [], (app._search_running, app._search_process, app.subprocess.Popen)
+
+    class P:
+        pid = 4242
+
+    app._search_running, app.subprocess.Popen = (lambda: False), (lambda *a, **k: started.append(a) or P())
+    try:
+        app._search_process = lambda: True
+        app._start_search()
+        assert started == [], "a copy is already starting"
+        app._search_process = lambda: False
+        app._start_search()
+        assert len(started) == 1 and started[0][0][-4:] == ["python", "search.py", "--port", "8083"]
+    finally:
+        app._search_running, app._search_process, app.subprocess.Popen = real
+        (app.LOGS / "search.pid").unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

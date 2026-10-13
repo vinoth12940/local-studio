@@ -454,3 +454,7 @@ Version 1.3.0: `APP_VERSION`, the README badge and DMG file name change together
 | Committed sample folder, 16 queries. | Locally generated sample folder, 17 queries. | Licensing; three test queries depended on files that can't be regenerated; four added for PDF, spreadsheet, Word and scanned PDF. |
 | Service state `idle` on start. | A `starting` state until the first pass begins. | An empty index read as "up to date". |
 | `/api/search/open` took a file id. | It takes the id and the path, and both must match the index. | File ids are reused after a rebuild. |
+| iCloud placeholders skipped. | Kept if already indexed; otherwise indexed by name. | Eviction would delete indexed files. |
+| Folder rules applied globally. | A folder the user adds is indexed even inside a removed folder or under `~/Library`; overlapping folders are walked once. | Final review: overlapping folders broke every pass; added folders were silently ignored. |
+| Any embedding error marked the file as failed. | A failing embedder stops the pass and leaves files pending (`problem` in `/status`); only file-specific failures are recorded. | Final review: a memory failure marked every file unreadable until a rebuild. |
+| No request-origin checks. | `/api/search*`, `/api/chat` and the service refuse non-loopback hosts and foreign origins. | Final review: any web page could turn Search on or read snippets. |
