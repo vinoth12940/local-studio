@@ -6,7 +6,6 @@ numpy
 pillow
 pillow-heif
 soundfile
-librosa
 fastapi
 uvicorn
 pypdf

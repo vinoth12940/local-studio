@@ -478,9 +478,149 @@ def _text_items(sections):
     return items
 
 
+IMAGE_SIDE = 1024
+MIN_IMAGE_SIDE = 64               # icons and spacers
+SCAN_PAGES = 20
+SAMPLE_RATE = 16000
+SEGMENT_SECONDS = 30
+MAX_SEGMENTS = 20                 # the first 10 minutes of a file
+
+
+def _fit(im):
+    im = im.convert("RGB")
+    im.thumbnail((IMAGE_SIDE, IMAGE_SIDE))
+    return im
+
+
+def _load_image(p):
+    from PIL import Image
+    if p.suffix.lower() == ".heic":
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    with Image.open(p) as im:
+        if min(im.size) < MIN_IMAGE_SIDE:
+            return None
+        im.draft("RGB", (IMAGE_SIDE, IMAGE_SIDE))         # lets the JPEG decoder downscale while decoding
+        return _fit(im)
+
+
+def _pdf_items(p):
+    from pypdf import PdfReader
+    pages = [(pg.extract_text() or "").strip() for pg in PdfReader(str(p)).pages]
+    chars = sum(len(t) for t in pages)
+    if pages and chars < 80 * len(pages) and chars < 2000:            # scanned: same test as app.py's attachments
+        import pypdfium2 as pdfium
+        doc = pdfium.PdfDocument(str(p))
+        return [{"kind": "image", "image": _fit(doc[i].render(scale=2).to_pil()), "locator": f"p{i + 1}"}
+                for i in range(min(SCAN_PAGES, len(doc)))]
+    return _text_items([(f"p{i + 1}", t) for i, t in enumerate(pages) if t])
+
+
+def _docx_text(p):
+    import docx
+    d = docx.Document(str(p))
+    parts = [para.text for para in d.paragraphs if para.text.strip()]
+    for t in d.tables:
+        parts.append("\n".join(" | ".join(c.text.strip() for c in r.cells) for r in t.rows))
+    return "\n\n".join(parts)
+
+
+def _xlsx_sections(p):
+    import openpyxl
+    wb = openpyxl.load_workbook(str(p), read_only=True, data_only=True)
+    sections = []
+    for ws in wb.worksheets:
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+            if any(v is not None for v in row):
+                rows.append(" | ".join("" if v is None else str(v) for v in row))
+            if len(rows) >= 2000:
+                break
+        sections.append((ws.title, "\n".join(rows)))
+    return sections
+
+
+def _audio_segments(p):
+    import soundfile as sf
+    with tempfile.TemporaryDirectory() as d:
+        wav = Path(d) / "a.wav"
+        r = subprocess.run(["afconvert", "-f", "WAVE", "-d", f"LEI16@{SAMPLE_RATE}", "-c", "1", str(p), str(wav)],
+                           capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            raise RuntimeError(f"afconvert failed: {r.stderr.strip()[:200]}")
+        samples, _ = sf.read(wav, dtype="float32", frames=SAMPLE_RATE * SEGMENT_SECONDS * MAX_SEGMENTS)
+    size = SAMPLE_RATE * SEGMENT_SECONDS
+    segs = [samples[i:i + size] for i in range(0, len(samples), size)]
+    return [s for i, s in enumerate(segs) if i == 0 or len(s) >= SAMPLE_RATE]     # drop a tail shorter than a second
+
+
 def extract(path, kind):
     p = Path(path)
+    ext = p.suffix.lower()
+    if kind == "image":
+        im = _load_image(p)
+        return [{"kind": "image", "image": im, "locator": ""}] if im is not None else []
+    if kind == "audio":
+        return [{"kind": "audio", "audio": seg, "locator": f"{i * SEGMENT_SECONDS}s"} for i, seg in enumerate(_audio_segments(p))]
+    if ext == ".pdf":
+        return _pdf_items(p)
+    if ext == ".docx":
+        return _text_items([("", _docx_text(p))])
+    if ext in (".xlsx", ".xlsm"):
+        return _text_items(_xlsx_sections(p))
     return _text_items([("", p.read_bytes().decode("utf-8", errors="replace"))])
+
+
+# ---------------------------------------------------------------- embedder
+# EmbeddingGemma 2 on MLX. One lock around every model call: a query can arrive mid-batch.
+
+class Embedder:
+    def __init__(self, repo=MODEL_REPO):
+        self.repo, self.lock = repo, threading.Lock()
+        self.model = self.processor = None
+        self.last_used = time.time()
+
+    @property
+    def loaded(self):
+        return self.model is not None
+
+    def unload(self):
+        with self.lock:
+            self.model = self.processor = None
+            import gc
+            import mlx.core as mx
+            gc.collect()
+            mx.clear_cache()
+
+    def _run(self, make_inputs):
+        import mlx.core as mx
+        with self.lock:
+            if self.model is None:
+                from mlx_vlm import load
+                self.model, self.processor = load(self.repo)
+            self.last_used = time.time()
+            inputs = make_inputs(self.processor)
+            out = self.model(**{k: mx.array(v) for k, v in inputs.items()}).text_embeds
+            mx.eval(out)
+            return np.array(out.astype(mx.float32))
+
+    def embed_texts(self, texts):
+        """texts already carry their task prefix (see doc_text)."""
+        return self._run(lambda p: p.tokenizer(list(texts), padding=True, truncation=True, max_length=2048, return_tensors="np"))
+
+    def embed_query(self, query):
+        return self.embed_texts([f"task: search result | query: {query}"])[0]
+
+    def embed_image(self, image):
+        # One image per call: the processor treats a list of images as a single combined input.
+        return self._run(lambda p: p(images=[image], return_tensors="np"))[0]
+
+    def embed_audio(self, samples):
+        return self._run(lambda p: p(audio=[samples], sampling_rate=SAMPLE_RATE, return_tensors="np"))[0]
+
+    def selftest(self):
+        v = self.embed_query("hello")
+        return v.shape == (DIM,) and bool(np.isfinite(v).all()) and abs(float(np.linalg.norm(v)) - 1.0) < 0.01
 
 
 # ---------------------------------------------------------------- indexer
@@ -588,3 +728,44 @@ class Indexer:
         return {"state": self.state, "paused_reason": self.paused_reason, "current": self.current,
                 "model_loaded": self.embedder.loaded, "roots": self.config()["roots"], "no_access": self.no_access,
                 "error": self.error, **self.store.counts()}
+
+
+# ---------------------------------------------------------------- command line
+
+def run_eval(folder):
+    """Index `folder`/files into a throwaway index with the real model and check `folder`/queries.json."""
+    folder = Path(folder).resolve()
+    queries = json.loads((folder / "queries.json").read_text())
+    with tempfile.TemporaryDirectory() as d:
+        store, embedder = Store(Path(d) / "index.db"), Embedder()
+        cfg = {"roots": [str(folder / "files")], "removed": [], "paused": False, "on_battery": True}
+        indexer, searcher = Indexer(store, embedder, config=lambda: cfg, app_url=None), Searcher(store, embedder)
+        t = time.time()
+        indexer.run_once()
+        c = store.counts()
+        print(f"indexed {c['files_done']} files ({c['chunks']} chunks, {c['files_error']} errors) in {time.time() - t:.1f}s")
+        for e in store.errors():
+            print(f"  ERROR {Path(e['path']).name}: {e['error']}")
+        failed = 0
+        for q in queries:
+            res = searcher.search(q["query"])
+            top = res[0] if res else None
+            ok = top is not None and top["name"] == q["expect"]
+            failed += not ok
+            print(f"{'ok  ' if ok else 'FAIL'} {q['query']:48s} -> {top['name'] if top else '(nothing)'} "
+                  f"{top['score'] if top else ''}{'' if ok else '   expected ' + q['expect']}")
+        print(f"{len(queries) - failed}/{len(queries)} queries ranked the expected file first")
+        return 1 if failed or c["files_error"] else 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Local Studio search service")
+    ap.add_argument("--port", type=int, default=8083)
+    ap.add_argument("--eval", metavar="FOLDER", help="index FOLDER/files into a temporary index and check FOLDER/queries.json")
+    args = ap.parse_args()
+    if args.eval:
+        sys.exit(run_eval(args.eval))
+
+
+if __name__ == "__main__":
+    main()
