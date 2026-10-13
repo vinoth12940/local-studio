@@ -403,25 +403,41 @@ class Store:
         return [{"id": i, "path": p, "name": n, "kind": k} for i, p, n, k in rows]
 
     def vector_top(self, q, n, file_kind=None, text_only=False):
+        """The n best chunks as (chunk_id, score, z), best z first. z is how many deviations the score stands above
+        the typical score for this query, measured separately for text and for image/audio chunks
+        (media scores sit lower), with the median and MAD so a handful of real matches don't move it."""
         with self.lock:
             if not self.n:
                 return []
             scores = self.M[:self.n] @ np.asarray(q, np.float32)
-            ok = self.alive[:self.n].copy()
+            alive, text = self.alive[:self.n], self.is_text[:self.n]
+            z = np.zeros(self.n, np.float32)
+            for group in (alive & text, alive & ~text):
+                base = group if group.sum() >= Z_GROUP_MIN else alive      # too few of a kind: judge against everything
+                if not base.any():
+                    continue
+                mid = float(np.median(scores[base]))
+                spread = max(1.4826 * float(np.median(np.abs(scores[base] - mid))), SIGMA_MIN)
+                z[group] = (scores[group] - mid) / spread
+            ok = alive.copy()
             if file_kind:
                 ok &= self.fkind[:self.n] == KIND_ORDER[file_kind]
             if text_only:
-                ok &= self.is_text[:self.n]
-            scores[~ok] = -2.0
+                ok &= text
+            # Ranked by z, not raw score: image and audio chunks score lower than text across the board,
+            # so by raw score a strong picture match would lose its place to mediocre text.
+            z[~ok] = -np.inf
             k = min(n, self.n)
-            top = np.argpartition(-scores, k - 1)[:k]
-            top = top[np.argsort(-scores[top])]
-            return [(int(self.ids[i]), float(scores[i])) for i in top if scores[i] > -2.0]
+            top = np.argpartition(-z, k - 1)[:k]
+            top = top[np.argsort(-z[top])]
+            return [(int(self.ids[i]), float(scores[i]), float(z[i])) for i in top if ok[i]]
 
     def keyword_top(self, tokens, n):
         if not tokens:
             return []
-        match = " ".join('"%s"' % t.replace('"', "") for t in tokens)      # quoted terms, all must match
+        # Quoted terms, all must match. Longer words also match as a prefix: "mithran"* finds MithranPassport,
+        # which the tokenizer keeps as one word. Short ones don't, or "rent" would find every "render".
+        match = " ".join('"%s"%s' % (t.replace('"', ""), "*" if len(t) >= 5 else "") for t in tokens)
         with self.lock:
             return [r[0] for r in self.db.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY bm25(fts) LIMIT ?", (match, n))]
 
@@ -453,16 +469,20 @@ class Store:
 
 
 # ---------------------------------------------------------------- ranking
-# Meaning (vectors) and exact words (FTS5) are fused by rank. Vector scores sit in a narrow band
-# (related ~0.65-0.8, unrelated ~0.6), so the cut-off is relative to the best match, with a floor.
+# Meaning (vectors) and exact words (FTS5) are fused by rank. On a real index unrelated text scores
+# around 0.6 against almost any query and the best unrelated chunk sits only a few hundredths below
+# a real match, so absolute thresholds don't work. A vector hit counts when its score stands out
+# from the background for that query (z, see Store.vector_top) and is not far below the best hit.
 
 STOPWORDS = frozenset("the and for are was were with that this from have has had you your what when where which "
                       "who how why did does about into out not but can all any our its".split())
 POOL = 200                        # chunks taken from each ranking before fusing
 RRF_K = 60
-MARGIN = 0.08                     # keep files within this of the best vector score...
-FLOOR = 0.62                      # ...but never below this (both from the feasibility test; tune on real files)
-KEYWORD_ONLY_MAX = 10
+Z_MIN = 4.5                       # a hit must stand at least this far above the background...
+Z_MARGIN = 2.5                    # ...and within this of the best hit (both tuned on a 31,000-chunk index, 13 Oct 2026)
+Z_GROUP_MIN = 50                  # fewer chunks of a kind than this: use the whole index as background
+SIGMA_MIN = 0.02                  # floor for the spread, so a tiny or uniform index can't produce huge z values
+KEYWORD_ONLY_MAX = 10             # files that only mention the words; files NAMED with them are never capped
 RESULT_LIMIT = 30
 
 
@@ -474,26 +494,31 @@ def keyword_tokens(query):
     return [t for t in re.findall(r"\w+", query.lower()) if len(t) >= 3 and t not in STOPWORDS][:12]
 
 
+def _stands_out(z, best_z):
+    return z >= max(Z_MIN, best_z - Z_MARGIN)
+
+
 def fuse(vec_hits, kw_rowids, chunk_file):
-    """Combine a vector ranking [(chunk_id, score)] and a keyword ranking [rowid] (negative =
+    """Combine a vector ranking [(chunk_id, score, z)] and a keyword ranking [rowid] (negative =
     a hit on file -rowid's name) into one per-file ranking, applying the cut-off."""
-    vec_hits = [(c, s) for c, s in vec_hits if c in chunk_file]
+    vec_hits = [h for h in vec_hits if h[0] in chunk_file]
     kw_rowids = [r for r in kw_rowids if r < 0 or r in chunk_file]
     chunk_score, files = {}, {}
 
     def slot(fid):
-        return files.setdefault(fid, {"file_id": fid, "fused": 0.0, "chunk": None, "vec": None, "kw": False})
+        return files.setdefault(fid, {"file_id": fid, "fused": 0.0, "chunk": None, "vec": None, "z": None, "kw": False, "named": False})
 
-    for rank, (cid, score) in enumerate(vec_hits):
+    for rank, (cid, score, z) in enumerate(vec_hits):
         chunk_score[cid] = 1.0 / (RRF_K + rank + 1)
         f = slot(chunk_file[cid])
-        f["vec"] = score if f["vec"] is None else max(f["vec"], score)
+        if f["vec"] is None or score > f["vec"]:
+            f["vec"], f["z"] = score, z
     name_bonus = {}
     for rank, rowid in enumerate(kw_rowids):
         r = 1.0 / (RRF_K + rank + 1)
         if rowid < 0:
             name_bonus[-rowid] = r
-            slot(-rowid)["kw"] = True
+            slot(-rowid).update(kw=True, named=True)
         else:
             chunk_score[rowid] = chunk_score.get(rowid, 0.0) + r
             slot(chunk_file[rowid])["kw"] = True
@@ -505,13 +530,18 @@ def fuse(vec_hits, kw_rowids, chunk_file):
         files[fid]["fused"] += bonus
 
     top = vec_hits[0] if vec_hits else None
-    threshold = max(top[1] - MARGIN, FLOOR) if top else None
+    best_z = max((h[2] for h in vec_hits), default=0.0)
     order = lambda f: (f["fused"], f["vec"] if f["vec"] is not None else -1.0)                    # noqa: E731
     strong = [f for f in files.values()
-              if top and (f["file_id"] == chunk_file[top[0]] or (f["vec"] is not None and f["vec"] >= threshold))]
+              if top and (f["file_id"] == chunk_file[top[0]] or (f["z"] is not None and _stands_out(f["z"], best_z)))]
     kept = {f["file_id"] for f in strong}
-    kw_only = sorted((f for f in files.values() if f["kw"] and f["file_id"] not in kept), key=order, reverse=True)
-    return sorted(strong + kw_only[:KEYWORD_ONLY_MAX], key=order, reverse=True)
+    rest = sorted((f for f in files.values() if f["kw"] and f["file_id"] not in kept), key=order, reverse=True)
+    named = [f for f in rest if f["named"]]
+    mentions = [f for f in rest if not f["named"]][:KEYWORD_ONLY_MAX]
+    out = sorted(strong + named + mentions, key=order, reverse=True)
+    for f in out:
+        f.pop("z"); f.pop("named")
+    return out
 
 
 class Searcher:
@@ -524,7 +554,7 @@ class Searcher:
             return []
         vec = self.store.vector_top(self.embedder.embed_query(query), POOL, file_kind=kind)
         kw = self.store.keyword_top(keyword_tokens(query), POOL)
-        chunks = self.store.chunk_info([c for c, _ in vec] + [r for r in kw if r > 0])
+        chunks = self.store.chunk_info([h[0] for h in vec] + [r for r in kw if r > 0])
         chunk_file = {c: i["file_id"] for c, i in chunks.items()}
         files = self.store.file_info(set(chunk_file.values()) | {-r for r in kw if r < 0})
         if kind:                                          # the vector side is already filtered; filter the keyword side
@@ -550,8 +580,8 @@ class Searcher:
         vec = self.store.vector_top(self.embedder.embed_query(query), POOL, text_only=True)
         if not vec:
             return []
-        threshold = max(vec[0][1] - MARGIN, FLOOR)
-        hits = [c for c, s in vec if s >= threshold][:limit]
+        best_z = max(h[2] for h in vec)                      # no "always the closest" here: an unrelated excerpt in a prompt does harm
+        hits = [c for c, _, z in vec if _stands_out(z, best_z)][:limit]
         chunks = self.store.chunk_info(hits)
         files = self.store.file_info({c["file_id"] for c in chunks.values()})
         out, used = [], 0

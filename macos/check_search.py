@@ -224,19 +224,22 @@ def ranking():
     chunk_file = {1: 10, 2: 10, 3: 20, 4: 30, 5: 40}
     files = lambda r: [x["file_id"] for x in r]                                                  # noqa: E731
 
-    r = search.fuse([(1, 0.80), (3, 0.75), (2, 0.70), (4, 0.66), (5, 0.55)], [], chunk_file)
-    assert files(r) == [10, 20], files(r)                  # 0.66 is under top - 0.08; 0.55 is under the floor too
+    # hits are (chunk, score, z): z is how far the score stands out from this query's background
+    r = search.fuse([(1, 0.80, 8.0), (3, 0.75, 6.2), (2, 0.70, 5.0), (4, 0.66, 4.8), (5, 0.55, 2.0)], [], chunk_file)
+    assert files(r) == [10, 20], files(r)                  # 4.8 is more than Z_MARGIN below the best; 2.0 is background
     assert r[0]["chunk"] == 1 and r[0]["vec"] == 0.80 and r[0]["kw"] is False
 
-    assert files(search.fuse([(1, 0.58), (3, 0.57), (4, 0.56)], [], chunk_file)) == [10], "a weak top match still shows, alone"
-    assert files(search.fuse([(1, 0.70), (3, 0.63), (4, 0.61)], [], chunk_file)) == [10, 20], "the floor applies even inside the margin"
+    assert files(search.fuse([(1, 0.58, 3.9), (3, 0.57, 3.8), (4, 0.56, 3.7)], [], chunk_file)) == [10], "nothing stands out: the closest file still shows, alone"
+    assert files(search.fuse([(1, 0.70, 5.0), (3, 0.69, 4.6), (4, 0.68, 4.4)], [], chunk_file)) == [10, 20], "Z_MIN applies even inside the margin"
 
-    r = search.fuse([(1, 0.80)], [4, -40], chunk_file)     # keyword-only files are kept after the vector match
+    r = search.fuse([(1, 0.80, 8.0)], [4, -40], chunk_file)  # keyword-only files are kept after the vector match
     assert files(r) == [10, 30, 40] and r[1]["kw"] and r[1]["chunk"] == 4 and r[2]["chunk"] is None and r[2]["vec"] is None
 
-    assert files(search.fuse([(1, 0.80), (3, 0.79)], [3], chunk_file)) == [20, 10], "matching both ways outranks a slightly better vector"
-    assert files(search.fuse([(99, 0.90), (1, 0.80)], [98], chunk_file)) == [10], "ids deleted mid-search are ignored"
-    assert len(search.fuse([(1, 0.80)], [-i for i in range(100, 130)], chunk_file)) == 11, "at most 10 keyword-only files"
+    assert files(search.fuse([(1, 0.80, 8.0), (3, 0.79, 7.8)], [3], chunk_file)) == [20, 10], "matching both ways outranks a slightly better vector"
+    assert files(search.fuse([(99, 0.90, 9.0), (1, 0.80, 8.0)], [98], chunk_file)) == [10], "ids deleted mid-search are ignored"
+    assert len(search.fuse([(1, 0.80, 8.0)], [-i for i in range(100, 130)], chunk_file)) == 31, "every file whose NAME matches is returned"
+    many = {**chunk_file, **{200 + i: 300 + i for i in range(30)}}
+    assert len(search.fuse([(1, 0.80, 8.0)], list(range(200, 230)), many)) == 11, "files that only mention the word are capped"
     assert search.fuse([], [], chunk_file) == []
 
 
@@ -734,6 +737,46 @@ def index_shrinks_after_a_large_removal():
         after = st.counts()["index_bytes"]
         assert after < before * 0.5, f"index is {after} bytes after dropping 1,500 of 1,501 files (was {before})"
         assert st.counts()["chunks"] == 1 and len(search.Store(Path(d) / "index.db").vector_top(_unit(1), 5)) == 1
+
+
+# ---- found on the real index: typing a name returned the named files plus ~70 unrelated code files
+
+@check
+def scores_are_judged_against_their_background():
+    """On a real index unrelated text scores ~0.6 against almost any query, so a fixed threshold is
+    useless. A score counts when it stands out from the scores of everything else for THAT query."""
+    with tempfile.TemporaryDirectory() as d:
+        st = search.Store(Path(d) / "index.db")
+        st.sync([(f"/r/f{i}.txt", 1, 1.0, "document") for i in range(400)] + [(f"/r/p{i}.jpg", 1, 1.0, "image") for i in range(3)])
+        q = _unit(12345)
+        near = q + 0.35 * _unit(777); near /= np.linalg.norm(near)
+        for f in st.pending():
+            if f["kind"] == "image":
+                st.replace_chunks(f["id"], [("image", None, "", near if f["name"] == "p0.jpg" else _unit(9000 + f["id"]))])
+            else:
+                st.replace_chunks(f["id"], [("text", "x", "", near if f["name"] == "f7.txt" else _unit(f["id"]))])
+        top = st.vector_top(q, 50)
+        assert len(top[0]) == 3, "hits carry (chunk, score, z)"
+        z = [h[2] for h in top]
+        assert z[0] > 8 and z[1] > 8 and z[2] < search.Z_MIN, z[:4]       # the two planted matches, then background
+        kinds = {st.chunk_info([h[0]])[h[0]]["kind"] for h in top[:2]}
+        assert kinds == {"text", "image"}, "a kind with only a few chunks is judged against the whole index"
+
+
+@check
+def a_name_finds_the_files_with_that_name():
+    with tempfile.TemporaryDirectory() as d:
+        st, emb = search.Store(Path(d) / "index.db"), FakeEmbedder()
+        named = ["Mithran Visa Page.pdf", "I-539A_Mithran.pdf", "ITIN Application-Mithran (1).pdf", "Mithran Birthcertificate.pdf",
+                 "W5850171_MithranPassport.pdf", "I94 - Official Website_mithran.pdf"] + [f"Mithran school form {i}.pdf" for i in range(8)]
+        code = [f"module_{i}.js" for i in range(60)]
+        st.sync([(f"/r/docs/{n}", 1, 1.0, "document") for n in named] + [(f"/r/code/{n}", 1, 1.0, "document") for n in code])
+        for f in st.pending():
+            text = "scanned page with stamps and signatures" if f["name"] in named else f"export function handler{f['id']}(request, response) rules"
+            st.replace_chunks(f["id"], [("text", text, "p1", emb.embed_texts([search.doc_text(f["name"], text)])[0])])
+        got = [r["name"] for r in search.Searcher(st, emb).search("Mithran", limit=50)]
+        assert set(named) <= set(got), f"missing: {sorted(set(named) - set(got))}"
+        assert not [n for n in got if n in code], "unrelated code files must not be listed for a name"
 
 
 if __name__ == "__main__":
