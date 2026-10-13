@@ -673,6 +673,8 @@ def copied_node_modules_are_skipped():
         for pkg in ("es-abstract", "caniuse-lite", "eslint", "aria-query", "resolve", "axe-core"):
             files += [f"{pkg}/package.json", f"{pkg}/index.js", f"{pkg}/lib/rules/a.js", f"{pkg}/README.md"]
         files += ["@swc/core/package.json", "@swc/core/index.js", "@swc/helpers/package.json", "@swc/helpers/h.js"]
+        # an installed package often carries its own nested dependencies: still library code
+        files += ["eslint-plugin-react/package.json", "eslint-plugin-react/lib/rules/r.js", "eslint-plugin-react/node_modules/resolve/index.js"]
         files += ["my-app/package.json", "my-app/package-lock.json", "my-app/src/app.js"]        # a project with a lockfile
         files += ["site/package.json", "site/main.js", "site/.git/HEAD"]                          # a project under git
         files += ["experiments/tiny/package.json", "experiments/tiny/a.js"]                       # one package.json on its own

@@ -140,13 +140,14 @@ def _python_env(path):
     return os.path.exists(os.path.join(path, "pyvenv.cfg")) or os.path.isdir(os.path.join(path, "conda-meta"))
 
 
-PROJECT_MARKERS = (".git", "node_modules", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock")
+# Not node_modules: installed packages often have a nested one, and a project that ran an install has a lockfile.
+PROJECT_MARKERS = (".git", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock")
 PACKAGE_DUMP_MIN = 5              # this many installed packages side by side means "the contents of a node_modules"
 
 
 def _installed_package(path):
     """An npm package as it sits in node_modules: a package.json, and none of the things a project
-    someone is working on has (a lockfile, its own node_modules, git)."""
+    someone is working on has (a lockfile, git)."""
     return (os.path.exists(os.path.join(path, "package.json"))
             and not any(os.path.exists(os.path.join(path, m)) for m in PROJECT_MARKERS))
 
