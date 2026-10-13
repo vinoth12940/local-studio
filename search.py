@@ -169,3 +169,181 @@ def walk(roots, removed=(), no_access=None):
                 yield e.path, st.st_size, st.st_mtime, classify(e.name, st.st_size)
             except OSError:
                 continue
+
+
+# ---------------------------------------------------------------- store
+# SQLite holds files, chunks, a keyword index and each chunk's vector (float16 on disk). The vectors
+# are also kept in one float32 matrix in memory, so a query is a single matrix product.
+
+KIND_ORDER = {"document": 0, "image": 1, "audio": 2, "name": 3}
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS files (
+  id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL,
+  size INTEGER, mtime REAL, status TEXT NOT NULL, error TEXT, indexed_at REAL);
+CREATE TABLE IF NOT EXISTS chunks (
+  id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  ord INTEGER NOT NULL, kind TEXT NOT NULL, text TEXT, locator TEXT, vec BLOB NOT NULL);
+CREATE INDEX IF NOT EXISTS chunks_file ON chunks(file_id);
+CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(name, text, tokenize='unicode61');
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+"""
+
+
+class Store:
+    def __init__(self, path, model=MODEL_REPO, dim=DIM):
+        self.path, self.dim = Path(path), dim
+        self.lock = threading.RLock()                     # guards the connection and the matrix
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(self.path, check_same_thread=False)
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA foreign_keys=ON")
+        want = f"{model}:{dim}"
+        self.db.executescript(SCHEMA)
+        row = self.db.execute("SELECT value FROM meta WHERE key='model'").fetchone()
+        if row and row[0] != want:                        # vectors from another model can't be compared
+            self.db.executescript("DROP TABLE chunks; DROP TABLE files; DROP TABLE fts; DROP TABLE meta;" + SCHEMA)
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO meta VALUES ('model', ?)", (want,))
+        self._load()
+
+    # -- in-memory matrix
+    def _load(self):
+        rows = self.db.execute("SELECT c.id, c.file_id, c.kind, f.kind, c.vec FROM chunks c "
+                               "JOIN files f ON f.id = c.file_id ORDER BY c.id").fetchall()
+        self.n, self.cap = 0, max(1024, len(rows) * 2)
+        self.M = np.zeros((self.cap, self.dim), np.float32)
+        self.ids = np.zeros(self.cap, np.int64)
+        self.fids = np.zeros(self.cap, np.int64)
+        self.fkind = np.zeros(self.cap, np.int8)
+        self.is_text = np.zeros(self.cap, bool)
+        self.alive = np.zeros(self.cap, bool)
+        for cid, fid, ckind, fkind, blob in rows:
+            self._append(cid, fid, np.frombuffer(blob, np.float16), fkind, ckind == "text")
+
+    def _append(self, cid, fid, vec, fkind, is_text):
+        if self.n == self.cap:
+            self.cap *= 2
+            for name in ("M", "ids", "fids", "fkind", "is_text", "alive"):
+                old = getattr(self, name)
+                new = np.zeros((self.cap,) + old.shape[1:], old.dtype)
+                new[:self.n] = old[:self.n]
+                setattr(self, name, new)
+        i = self.n
+        self.M[i], self.ids[i], self.fids[i] = vec, cid, fid
+        self.fkind[i], self.is_text[i], self.alive[i] = KIND_ORDER[fkind], is_text, True
+        self.n += 1
+
+    # -- writes
+    def _clear_chunks(self, fid):
+        self.db.execute("DELETE FROM fts WHERE rowid IN (SELECT id FROM chunks WHERE file_id=?)", (fid,))
+        self.db.execute("DELETE FROM fts WHERE rowid=?", (-fid,))
+        self.db.execute("DELETE FROM chunks WHERE file_id=?", (fid,))
+        self.alive[:self.n][self.fids[:self.n] == fid] = False
+
+    def _name_row(self, fid):
+        path, name = self.db.execute("SELECT path, name FROM files WHERE id=?", (fid,)).fetchone()
+        self.db.execute("INSERT INTO fts(rowid, name, text) VALUES (?, ?, '')", (-fid, f"{name} {Path(path).parent.name}"))
+        return name
+
+    def sync(self, found, keep_prefixes=()):
+        """Bring the files table in line with a crawl. Files under `keep_prefixes` (folders that
+        could not be listed this time) are kept even though the crawl did not see them."""
+        with self.lock, self.db:
+            known = {p: (i, s, m) for i, p, s, m in self.db.execute("SELECT id, path, size, mtime FROM files")}
+            seen, new, changed = set(), 0, 0
+            for path, size, mtime, kind in found:
+                seen.add(path)
+                k = known.get(path)
+                if k is None:
+                    self.db.execute("INSERT INTO files(path, name, kind, size, mtime, status) VALUES (?,?,?,?,?,'pending')",
+                                    (path, Path(path).name, kind, size, mtime))
+                    new += 1
+                elif (k[1], k[2]) != (size, mtime):
+                    self.db.execute("UPDATE files SET kind=?, size=?, mtime=?, status='pending', error=NULL WHERE id=?",
+                                    (kind, size, mtime, k[0]))
+                    changed += 1
+            gone = [k[0] for p, k in known.items() if p not in seen and not any(_under(p, kp) for kp in keep_prefixes)]
+            for fid in gone:
+                self._clear_chunks(fid)
+                self.db.execute("DELETE FROM files WHERE id=?", (fid,))
+            return {"new": new, "changed": changed, "deleted": len(gone)}
+
+    def replace_chunks(self, file_id, rows):
+        with self.lock, self.db:
+            row = self.db.execute("SELECT kind FROM files WHERE id=?", (file_id,)).fetchone()
+            if row is None:                               # deleted by a crawl while it was being embedded
+                return
+            self._clear_chunks(file_id)
+            self._name_row(file_id)
+            for ord_, (kind, text, locator, vec) in enumerate(rows):
+                vec = np.asarray(vec, np.float32)
+                cid = self.db.execute("INSERT INTO chunks(file_id, ord, kind, text, locator, vec) VALUES (?,?,?,?,?,?)",
+                                      (file_id, ord_, kind, text, locator, vec.astype(np.float16).tobytes())).lastrowid
+                if text:
+                    self.db.execute("INSERT INTO fts(rowid, name, text) VALUES (?, '', ?)", (cid, text))
+                self._append(cid, file_id, vec, row[0], kind == "text")
+            self.db.execute("UPDATE files SET status='ok', error=NULL, indexed_at=? WHERE id=?", (time.time(), file_id))
+
+    def mark_error(self, file_id, message):
+        with self.lock, self.db:
+            if self.db.execute("SELECT 1 FROM files WHERE id=?", (file_id,)).fetchone() is None:
+                return
+            self._clear_chunks(file_id)
+            self._name_row(file_id)                       # still findable by name
+            self.db.execute("UPDATE files SET status='error', error=?, indexed_at=? WHERE id=?", (message, time.time(), file_id))
+
+    # -- reads
+    def pending(self):
+        with self.lock:
+            rows = self.db.execute("SELECT id, path, name, kind FROM files WHERE status='pending'").fetchall()
+        rows.sort(key=lambda r: (KIND_ORDER[r[3]], r[1]))
+        return [{"id": i, "path": p, "name": n, "kind": k} for i, p, n, k in rows]
+
+    def vector_top(self, q, n, file_kind=None, text_only=False):
+        with self.lock:
+            if not self.n:
+                return []
+            scores = self.M[:self.n] @ np.asarray(q, np.float32)
+            ok = self.alive[:self.n].copy()
+            if file_kind:
+                ok &= self.fkind[:self.n] == KIND_ORDER[file_kind]
+            if text_only:
+                ok &= self.is_text[:self.n]
+            scores[~ok] = -2.0
+            k = min(n, self.n)
+            top = np.argpartition(-scores, k - 1)[:k]
+            top = top[np.argsort(-scores[top])]
+            return [(int(self.ids[i]), float(scores[i])) for i in top if scores[i] > -2.0]
+
+    def keyword_top(self, tokens, n):
+        if not tokens:
+            return []
+        match = " ".join('"%s"' % t.replace('"', "") for t in tokens)      # quoted terms, all must match
+        with self.lock:
+            return [r[0] for r in self.db.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY bm25(fts) LIMIT ?", (match, n))]
+
+    def _in(self, sql, ids):
+        ids = list(ids)
+        with self.lock:
+            return self.db.execute(sql % ",".join("?" * len(ids)), ids).fetchall() if ids else []
+
+    def chunk_info(self, ids):
+        return {i: {"file_id": f, "kind": k, "text": t, "locator": loc}
+                for i, f, k, t, loc in self._in("SELECT id, file_id, kind, text, locator FROM chunks WHERE id IN (%s)", ids)}
+
+    def file_info(self, ids):
+        return {i: {"path": p, "name": n, "kind": k, "mtime": m}
+                for i, p, n, k, m in self._in("SELECT id, path, name, kind, mtime FROM files WHERE id IN (%s)", ids)}
+
+    def counts(self):
+        with self.lock:
+            by = dict(self.db.execute("SELECT status, COUNT(*) FROM files GROUP BY status"))
+            chunks = self.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        size = sum(p.stat().st_size for p in self.path.parent.glob(self.path.name + "*"))     # db + WAL files
+        return {"files_total": sum(by.values()), "files_done": by.get("ok", 0), "files_error": by.get("error", 0),
+                "chunks": chunks, "index_bytes": size}
+
+    def errors(self):
+        with self.lock:
+            return [{"path": p, "error": e} for p, e in
+                    self.db.execute("SELECT path, error FROM files WHERE status='error' ORDER BY path LIMIT 500")]
