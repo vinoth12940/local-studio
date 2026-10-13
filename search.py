@@ -108,7 +108,8 @@ TEXT_EXT = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl", ".yam
 DOC_EXT = TEXT_EXT | {".pdf", ".docx", ".xlsx", ".xlsm"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".heic"}
 AUDIO_EXT = {".mp3", ".m4a", ".wav", ".aiff", ".aif", ".caf", ".flac"}
-SKIP_DIRS = {"node_modules", "venv", "__pycache__", "build", "dist", "target", "DerivedData", "Pods"}
+SKIP_DIRS = {"node_modules", "venv", "__pycache__", "build", "dist", "target", "DerivedData", "Pods",
+             "site-packages", "dist-packages"}
 PACKAGE_SUFFIXES = (".app", ".photoslibrary", ".musiclibrary", ".tvlibrary", ".imovielibrary", ".bundle",
                     ".framework", ".xcodeproj", ".xcworkspace")
 SECRET_GLOBS = ("*.pem", "*.p12", "*.keychain*", "id_rsa*", "id_ed25519*")   # .env* is hidden, so already skipped
@@ -132,6 +133,11 @@ def classify(name, size):
 
 def _dataless(st):
     return bool(getattr(st, "st_flags", 0) & SF_DATALESS)
+
+
+def _python_env(path):
+    """A virtual or conda environment, whatever it is called: thousands of library files, none the user's."""
+    return os.path.exists(os.path.join(path, "pyvenv.cfg")) or os.path.isdir(os.path.join(path, "conda-meta"))
 
 
 def walk(roots, removed=(), no_access=None, failed=None):
@@ -173,7 +179,7 @@ def walk(roots, removed=(), no_access=None, failed=None):
                     if e.is_dir(follow_symlinks=False):
                         if (e.path not in root_set                   # another root: its own walk covers it
                                 and e.name not in SKIP_DIRS and not e.name.lower().endswith(PACKAGE_SUFFIXES)
-                                and not off_limits(e.path)):
+                                and not off_limits(e.path) and not _python_env(e.path)):
                             stack.append(e.path)
                         continue
                     if any(fnmatch.fnmatch(e.name, g) for g in SECRET_GLOBS):
@@ -734,7 +740,7 @@ class Indexer:
         """Index one file. Returns "ok", "stopped", "error" (the file is unreadable; recorded) or
         ("embed_failed", message): the embedder raised and the file is left pending."""
         self.current = f["path"]
-        self.store.set_meta("inflight", str(f["id"]))     # if this file kills the process, skip it next time
+        self.store.set_meta("in_flight", str(f["id"]))     # if this file kills the process, skip it next time
         try:
             items = extract(f["path"], f["kind"]) if f["kind"] != "name" else []
             rows, texts = [], [i for i in items if i["kind"] == "text"]
@@ -761,13 +767,13 @@ class Indexer:
             return "error"
         finally:
             self.current = None
-            self.store.set_meta("inflight", "")
+            self.store.set_meta("in_flight", "")
 
     def run_once(self):
-        crashed = self.store.get_meta("inflight")
+        crashed = self.store.get_meta("in_flight")
         if crashed:                                       # the process died with this file in flight
             self.store.mark_error(int(crashed), "Indexing this file stopped the service, so it was skipped.")
-            self.store.set_meta("inflight", "")
+            self.store.set_meta("in_flight", "")
         cfg, no_access, failed = self.config(), [], []
         found = list(walk(cfg["roots"], cfg["removed"], no_access, failed))
         self.no_access = no_access
@@ -826,10 +832,16 @@ def _local_request(host, origin):
 
 def make_app(store, embedder, indexer, searcher):
     import io
+    from contextlib import asynccontextmanager
     from fastapi import Body, FastAPI, HTTPException
     from fastapi.responses import PlainTextResponse, Response
 
-    api = FastAPI()
+    @asynccontextmanager
+    async def lifespan(_):
+        yield
+        shutdown(indexer)                                 # runs on SIGTERM, before uvicorn lets the process die
+
+    api = FastAPI(lifespan=lifespan)
 
     async def app(scope, receive, send):                  # plain ASGI wrapper: these routes return the user's file contents
         if scope["type"] == "http":
@@ -922,6 +934,12 @@ def run_eval(folder):
         return 1 if failed or c["files_error"] else 0
 
 
+def shutdown(indexer):
+    """A normal stop (the app quitting) with a file in flight is not a crash: don't leave its marker behind."""
+    indexer.stop.set()
+    indexer.store.set_meta("in_flight", "")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Local Studio search service")
     ap.add_argument("--port", type=int, default=8083)
@@ -943,7 +961,10 @@ def main():
 
     threading.Thread(target=boot, daemon=True).start()
     import uvicorn
-    uvicorn.run(make_app(store, embedder, indexer, searcher), host="127.0.0.1", port=args.port, log_level="warning")
+    try:
+        uvicorn.run(make_app(store, embedder, indexer, searcher), host="127.0.0.1", port=args.port, log_level="warning")
+    finally:
+        shutdown(indexer)
 
 if __name__ == "__main__":
     main()

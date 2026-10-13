@@ -503,7 +503,7 @@ def crash_on_a_file_does_not_loop():
         root, st, ix, cfg = _tree(d, {"a.txt": "plumber invoice", "killer.pdf.txt": "crashes a native library"})
         st.sync(list(search.walk([str(root)])))             # real sizes and times, as the crawl records them
         killer = next(f for f in st.pending() if f["name"] == "killer.pdf.txt")
-        st.set_meta("inflight", str(killer["id"]))         # the service died while this file was in flight
+        st.set_meta("in_flight", str(killer["id"]))         # the service died while this file was in flight
         ix2 = search.Indexer(search.Store(Path(d) / "index.db"), FakeEmbedder(), config=lambda: cfg, app_url=None)
         calls, real = [], search.extract
         search.extract = lambda p, k: calls.append(Path(p).name) or real(p, k)
@@ -514,7 +514,7 @@ def crash_on_a_file_does_not_loop():
         assert "killer.pdf.txt" not in calls, "the file that crashed the service is not tried again"
         errs = ix2.store.errors()
         assert len(errs) == 1 and errs[0]["path"].endswith("killer.pdf.txt") and "stopped the service" in errs[0]["error"]
-        assert ix2.store.get_meta("inflight") in (None, "") and ix2.store.counts()["files_done"] == 1
+        assert ix2.store.get_meta("in_flight") in (None, "") and ix2.store.counts()["files_done"] == 1
 
 
 @check
@@ -631,6 +631,36 @@ def found_by_name_before_indexing():
         assert st.keyword_top(["report"], 5) == [-fid["report.pdf"]]
         st.replace_chunks(fid["report.pdf"], [("text", "quarterly numbers", "p1", _unit(1))])
         assert st.keyword_top(["report"], 5) == [-fid["report.pdf"]], "and still exactly once afterwards"
+
+
+# ---- found on the first real index: two Python environments were half of all files
+
+@check
+def python_environments_are_skipped():
+    """A virtual environment is recognised by what it contains, not by its folder name."""
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d).resolve() / "Desktop"
+        files = ["proj/app.py", "proj/notes.md",
+                 "proj/newenv/pyvenv.cfg", "proj/newenv/lib/python3.12/site-packages/numpy/core.py", "proj/newenv/bin/activate.sh",
+                 "proj/myconda/conda-meta/history.json", "proj/myconda/lib/python3.12/os.py",
+                 "elsewhere/site-packages/pkg/mod.py", "elsewhere/dist-packages/pkg/mod.py", "elsewhere/keep.py"]
+        for f in files:
+            (root / f).parent.mkdir(parents=True, exist_ok=True)
+            (root / f).write_text("x")
+        got = sorted(p[len(str(root)) + 1:] for p, _, _, _ in search.walk([str(root)]))
+        assert got == ["elsewhere/keep.py", "proj/app.py", "proj/notes.md"], got
+        added = sorted(Path(p).name for p, _, _, _ in search.walk([str(root / "proj" / "newenv")]))
+        assert "activate.sh" in added, "an environment the user adds on purpose is still indexed"
+
+
+@check
+def a_normal_quit_is_not_a_crash():
+    """Quitting the app while a file is being indexed must not record that file as one that crashed the service."""
+    with tempfile.TemporaryDirectory() as d:
+        _, st, ix, _ = _tree(d, {"a.txt": "plumber invoice"})
+        st.set_meta("in_flight", "7")
+        search.shutdown(ix)
+        assert ix.stop.is_set() and st.get_meta("in_flight") in (None, "")
 
 
 if __name__ == "__main__":
