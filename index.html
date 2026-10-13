@@ -337,6 +337,9 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .srrow .sn { font-size: 13px; color: var(--ink-2); margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .srrow .acts { display: flex; gap: 6px; flex: none; }
 .srpath { width: 220px; height: 30px; border: 1px solid var(--line-2); border-radius: 8px; padding: 0 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px; outline: 0; }
+.sources { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+.sources .chip { cursor: pointer; font: inherit; font-size: 12.5px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.sources .chip:hover { background: var(--hover); }
 .row .size { font-family: "JetBrains Mono", monospace; font-size: 13px; color: var(--ink-2); min-width: 80px; text-align: right; }
 .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500; padding: 2px 8px; border-radius: 999px; background: var(--soft); color: var(--ink-2); white-space: nowrap; }
 .badge.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
@@ -522,6 +525,7 @@ dialog::backdrop { background: var(--overlay); }
             <input type="file" id="fileInput" multiple hidden accept="image/*,.pdf,.docx,.xlsx,.xlsm,.txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.css,.js,.ts,.tsx,.jsx,.py,.rb,.go,.rs,.java,.kt,.swift,.c,.h,.cpp,.hpp,.cs,.php,.sh,.zsh,.sql,.toml,.ini,.cfg,.log,.r,.scala,.lua,.dart,.vue,.svelte">
             <button class="pillbtn on" id="thinkPill"><svg class="i"><use href="#i-bulb"/></svg>Think</button>
             <div class="sel"><select id="effortSel" title="Effort"><option value="">Auto effort</option><option value="low">Low effort</option><option value="high">High effort</option><option value="xhigh">Max effort</option></select></div>
+            <button class="pillbtn" id="filesPill"><svg class="i"><use href="#i-file"/></svg>My files</button>
             <div class="grow"></div>
             <button class="sendbtn" id="send" title="Send"><svg class="i"><use href="#i-up" id="sendIcon"/></svg></button>
           </div>
@@ -897,7 +901,7 @@ $("newChat").onclick = newChat;
 document.addEventListener("keydown", (e) => { if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); newChat(); } });
 async function saveChat() {
   if (!current) return;
-  const msgs = current.messages.map(({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish }) => ({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish }));
+  const msgs = current.messages.map(({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources }) => ({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources }));
   await jpost(`/api/chats/${current.id}`, { title: current.title, messages: msgs }, "PUT");
   loadChats();
 }
@@ -977,6 +981,11 @@ function thoughtHTML(m, live) {
   const label = thinkingNow ? `<span class="shimmer">Thinking…</span>` : `${m.thoughtSecs ? `Thought for ${fmtSecs(m.thoughtSecs)}` : "Thought process"} <span class="tw">· ${words.toLocaleString()} words</span>`;
   return `<details class="thought"${thinkingNow || m.thoughtOpen ? " open" : ""}><summary>${label}${icon("i-right")}</summary><div class="tb">${esc(m.reasoning)}</div></details>`;
 }
+function sourcesHTML(m) {
+  if (!m.sources?.length) return "";
+  const seen = new Set();                                    // one chip per file, however many passages it gave
+  return `<div class="sources">${m.sources.filter((s) => !seen.has(s.path) && seen.add(s.path)).map((s) => `<button class="chip" data-open="${s.file_id}" data-path="${esc(s.path)}" title="${esc(srHome(s.path))}">${icon("i-file", "width:14px;height:14px")}${esc(s.name)}</button>`).join("")}</div>`;
+}
 function turnHTML(m, i, live = false) {
   if (m.role === "user") {
     const atts = m.attachments || [];
@@ -989,11 +998,13 @@ function turnHTML(m, i, live = false) {
   const tail = live && m.content ? '<span class="caret"></span>' : "";
   const actions = live ? "" : `<div class="actions"><button class="iconbtn" data-act="copy" title="Copy">${icon("i-copy")}</button><button class="iconbtn" data-act="regen" title="Regenerate">${icon("i-redo")}</button>${perfLine(m.stats)}</div>${perfGrid(m.stats)}`;
   const cut = !live && m.finish === "length" ? `<div class="cutoff">${icon("i-x", "width:14px;height:14px")}The reply hit the length limit. <button class="btn sm" data-act="continue">Continue</button></div>` : "";
-  return `<div class="turn bot" data-i="${i}">${thoughtHTML(m, live)}<div class="content">${body}${tail}</div>${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
+  return `<div class="turn bot" data-i="${i}">${thoughtHTML(m, live)}<div class="content">${body}${tail}</div>${live ? "" : sourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
 }
 $("thread").onclick = (e) => {
   const full = e.target.closest(".uatts img[data-full]");
   if (full) { window.open(full.dataset.full, "_blank"); return; }
+  const src = e.target.closest(".sources [data-open]");
+  if (src) { srOpen(src); return; }
   const turn = e.target.closest(".turn.bot"); if (!turn) return;
   if (e.target.closest("[data-perf]")) { turn.querySelector(".perfgrid")?.classList.toggle("on"); return; }
   const act = e.target.closest("[data-act]")?.dataset.act, m = current.messages[+turn.dataset.i];
@@ -1141,6 +1152,7 @@ async function generate() {
   const body = { messages, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
   if (effort && modelThinks()) body.reasoning_effort = effort;
   if (s.temp) body.temperature = +s.temp;
+  if (useFiles && sr?.running && !sr.error) body.use_files = true;
   streaming = new AbortController(); updateSend();
   let thinkStart = 0, thinkEnd = 0, raf = 0, pendingThought = "";
 
@@ -1174,6 +1186,7 @@ async function generate() {
           let j; try { j = JSON.parse(data); } catch { continue; }
           if (j.error) { bot.error = typeof j.error === "string" ? j.error : (j.error.message || JSON.stringify(j.error)); continue; }
           if (j.x_engine) { bot.switching = j.x_engine.status === "switching" ? j.x_engine.mode : null; bot.switchModel = j.x_engine.model; if (bot.switching) poll(); repaint(); continue; }
+          if (j.x_sources) { bot.sources = j.x_sources; continue; }
           const ch = j.choices?.[0], d = ch?.delta;
           if (ch?.finish_reason) bot.finish = ch.finish_reason;
           const rc = d?.reasoning_content ?? d?.reasoning;
@@ -1483,7 +1496,15 @@ $("unBtn").onclick = async () => {
 };
 
 // ---------------- search
-let sr = null, srTimer = 0, srSeq = 0;
+let sr = null, srTimer = 0, srSeq = 0, useFiles = store.get("useFiles", false);
+function syncFiles() {
+  const can = !!(sr && sr.enabled && sr.running && !sr.error);
+  $("filesPill").classList.toggle("on", useFiles && can);
+  $("filesPill").disabled = !can;
+  $("filesPill").title = can ? "Answer from your indexed files" : "Turn on Search in Settings to use your files";
+  store.set("useFiles", useFiles);
+}
+$("filesPill").onclick = () => { useFiles = !useFiles; syncFiles(); };
 const srHome = (p) => p.replace(/^\/Users\/[^/]+/, "~");
 const srLoc = (l) => !l ? "" : /^p\d+$/.test(l) ? `page ${l.slice(1)}` : /^\d+s$/.test(l) ? `${Math.floor(+l.slice(0, -1) / 60)}:${String(+l.slice(0, -1) % 60).padStart(2, "0")}` : l;
 const SR_ICON = { document: "i-file", image: "i-image", audio: "i-spark", name: "i-file" };
@@ -1512,6 +1533,7 @@ async function loadSearch() {
   $("srSetSum").innerHTML = (sr.enabled || busy ? srStatusLine(sr, false) : "") || `Find your files by what they contain. Uses about ${Math.ceil(sr.model.size_gb + 1)} GB for the model and search components.`;
   $("srSetBody").style.display = on ? "" : "none";
   $("srDelRow").style.display = !sr.enabled && !busy && sr.index_on_disk ? "" : "none";
+  syncFiles();
   if (!on) return;
   $("srFolders").innerHTML = sr.roots.map((p) => `<div class="row"><div class="grow"><div class="ttl">${esc(srHome(p))}</div>${sr.no_access.includes(p) ? `<div class="sub" style="color:var(--bad)">No access. Allow it in System Settings, Privacy &amp; Security, Files and Folders.</div>` : ""}</div><button class="btn sm" data-srrm="${esc(p)}">Remove</button></div>`).join("");
   $("srBattery").checked = sr.on_battery;

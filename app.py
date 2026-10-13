@@ -652,6 +652,30 @@ def _sse(obj):
     return f"data: {json.dumps(obj)}\n\n"
 
 
+FILES_PROMPT = ("Answer using these excerpts from the user's files. Name the files you used. "
+                "If they don't contain the answer, say so.")
+
+
+def _add_file_passages(messages):
+    """"My files": put the best-matching passages from the search index in front of the latest
+    user message. Returns the sources, or [] (message untouched) when Search is off or nothing matched."""
+    last = next((m for m in reversed(messages)
+                 if m.get("role") == "user" and isinstance(m.get("content"), str) and m["content"].strip()), None)
+    if last is None:
+        return []
+    try:
+        r = httpx.post(SEARCH_URL + "/passages", json={"query": last["content"], "limit": 6, "max_chars": 12000}, timeout=30)
+        passages = r.json()["passages"] if r.status_code == 200 else []
+    except (httpx.HTTPError, ValueError, KeyError):
+        return []
+    if not passages:
+        return []
+    block = "\n\n".join(f"[{i + 1}] {p['name']}" + (f" ({p['locator']})" if p["locator"] else "") + f"\n{p['text']}"
+                        for i, p in enumerate(passages))
+    last["content"] = f"{FILES_PROMPT}\n\n{block}\n\nQuestion: {last['content']}"
+    return [{k: p[k] for k in ("file_id", "name", "path", "locator")} for p in passages]
+
+
 active_chats = 0
 
 
@@ -676,6 +700,8 @@ def api_busy():
 async def chat(request: Request):
     body = await request.json()
     m = chat_model(body.pop("model_id", None))
+    # Before build_messages, so the passages count towards the context-size estimate below.
+    sources = await asyncio.to_thread(_add_file_passages, body.get("messages", [])) if body.pop("use_files", False) else []
     messages, needs_vision = build_messages(body.get("messages", []))
     body["messages"] = messages
     # Keep prompt + reply inside the context window: long documents leave less room to answer.
@@ -695,6 +721,8 @@ async def chat(request: Request):
     mode = "gguf" if gguf else ("vision" if needs_vision else "text")
 
     async def relay():
+        if sources:
+            yield _sse({"x_sources": sources})
         if needs_vision and not m.get("vision"):
             yield _sse({"error": f"{m['name']} can't read images. Switch to a model marked Vision "
                                  f"(for example Qwen3.8 27B) from the model menu."})

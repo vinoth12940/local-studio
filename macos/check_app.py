@@ -171,6 +171,48 @@ def open_requires_matching_path():
         app.httpx.request = real
 
 
+@check
+def file_passages():
+    class Resp:
+        status_code = 200
+
+        def __init__(self, passages):
+            self._p = passages
+
+        def json(self):
+            return {"passages": self._p}
+
+    found = [{"file_id": 3, "name": "lease.pdf", "path": "/r/lease.pdf", "locator": "p2", "text": "Rent is 2,450 dollars per month."},
+             {"file_id": 4, "name": "notes.txt", "path": "/r/notes.txt", "locator": "", "text": "Bond is four weeks' rent."}]
+    calls = []
+    real = app.httpx.post
+    try:
+        app.httpx.post = lambda url, **kw: calls.append((url, kw["json"])) or Resp(found)
+        msgs = [{"role": "system", "content": "be brief"}, {"role": "user", "content": "earlier question"},
+                {"role": "assistant", "content": "earlier answer"}, {"role": "user", "content": "what is my rent?"}]
+        sources = app._add_file_passages(msgs)
+        assert calls == [(app.SEARCH_URL + "/passages", {"query": "what is my rent?", "limit": 6, "max_chars": 12000})]
+        assert sources == [{"file_id": 3, "name": "lease.pdf", "path": "/r/lease.pdf", "locator": "p2"},
+                           {"file_id": 4, "name": "notes.txt", "path": "/r/notes.txt", "locator": ""}]
+        text = msgs[-1]["content"]
+        assert text.startswith(app.FILES_PROMPT) and text.endswith("Question: what is my rent?")
+        assert "[1] lease.pdf (p2)\nRent is 2,450 dollars per month." in text and "[2] notes.txt\nBond is four weeks' rent." in text
+        assert msgs[1]["content"] == "earlier question", "only the latest user message is changed"
+
+        app.httpx.post = lambda url, **kw: Resp([])                         # nothing matched
+        msgs = [{"role": "user", "content": "hello"}]
+        assert app._add_file_passages(msgs) == [] and msgs[0]["content"] == "hello"
+
+        def down(url, **kw):
+            raise app.httpx.ConnectError("refused")
+
+        app.httpx.post = down                                               # Search is not running
+        assert app._add_file_passages(msgs) == [] and msgs[0]["content"] == "hello"
+        assert app._add_file_passages([{"role": "assistant", "content": "no user turn"}]) == []
+    finally:
+        app.httpx.post = real
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:
