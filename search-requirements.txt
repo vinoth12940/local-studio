@@ -1,0 +1,15 @@
+mlx-vlm @ git+https://github.com/Blaizzy/mlx-vlm.git@3d87e88402f307efbf68e568971aa887ee7d9ed0
+transformers>=5.19.0
+torch
+torchvision
+numpy
+pillow
+pillow-heif
+soundfile
+librosa
+fastapi
+uvicorn
+pypdf
+pypdfium2
+python-docx
+openpyxl

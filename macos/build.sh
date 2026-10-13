@@ -15,6 +15,8 @@ rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 echo "==> Checking UI script"
 if command -v node >/dev/null 2>&1; then node "$HERE/check_ui.js" "$ROOT/index.html"; else echo "   (node not found, skipped)"; fi
 python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$ROOT/app.py" && echo "   app.py OK"
+UV=$(command -v uv || echo ~/.local/bin/uv)
+$UV run -q --no-project --python 3.12 --with numpy python "$HERE/check_search.py"
 
 echo "==> Compiling"
 xcrun swiftc -O -target arm64-apple-macos14.0 -framework Cocoa -framework WebKit \
@@ -28,7 +30,6 @@ chmod +x "$APP/Contents/Resources/app/"*.sh
 
 echo "==> Icon"
 ICONSET="$ROOT/build/AppIcon.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
-UV=$(command -v uv || echo ~/.local/bin/uv)
 $UV run -q --no-project --python 3.12 --with pillow python "$HERE/logos.py" B "$ROOT/build/icon_1024.png" >/dev/null
 for s in 16 32 128 256 512; do
   sips -z $s $s "$ROOT/build/icon_1024.png" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
