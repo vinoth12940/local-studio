@@ -80,6 +80,97 @@ def embedder_is_a_known_model():
     assert lib["search"][0]["id"] == "embeddinggemma-2" and lib["search"][0]["installed"] is True
 
 
+@check
+def busy_counter():
+    async def gen():
+        yield "a"
+        await asyncio.sleep(30)
+        yield "b"
+
+    async def main():
+        g = app._counted(gen())
+        assert await g.__anext__() == "a" and app.active_chats == 1 and app.api_busy() == {"busy": True}
+        await g.aclose()
+        assert app.active_chats == 0 and app.api_busy() == {"busy": False}
+
+        async def consume():
+            async for _ in app._counted(gen()):
+                pass
+
+        t = asyncio.create_task(consume())                 # the user stops a reply: Starlette cancels the stream
+        await asyncio.sleep(0.05)
+        assert app.active_chats == 1
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+        assert app.active_chats == 0, "a stopped reply must not leave indexing paused"
+
+    asyncio.run(main())
+    app.jobs["x"] = {"status": "running"}
+    assert app.api_busy() == {"busy": True}
+    app.jobs["x"] = {"status": "done"}
+    assert app.api_busy() == {"busy": False}
+    app.jobs.clear()
+
+
+@check
+def search_status_when_off():
+    assert app.search_deps_installed() is False
+    app.SEARCH_DEPS_OK.write_text(hashlib.sha256(app.SEARCH_REQS.read_bytes()).hexdigest() + "\n")
+    assert app.search_deps_installed() is True
+    app.SEARCH_DEPS_OK.write_text("an older requirements file")
+    assert app.search_deps_installed() is False
+    app.SEARCH_DEPS_OK.unlink()
+
+    s = app.search_status()
+    assert s["enabled"] is False and s["running"] is False and s["installed"] is False and s["index_on_disk"] is False
+    assert s["model"] == {"name": "EmbeddingGemma 2", "size_gb": 1.3} and s["setup"] == {"status": "idle", "step": None, "error": None}
+    assert app.search_start() == {"status": "off"}
+    try:
+        app.search_query({"query": "anything"})
+        raise AssertionError("expected a 503")
+    except HTTPException as e:
+        assert e.status_code == 503 and "Settings" in e.detail
+
+
+@check
+def search_settings_route():
+    folder = TMP / "My Folder"
+    folder.mkdir()
+    s = app.search_settings({"folders": [str(folder), str(folder)], "removed": ["~/Music"], "on_battery": True, "paused": 1})
+    assert s == {"enabled": False, "folders": [str(folder)], "removed": [str(Path.home() / "Music")], "paused": True, "on_battery": True}
+    assert app.load_settings()["search"] == s
+    assert app.search_settings({"paused": False})["folders"] == [str(folder)], "keys that are not sent are kept"
+    for bad in ("relative/path", str(TMP / "does-not-exist")):
+        try:
+            app.search_settings({"folders": [bad]})
+            raise AssertionError("expected a 400")
+        except HTTPException as e:
+            assert e.status_code == 400
+    app.SETTINGS.unlink()
+
+
+@check
+def open_requires_matching_path():
+    class Resp:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def json(self):
+            return {"path": "/r/now-a-different-file.txt", "name": "now-a-different-file.txt", "kind": "document", "mtime": 1.0}
+
+    real, app.httpx.request = app.httpx.request, lambda *a, **k: Resp()
+    try:
+        app.search_open(file_id=5, path="/r/the-file-this-chat-cited.txt", reveal=False)
+        raise AssertionError("expected a 404")
+    except HTTPException as e:
+        assert e.status_code == 404
+    finally:
+        app.httpx.request = real
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

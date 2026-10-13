@@ -7,6 +7,7 @@
 #   setup.sh --check     report status; exit 0 = ready, 1 = needs install, 2 = unsupported Mac
 #   setup.sh --install   install everything that's missing (no models; pick those in the app)
 #   setup.sh --llama     install or refresh the app-managed llama.cpp build
+#   setup.sh --search    install the search components (run by the app when Search is turned on)
 #   setup.sh --migrate   copy images/chats/settings from ~/local-studio (first run of the app)
 set -u
 CODE="${0:A:h}"
@@ -82,6 +83,19 @@ PY
   "$SUPPORT/llama.cpp/llama-server" --version 2>&1 | head -1 | log_lines
 }
 
+install_search() {
+  # Search's Python dependencies (torchvision and a pinned mlx-vlm). Not part of --install: they
+  # are fetched only when the user turns Search on.
+  [[ -x "$UV" ]] || { say "@error uv is not installed"; return 1; }
+  say "@log Installing search components"
+  ( cd "$CODE" && "$UV" run --no-project --python 3.12 --with-requirements search-requirements.txt python -c \
+      "import mlx_vlm, torchvision, soundfile, pillow_heif, pypdf, pypdfium2, docx, openpyxl, fastapi, uvicorn; from transformers import EmbeddingGemma2Processor; print('search components OK')" ) 2>&1 | log_lines
+  [[ ${pipestatus[1]} -eq 0 ]] || { say "@error Search components failed to install"; return 1; }
+  mkdir -p "$STATE/data"
+  shasum -a 256 "$CODE/search-requirements.txt" | awk '{print $1}' > "$STATE/data/search-deps.ok"
+  say "@done"
+}
+
 migrate() {
   # Bring images, chats and settings from a source checkout (~/local-studio) on first run.
   local old="$HOME/local-studio"
@@ -129,6 +143,7 @@ case "${1:---check}" in
   --check) check; exit $? ;;
   --install) install_all; exit $? ;;
   --llama) install_llama; exit $? ;;
+  --search) install_search; exit $? ;;
   --migrate) migrate; exit 0 ;;
-  *) say "usage: setup.sh [--check|--install|--llama]"; exit 64 ;;
+  *) say "usage: setup.sh [--check|--install|--llama|--search]"; exit 64 ;;
 esac

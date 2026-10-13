@@ -24,7 +24,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 APP_VERSION = "1.2.2"
@@ -652,6 +652,26 @@ def _sse(obj):
     return f"data: {json.dumps(obj)}\n\n"
 
 
+active_chats = 0
+
+
+async def _counted(gen):
+    """Count open chat streams for /api/busy. The finally also runs when the user stops a reply."""
+    global active_chats
+    active_chats += 1
+    try:
+        async for chunk in gen:
+            yield chunk
+    finally:
+        active_chats -= 1
+
+
+@app.get("/api/busy")
+def api_busy():
+    """Read by the search service between batches: it waits while the Mac is doing user-facing work."""
+    return {"busy": active_chats > 0 or any(j.get("status") in ("queued", "running") for j in jobs.values())}
+
+
 @app.post("/api/chat")
 async def chat(request: Request):
     body = await request.json()
@@ -749,7 +769,7 @@ async def chat(request: Request):
         yield _sse({"x_mlx_dspark": stats})
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(relay(), media_type="text/event-stream")
+    return StreamingResponse(_counted(relay()), media_type="text/event-stream")
 
 # ---------------------------------------------------------------- attachments
 # Files are processed once on upload: images are downscaled, documents become plain text
@@ -1125,6 +1145,230 @@ def delete_image(name: str):
     (GALLERY / name).unlink(missing_ok=True)
     (GALLERY / (Path(name).stem + ".json")).unlink(missing_ok=True)
     return {"ok": True}
+
+# ---------------------------------------------------------------- search
+# search.py is a fourth process (port 8083): it indexes the user's files and answers queries. At
+# ~2 GB it stays loaded next to a chat engine, so ensure_engine never touches it. It is off until
+# the user turns it on; that is also when its dependencies and model are fetched.
+
+search_job: dict = {"status": "idle"}
+
+
+def search_deps_installed():
+    """setup.sh --search records the requirements file it installed; a changed file means reinstall."""
+    try:
+        return SEARCH_DEPS_OK.read_text().strip() == hashlib.sha256(SEARCH_REQS.read_bytes()).hexdigest()
+    except OSError:
+        return False
+
+
+def _search_running():
+    try:
+        return httpx.get(SEARCH_URL + "/health", timeout=2).status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+def _start_search():
+    if _search_running():
+        return
+    log = open(LOGS / "search.log", "a")
+    # Relative file names with cwd=ROOT: the bundled path contains a space, which would defeat
+    # stop.sh's pkill patterns.
+    proc = subprocess.Popen([UV, "run", "--no-project", "--python", "3.12", "--with-requirements", SEARCH_REQS.name,
+                             "python", "search.py", "--port", "8083"], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                            env={**os.environ, "LOCAL_STUDIO_HOME": str(STATE)}, start_new_session=True)
+    (LOGS / "search.pid").write_text(str(proc.pid))
+
+
+def _stop_search():
+    pid = _read_pid("search")
+    if pid and _pid_alive(pid):
+        try:
+            os.killpg(pid, signal.SIGTERM)            # uv and its python child share the session
+        except OSError:
+            pass
+    subprocess.run(["pkill", "-f", r"^[^ ]*uv run .*python search.py --port 8083"])
+    subprocess.run(["pkill", "-f", r"^[^ ]*python[^ ]* search.py --port 8083"])
+    (LOGS / "search.pid").unlink(missing_ok=True)
+    for _ in range(40):                               # wait for the port to free before any restart
+        if not _search_running():
+            break
+        time.sleep(0.25)
+
+
+def _enable_search():
+    """Background job behind the Search switch: install what's missing, then start the service."""
+    try:
+        if not search_deps_installed():
+            search_job.update(step="Installing search components (about 1 GB, one time)")
+            with open(LOGS / "search-setup.log", "w") as log:
+                rc = subprocess.run(["/bin/zsh", str(ROOT / "setup.sh"), "--search"], stdout=log, stderr=subprocess.STDOUT,
+                                    env={**os.environ, "LOCAL_STUDIO_HOME": str(STATE)}).returncode
+            if rc != 0 or not search_deps_installed():
+                raise RuntimeError("Couldn't install the search components. See logs/search-setup.log.")
+        m = search_model()
+        if not model_installed(m):
+            search_job.update(step=f"Downloading {m['name']} ({m['size_gb']} GB)")
+            start_download(m)
+            while downloads[m["id"]].get("status") == "running":
+                time.sleep(1)
+            if not model_installed(m):
+                raise RuntimeError("The model download didn't finish. Check your connection and try again.")
+        search_job.update(step="Starting Search")
+        s = load_settings()
+        s["search"]["enabled"] = True
+        save_settings(s)
+        _start_search()
+        for _ in range(180):                          # the first start imports PyTorch and MLX
+            if _search_running():
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError("Search didn't start. See logs/search.log.")
+        search_job.update(status="done", step=None)
+    except Exception as e:
+        search_job.update(status="error", error=str(e), step=None)
+
+
+def _search_proxy(method, path, **kw):
+    try:
+        r = httpx.request(method, SEARCH_URL + path, timeout=60, **kw)
+    except httpx.HTTPError:
+        raise HTTPException(503, "Search isn't running. Turn it on in Settings.")
+    if r.status_code != 200:
+        detail = r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else None
+        raise HTTPException(r.status_code, detail or "Search error")
+    return r
+
+
+@app.get("/api/search/status")
+def search_status():
+    m = search_model()
+    out = {**load_settings()["search"], "installed": search_deps_installed(), "model_installed": model_installed(m),
+           "model": {"name": m["name"], "size_gb": m["size_gb"]}, "index_on_disk": SEARCH_DIR.exists(), "running": False,
+           "setup": {k: search_job.get(k) for k in ("status", "step", "error")}}
+    try:
+        r = httpx.get(SEARCH_URL + "/status", timeout=3)
+        if r.status_code == 200:
+            out.update(r.json(), running=True)
+    except httpx.HTTPError:
+        pass
+    return out
+
+
+@app.post("/api/search")
+def search_query(body: dict = Body(...)):
+    return _search_proxy("POST", "/search", json=body).json()
+
+
+@app.post("/api/search/enable")
+def search_enable():
+    if search_job.get("status") != "running":
+        search_job.clear()
+        search_job.update(status="running", step="Starting")
+        threading.Thread(target=_enable_search, daemon=True).start()
+    return {k: search_job.get(k) for k in ("status", "step", "error")}
+
+
+@app.post("/api/search/disable")
+def search_disable():
+    s = load_settings()
+    s["search"]["enabled"] = False
+    save_settings(s)
+    _stop_search()
+    return {"ok": True}
+
+
+@app.post("/api/search/start")
+def search_start():
+    """Called by start.sh: bring the service up if the user has Search turned on."""
+    if load_settings()["search"]["enabled"] and search_deps_installed() and model_installed(search_model()):
+        _start_search()
+        return {"status": "starting"}
+    return {"status": "off"}
+
+
+@app.put("/api/search/settings")
+def search_settings(body: dict = Body(...)):
+    s = load_settings()
+    for key in ("folders", "removed"):
+        if key in body:
+            paths = [str(Path(p.strip()).expanduser()) for p in body[key] if isinstance(p, str) and p.strip()]
+            if key == "folders":
+                bad = next((p for p in paths if not Path(p).is_absolute() or not Path(p).is_dir()), None)
+                if bad:
+                    raise HTTPException(400, f"Not a folder on this Mac: {bad}")
+            s["search"][key] = list(dict.fromkeys(paths))
+    for key in ("paused", "on_battery"):
+        if key in body:
+            s["search"][key] = bool(body[key])
+    save_settings(s)
+    try:
+        httpx.post(SEARCH_URL + "/reload", timeout=3)
+    except httpx.HTTPError:
+        pass
+    return s["search"]
+
+
+def _reset_index(restart):
+    _stop_search()
+    shutil.rmtree(SEARCH_DIR, ignore_errors=True)
+    if restart:
+        _start_search()
+    return {"ok": True}
+
+
+@app.post("/api/search/rebuild")
+def search_rebuild():
+    if not load_settings()["search"]["enabled"]:
+        raise HTTPException(409, "Turn Search on first.")
+    return _reset_index(restart=True)
+
+
+@app.delete("/api/search/index")
+def search_delete_index():
+    return _reset_index(restart=load_settings()["search"]["enabled"])
+
+
+@app.get("/api/search/errors")
+def search_errors():
+    return _search_proxy("GET", "/errors").json()
+
+
+@app.get("/api/search/thumb/{file_id}")
+def search_thumb(file_id: int):
+    r = _search_proxy("GET", f"/thumb/{file_id}")
+    return Response(r.content, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+
+@app.post("/api/search/open")
+def search_open(file_id: int = Body(...), path: str = Body(...), reveal: bool = Body(False)):
+    """Open or reveal an indexed file. The path comes from the index, never from the request: the
+    request's path only has to match, so an id reused after a rebuild can't open a different file."""
+    try:
+        f = _search_proxy("GET", f"/file/{file_id}").json()
+    except HTTPException as e:
+        if e.status_code == 404:
+            raise HTTPException(404, "This file is no longer in the search index.")
+        raise
+    if f["path"] != path or not Path(f["path"]).exists():
+        raise HTTPException(404, "This file has moved or is no longer in the search index.")
+    subprocess.run(["open", "-R", f["path"]] if reveal else ["open", f["path"]])
+    return {"ok": True}
+
+
+@app.post("/api/search/choose-folder")
+def search_choose_folder():
+    """The standard macOS folder chooser. `tell me to activate` brings it in front of the app window."""
+    try:
+        r = subprocess.run(["osascript", "-e", "tell me to activate", "-e",
+                            'POSIX path of (choose folder with prompt "Choose a folder to index")'],
+                           capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return {"path": None}
+    return {"path": r.stdout.strip().rstrip("/") or None if r.returncode == 0 else None}
+
 
 # ---------------------------------------------------------------- versions & updates
 

@@ -20,6 +20,7 @@ if ! curl -sf http://127.0.0.1:7860/api/system >/dev/null; then
   echo "UI starting at http://127.0.0.1:7860"
   for i in {1..120}; do curl -sf http://127.0.0.1:7860/api/system >/dev/null && break; sleep 0.5; done
 fi
+curl -sf -X POST http://127.0.0.1:7860/api/search/start >/dev/null      # does nothing unless Search is turned on
 if [[ "${1:-}" != "--ui" ]]; then
   curl -sf -X POST http://127.0.0.1:7860/api/engine/start >/dev/null && echo "Engine starting (active model)"
 fi
