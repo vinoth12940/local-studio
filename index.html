@@ -326,6 +326,17 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .row .grow { flex: 1; min-width: 0; }
 .row .ttl { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .sub { font-size: 12.5px; color: var(--muted); }
+.srbox { display: flex; gap: 10px; align-items: center; }
+.srbox input { flex: 1; min-width: 0; height: 36px; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 15px; }
+.srstatus { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin: 12px 4px 8px; min-height: 30px; }
+.srrow { display: flex; gap: 14px; align-items: flex-start; padding: 14px 6px; border-bottom: 1px solid var(--line); }
+.srrow .th { width: 56px; height: 56px; flex: none; border-radius: 10px; border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; color: var(--muted); }
+.srrow .th img { width: 100%; height: 100%; object-fit: cover; }
+.srrow .nm { font-size: 14px; font-weight: 500; word-break: break-word; }
+.srrow .pt { font-size: 12px; color: var(--muted); word-break: break-all; }
+.srrow .sn { font-size: 13px; color: var(--ink-2); margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.srrow .acts { display: flex; gap: 6px; flex: none; }
+.srpath { width: 220px; height: 30px; border: 1px solid var(--line-2); border-radius: 8px; padding: 0 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px; outline: 0; }
 .row .size { font-family: "JetBrains Mono", monospace; font-size: 13px; color: var(--ink-2); min-width: 80px; text-align: right; }
 .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500; padding: 2px 8px; border-radius: 999px; background: var(--soft); color: var(--ink-2); white-space: nowrap; }
 .badge.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
@@ -431,6 +442,7 @@ dialog::backdrop { background: var(--overlay); }
     <div class="sb-actions">
       <button class="navitem" id="newChat"><svg class="i"><use href="#i-new"/></svg>New chat<span class="kbd">⇧⌘O</span></button>
       <button class="navitem" data-view="images"><svg class="i"><use href="#i-image"/></svg>Images</button>
+      <button class="navitem" data-view="search"><svg class="i"><use href="#i-search"/></svg>Search</button>
       <button class="navitem" data-view="library"><svg class="i"><use href="#i-box"/></svg>Model library</button>
       <button class="navitem" data-view="manage"><svg class="i"><use href="#i-sliders"/></svg>Settings</button>
     </div>
@@ -555,6 +567,27 @@ dialog::backdrop { background: var(--overlay); }
       </div></div>
     </section>
 
+    <section class="view" id="v-search">
+      <div class="scroll"><div class="page" style="max-width:880px">
+        <h2>Search</h2>
+        <p class="lead">Find your files by what they contain. Runs entirely on this Mac.</p>
+        <div class="section" id="srOff" style="display:none">
+          <div class="sh"><div><h3>Search is off</h3><p id="srOffMsg"></p></div>
+            <button class="btn primary" id="srEnable">Turn on Search</button></div>
+        </div>
+        <div id="srOn" style="display:none">
+          <div class="prompt-card" style="padding:10px 14px 10px 18px">
+            <div class="srbox"><svg class="i"><use href="#i-search"/></svg>
+              <input id="srQuery" placeholder="Describe what you're looking for" autocomplete="off">
+              <div class="sel"><select id="srKind" title="Kind"><option value="">All</option><option value="document">Documents</option><option value="image">Images</option><option value="audio">Audio</option></select></div>
+            </div>
+          </div>
+          <div class="srstatus" id="srStatus"></div>
+          <div id="srResults"></div>
+        </div>
+      </div></div>
+    </section>
+
     <section class="view" id="v-library">
       <div class="scroll"><div class="page">
         <h2>Model library</h2>
@@ -605,6 +638,24 @@ dialog::backdrop { background: var(--overlay); }
 
         <div class="section">
           <div class="sh"><div><h3>Models</h3><p id="modelsSum">–</p></div><button class="btn sm" data-view="library">Open model library</button></div>
+        </div>
+
+        <div class="section">
+          <div class="sh"><div><h3>Search</h3><p id="srSetSum">–</p></div>
+            <label class="switch"><input type="checkbox" id="srSw"><span></span></label></div>
+          <div id="srSetBody" style="display:none">
+            <div id="srFolders"></div>
+            <div class="row"><div class="grow"><div class="ttl">Add a folder</div><div class="sub">Choose one, or paste its path</div></div>
+              <input class="srpath" id="srPath" placeholder="/Users/you/Projects" autocomplete="off">
+              <button class="btn sm" id="srAddPath">Add</button><button class="btn sm" id="srChoose">Choose…</button></div>
+            <div class="row"><div class="grow"><div class="ttl">Index on battery</div><div class="sub">When off, indexing waits until the Mac is plugged in</div></div>
+              <label class="switch"><input type="checkbox" id="srBattery"><span></span></label></div>
+            <div class="row"><div class="grow"><div class="ttl">Index</div><div class="sub" id="srIdxSub">–</div></div>
+              <button class="btn sm" id="srErrBtn" style="display:none">Show unreadable files</button><button class="btn sm" id="srRebuild">Rebuild</button></div>
+            <div id="srErrList" style="display:none"></div>
+          </div>
+          <div class="row" id="srDelRow" style="display:none"><div class="grow"><div class="ttl">Index on disk</div><div class="sub">Search is off, but its index is still stored</div></div>
+            <button class="btn sm danger" id="srDelete">Delete index</button></div>
         </div>
 
         <div class="section">
@@ -717,6 +768,7 @@ function showView(v) {
   if (v === "images") { loadGallery(); loadLibrary(); }
   if (v === "library") loadLibrary();
   if (v === "manage") loadManage();
+  if (v === "search") { loadSearch(); setTimeout(() => $("srQuery").focus(), 0); }
   if (v === "chat") setTimeout(() => $("input").focus(), 0);
   renderHistory();
   if (innerWidth < 820) setCollapsed(true);
@@ -1242,6 +1294,7 @@ function updateHeader() {
     $("hdrSub").textContent = runningMode === "vision" ? "Vision" : runningMode === "gguf" ? "llama.cpp" : (a?.accel || "");
   } else if (view === "images") { $("hdrTitle").textContent = activeImage()?.name || "Images"; $("hdrSub").textContent = "mflux"; }
   else if (view === "library") { $("hdrTitle").textContent = "Model library"; $("hdrSub").textContent = ""; }
+  else if (view === "search") { $("hdrTitle").textContent = "Search"; $("hdrSub").textContent = "EmbeddingGemma 2"; }
   else { $("hdrTitle").textContent = "Settings"; $("hdrSub").textContent = ""; }
 }
 async function loadLibrary() {
@@ -1388,7 +1441,7 @@ $("hfResults").onclick = async (e) => {
   }
 };
 // ---------------- settings
-async function loadManage() { loadStorage(); loadVersions(); loadLibrary().then(() => {
+async function loadManage() { loadStorage(); loadVersions(); loadSearch(); loadLibrary().then(() => {
   const inst = lib.chat.concat(lib.image).filter((m) => m.installed);
   $("modelsSum").textContent = `${inst.length} downloaded · ${human(inst.reduce((a, m) => a + m.size_bytes, 0))} on disk · ${human(lib.disk_free_bytes)} free`;
 }); }
@@ -1429,10 +1482,112 @@ $("unBtn").onclick = async () => {
   catch (e) { toast(e.message); }
 };
 
+// ---------------- search
+let sr = null, srTimer = 0, srSeq = 0;
+const srHome = (p) => p.replace(/^\/Users\/[^/]+/, "~");
+const srLoc = (l) => !l ? "" : /^p\d+$/.test(l) ? `page ${l.slice(1)}` : /^\d+s$/.test(l) ? `${Math.floor(+l.slice(0, -1) / 60)}:${String(+l.slice(0, -1) % 60).padStart(2, "0")}` : l;
+const SR_ICON = { document: "i-file", image: "i-image", audio: "i-spark", name: "i-file" };
+const SR_PAUSED = { user: "Paused", busy: "Waiting while chat or image generation is running", battery: "Paused on battery power" };
+const SR_OFF = "Turn it on to index your documents, images and audio. Nothing is read or downloaded until you do.";
+function srStatusLine(s, buttons = true) {
+  const bad = (t) => `<span style="color:var(--bad)">${esc(t)}</span>`;
+  if (s.setup?.status === "running") return esc(s.setup.step || "Setting up");
+  if (!s.running) return s.setup?.status === "error" ? bad(s.setup.error) : "";
+  if (s.error) return bad(s.error);
+  if (s.state === "starting") return "Starting";
+  const done = (s.files_done + s.files_error).toLocaleString(), total = s.files_total.toLocaleString();
+  const btn = (v, label) => buttons ? ` <button class="btn sm" data-srpause="${v}">${label}</button>` : "";
+  if (s.state === "paused") return `${SR_PAUSED[s.paused_reason] || "Paused"} · ${done} of ${total} files` + (s.paused_reason === "user" ? btn(0, "Resume") : "");
+  if (s.state === "indexing") return `Indexing ${done} of ${total} files${s.current ? " · " + esc(s.current.split("/").pop()) : ""}` + btn(1, "Pause");
+  return `${s.files_done.toLocaleString()} files indexed · up to date`;
+}
+async function loadSearch() {
+  try { sr = await api("/api/search/status"); } catch { return; }
+  const on = sr.enabled && sr.running, busy = sr.setup?.status === "running";
+  $("srOn").style.display = on ? "" : "none"; $("srOff").style.display = on ? "none" : "";
+  $("srEnable").disabled = busy; $("srEnable").textContent = busy ? "Setting up" : "Turn on Search";
+  $("srOffMsg").innerHTML = srStatusLine(sr) || SR_OFF;
+  $("srStatus").innerHTML = srStatusLine(sr);
+  $("srSw").checked = sr.enabled || busy; $("srSw").disabled = busy;
+  $("srSetSum").innerHTML = (sr.enabled || busy ? srStatusLine(sr, false) : "") || `Find your files by what they contain. Uses about ${Math.ceil(sr.model.size_gb + 1)} GB for the model and search components.`;
+  $("srSetBody").style.display = on ? "" : "none";
+  $("srDelRow").style.display = !sr.enabled && !busy && sr.index_on_disk ? "" : "none";
+  if (!on) return;
+  $("srFolders").innerHTML = sr.roots.map((p) => `<div class="row"><div class="grow"><div class="ttl">${esc(srHome(p))}</div>${sr.no_access.includes(p) ? `<div class="sub" style="color:var(--bad)">No access. Allow it in System Settings, Privacy &amp; Security, Files and Folders.</div>` : ""}</div><button class="btn sm" data-srrm="${esc(p)}">Remove</button></div>`).join("");
+  $("srBattery").checked = sr.on_battery;
+  $("srIdxSub").textContent = `${sr.files_done.toLocaleString()} files · ${human(sr.index_bytes)} on disk${sr.files_error ? ` · ${sr.files_error.toLocaleString()} could not be read` : ""}`;
+  $("srErrBtn").style.display = sr.files_error ? "" : "none";
+}
+async function srSave(patch) { try { await jpost("/api/search/settings", patch, "PUT"); } catch (e) { toast(e.message); } loadSearch(); }
+function srAddFolder(path) {
+  path = (path || "").trim().replace(/\/+$/, ""); if (!path || !sr) return;
+  if (sr.removed.includes(path)) return srSave({ removed: sr.removed.filter((p) => p !== path) });
+  if (sr.roots.includes(path)) return toast("That folder is already indexed");
+  srSave({ folders: [...sr.folders, path] });
+}
+function srRemoveFolder(path) {
+  if (sr.folders.includes(path)) return srSave({ folders: sr.folders.filter((p) => p !== path) });
+  srSave({ removed: [...sr.removed, path] });
+}
+async function srEnable() { try { await jpost("/api/search/enable"); } catch (e) { toast(e.message); } loadSearch(); }
+$("srEnable").onclick = srEnable;
+$("srSw").onchange = async () => {
+  if ($("srSw").checked) return srEnable();
+  try { await jpost("/api/search/disable"); } catch (e) { toast(e.message); }
+  loadSearch();
+};
+$("srFolders").onclick = (e) => { const b = e.target.closest("[data-srrm]"); if (b) srRemoveFolder(b.dataset.srrm); };
+$("srAddPath").onclick = () => { srAddFolder($("srPath").value); $("srPath").value = ""; };
+$("srPath").addEventListener("keydown", (e) => { if (e.key === "Enter") $("srAddPath").click(); });
+$("srChoose").onclick = async () => { try { const r = await jpost("/api/search/choose-folder"); if (r.path) srAddFolder(r.path); } catch (e) { toast(e.message); } };
+$("srBattery").onchange = () => srSave({ on_battery: $("srBattery").checked });
+$("srRebuild").onclick = async () => {
+  if (!await confirmBox("Rebuild the search index?", "Every file is read and indexed again. This can take an hour or more.", "Rebuild")) return;
+  try { await jpost("/api/search/rebuild"); toast("Rebuilding the index"); } catch (e) { toast(e.message); }
+  loadSearch();
+};
+$("srDelete").onclick = async () => {
+  if (!await confirmBox("Delete the search index?", "Your files are not touched. Turning Search on again rebuilds it.")) return;
+  try { await api("/api/search/index", { method: "DELETE" }); } catch (e) { toast(e.message); }
+  loadSearch();
+};
+$("srErrBtn").onclick = async () => {
+  const box = $("srErrList"); if (box.style.display === "") { box.style.display = "none"; return; }
+  try {
+    const { errors } = await api("/api/search/errors");
+    box.innerHTML = errors.map((x) => `<div class="row"><div class="grow"><div class="ttl">${esc(srHome(x.path))}</div><div class="sub">${esc(x.error)}</div></div></div>`).join("");
+    box.style.display = "";
+  } catch (e) { toast(e.message); }
+};
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-srpause]"); if (b) srSave({ paused: b.dataset.srpause === "1" }); });
+function srRow(r) {
+  const dir = srHome(r.path.slice(0, r.path.length - r.name.length - 1)), loc = srLoc(r.locator);
+  const th = r.kind === "image" ? `<img src="/api/search/thumb/${r.file_id}" alt="" loading="lazy">` : icon(SR_ICON[r.kind] || "i-file");
+  const open = `data-open="${r.file_id}" data-path="${esc(r.path)}"`;
+  return `<div class="srrow"><div class="th">${th}</div><div style="flex:1; min-width:0"><div class="nm">${esc(r.name)}</div><div class="pt">${esc(dir)}${loc ? " · " + esc(loc) : ""}</div>${r.snippet ? `<div class="sn">${esc(r.snippet)}</div>` : ""}</div>
+    <div class="acts"><button class="btn sm" ${open}>Open</button><button class="btn sm" ${open} data-reveal="1">Reveal</button></div></div>`;
+}
+async function runSearch() {
+  const q = $("srQuery").value.trim(), seq = ++srSeq;                 // srSeq: a slow earlier query must not overwrite a newer one
+  if (!q) { $("srResults").innerHTML = ""; return; }
+  let res;
+  try { res = (await jpost("/api/search", { query: q, kind: $("srKind").value })).results; }
+  catch (e) { if (seq === srSeq) $("srResults").innerHTML = `<p class="lead" style="margin-top:18px">${esc(e.message)}</p>`; return; }
+  if (seq !== srSeq) return;
+  $("srResults").innerHTML = res.length ? res.map(srRow).join("") : `<p class="lead" style="margin-top:18px">Nothing found.</p>`;
+}
+function srOpen(b) { return jpost("/api/search/open", { file_id: +b.dataset.open, path: b.dataset.path, reveal: b.dataset.reveal === "1" }).catch((e) => toast(e.message)); }
+$("srQuery").addEventListener("input", () => { clearTimeout(srTimer); srTimer = setTimeout(runSearch, 300); });
+$("srQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") { clearTimeout(srTimer); runSearch(); } });
+$("srKind").onchange = runSearch;
+$("srResults").onclick = (e) => { const b = e.target.closest("[data-open]"); if (b) srOpen(b); };
+setInterval(() => { if (view === "search" || view === "manage" || sr?.setup?.status === "running") loadSearch(); }, 3000);
+
 // ---------------- boot
 (async () => {
   await api("/api/system").then((s) => { $("verBadge").textContent = s.version; sysRam = s.total_bytes; }).catch(() => {});
   await loadLibrary();
+  loadSearch();
   showView("chat");
   renderThread();
   await loadChats();
