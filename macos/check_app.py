@@ -270,6 +270,15 @@ def search_is_not_started_twice():
         (app.LOGS / "search.pid").unlink(missing_ok=True)
 
 
+@check
+def the_page_is_never_served_from_a_stale_cache():
+    """After an update the app window must load the new index.html, not a cached copy of the old one."""
+    from fastapi.testclient import TestClient
+    r = TestClient(app.app, base_url="http://127.0.0.1:7860").get("/")
+    assert r.status_code == 200 and "<html" in r.text.lower()
+    assert r.headers.get("cache-control") == "no-cache", f"cache-control is {r.headers.get('cache-control')!r}"
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

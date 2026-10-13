@@ -1541,4 +1541,5 @@ def uninstall(remove_app: bool = Body(False, embed=True)):
 
 @app.get("/")
 def index():
-    return FileResponse(ROOT / "index.html")
+    # no-cache: the app window must revalidate, or it keeps showing the previous version's page after an update
+    return FileResponse(ROOT / "index.html", headers={"Cache-Control": "no-cache"})

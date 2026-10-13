@@ -329,7 +329,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     func showUI() {
-        webView.load(URLRequest(url: uiURL))
+        // Skip the web cache: after an update a cached copy of the old page would hide new features.
+        webView.load(URLRequest(url: uiURL, cachePolicy: .reloadIgnoringLocalCacheData))
         window.contentView = webView
     }
 
@@ -427,7 +428,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         try? FileManager.default.createDirectory(atPath: stateDir(), withIntermediateDirectories: true)
         NSWorkspace.shared.open(URL(fileURLWithPath: stateDir()))
     }
-    @objc func reloadPage() { if window.contentView === webView { webView.reload() } else { checkThenStart() } }
+    @objc func reloadPage() { if window.contentView === webView { webView.reloadFromOrigin() } else { checkThenStart() } }
     @objc func zoomIn() { webView.pageZoom = min(webView.pageZoom + 0.1, 2.0) }
     @objc func zoomOut() { webView.pageZoom = max(webView.pageZoom - 0.1, 0.6) }
     @objc func zoomReset() { webView.pageZoom = 1.0 }
