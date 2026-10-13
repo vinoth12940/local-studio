@@ -307,6 +307,99 @@ def concurrency():
         assert slowest < 2.0, f"a search took {slowest:.2f}s while indexing"
 
 
+def _tree(d, files):
+    root = Path(d).resolve() / "docs"
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text)
+    st = search.Store(Path(d) / "index.db")
+    cfg = {"roots": [str(root)], "removed": [], "paused": False, "on_battery": True}
+    ix = search.Indexer(st, FakeEmbedder(), config=lambda: cfg, app_url=None)
+    return root, st, ix, cfg
+
+
+@check
+def indexer_changes():
+    with tempfile.TemporaryDirectory() as d:
+        root, st, ix, _ = _tree(d, {"plumber.txt": "plumber invoice kitchen sink valve", "sub/tokyo.md": "japan itinerary kyoto cherry blossoms",
+                                    "holiday.mp4": "not text", "long.txt": "\n\n".join(f"paragraph {i} " + "word " * 230 for i in range(300))})
+        s = search.Searcher(st, ix.embedder)
+        assert ix.status()["state"] == "starting" and ix.status()["roots"] == [str(root)]
+        ix.run_once()
+        c = st.counts()
+        assert (c["files_total"], c["files_done"], c["files_error"]) == (4, 4, 0), c
+        assert c["chunks"] == 2 + search.MAX_CHUNKS, "a huge file is capped at MAX_CHUNKS"
+        assert s.search("plumber invoice")[0]["name"] == "plumber.txt" and ix.state == "indexing" and ix.current is None
+        assert ix.status()["files_done"] == 4 and ix.status()["no_access"] == []
+
+        (root / "plumber.txt").write_text("electrician quote garage wiring")           # edited
+        os.utime(root / "plumber.txt", (time.time() + 5, time.time() + 5))
+        (root / "sub/tokyo.md").unlink()                                               # deleted
+        (root / "new.txt").write_text("dentist appointment thursday")                  # added
+        ix.run_once()
+        assert st.counts()["files_total"] == 4
+        assert s.search("electrician garage wiring")[0]["name"] == "plumber.txt"
+        assert all(r["name"] != "plumber.txt" for r in s.search("plumber invoice kitchen sink valve") if r["score"] and r["score"] > 0.62), \
+            "the old passage must stop matching"
+        assert all(r["name"] != "tokyo.md" for r in s.search("japan itinerary kyoto"))
+        assert s.search("dentist appointment")[0]["name"] == "new.txt"
+
+
+@check
+def indexer_errors():
+    with tempfile.TemporaryDirectory() as d:
+        root, st, ix, _ = _tree(d, {"good.txt": "plumber invoice", "bad.txt": "broken", "also.txt": "japan itinerary"})
+        real, calls = search.extract, []
+
+        def flaky(path, kind):
+            calls.append(Path(path).name)
+            if Path(path).name == "bad.txt":
+                raise ValueError("cannot read this one")
+            return real(path, kind)
+
+        search.extract = flaky
+        try:
+            ix.run_once()
+            c = st.counts()
+            assert (c["files_done"], c["files_error"]) == (2, 1), c
+            assert st.errors() == [{"path": str(root / "bad.txt"), "error": "ValueError: cannot read this one"}]
+            assert sorted(calls) == ["also.txt", "bad.txt", "good.txt"]
+            ix.run_once()
+            assert calls.count("bad.txt") == 1, "a failed file is not retried until it changes"
+            (root / "bad.txt").write_text("fixed now")
+            os.utime(root / "bad.txt", (time.time() + 5, time.time() + 5))
+            ix.run_once()
+            assert calls.count("bad.txt") == 2
+        finally:
+            search.extract = real
+
+
+@check
+def indexer_holds():
+    with tempfile.TemporaryDirectory() as d:
+        _, st, ix, cfg = _tree(d, {"a.txt": "plumber invoice"})
+        ix.on_ac, ix.app_busy = (lambda: True), (lambda: False)
+        assert ix.hold_reason(cfg) is None
+        assert ix.hold_reason({**cfg, "paused": True}) == "user"
+        ix.app_busy = lambda: True
+        assert ix.hold_reason(cfg) == "busy"
+        ix.app_busy, ix.on_ac = (lambda: False), (lambda: False)
+        assert ix.hold_reason(cfg) is None, "on_battery is on in this config"
+        assert ix.hold_reason({**cfg, "on_battery": False}) == "battery"
+
+        cfg["paused"] = True                               # paused: nothing is indexed, and stop ends the wait promptly
+        t = threading.Thread(target=ix.run_once)
+        t.start()
+        time.sleep(0.3)
+        assert ix.state == "paused" and ix.paused_reason == "user" and st.counts()["files_done"] == 0
+        ix.stop.set()
+        t.join(3)
+        assert not t.is_alive()
+
+        ix.error = "model failed its self-test"
+        assert ix.status()["error"] == "model failed its self-test"
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

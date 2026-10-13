@@ -462,3 +462,129 @@ class Searcher:
             used += len(c["text"])
             out.append({"file_id": c["file_id"], "name": f["name"], "path": f["path"], "locator": c["locator"] or "", "text": c["text"]})
         return out
+
+
+# ---------------------------------------------------------------- extractors
+# extract() turns one file into items to embed: text chunks, images, or audio segments.
+
+def _text_items(sections):
+    """sections: [(locator, text)] -> text items, capped at MAX_CHUNKS for the whole file."""
+    items = []
+    for locator, text in sections:
+        for chunk in chunk_text(text):
+            items.append({"kind": "text", "text": chunk, "locator": locator})
+            if len(items) == MAX_CHUNKS:
+                return items
+    return items
+
+
+def extract(path, kind):
+    p = Path(path)
+    return _text_items([("", p.read_bytes().decode("utf-8", errors="replace"))])
+
+
+# ---------------------------------------------------------------- indexer
+
+TEXT_BATCH = 32
+RESCAN_SECONDS = 300
+IDLE_UNLOAD_SECONDS = 600
+
+
+class Indexer:
+    def __init__(self, store, embedder, config=load_config, app_url=APP_URL):
+        self.store, self.embedder, self.config, self.app_url = store, embedder, config, app_url
+        # "starting" until the first pass begins: an empty index must not read as "up to date"
+        self.state, self.paused_reason, self.current, self.no_access, self.error = "starting", None, None, [], None
+        self.wake, self.stop = threading.Event(), threading.Event()
+        self._ac = (0.0, True)
+
+    def on_ac(self):
+        if time.time() - self._ac[0] > 30:                # pmset is a subprocess: ask at most twice a minute
+            try:
+                out = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=5).stdout
+                self._ac = (time.time(), "AC Power" in out)
+            except Exception:
+                self._ac = (time.time(), True)
+        return self._ac[1]
+
+    def app_busy(self):
+        """True while the app is streaming a chat reply or generating an image."""
+        if not self.app_url:
+            return False
+        try:
+            with urllib.request.urlopen(self.app_url + "/api/busy", timeout=1) as r:
+                return bool(json.load(r).get("busy"))
+        except Exception:
+            return False                                  # app not answering: keep indexing
+
+    def hold_reason(self, cfg):
+        if cfg["paused"]:
+            return "user"
+        if not cfg["on_battery"] and not self.on_ac():
+            return "battery"
+        return "busy" if self.app_busy() else None
+
+    def wait_clear(self):
+        """Block while indexing should hold off. False means the service is stopping."""
+        while not self.stop.is_set():
+            reason = self.hold_reason(self.config())
+            if reason is None:
+                self.state, self.paused_reason = "indexing", None
+                return True
+            self.state, self.paused_reason = "paused", reason
+            self.stop.wait(1)
+        return False
+
+    def index_file(self, f):
+        self.current = f["path"]
+        try:
+            items = extract(f["path"], f["kind"]) if f["kind"] != "name" else []
+            rows, texts = [], [i for i in items if i["kind"] == "text"]
+            for i in range(0, len(texts), TEXT_BATCH):
+                if not self.wait_clear():
+                    return
+                batch = texts[i:i + TEXT_BATCH]
+                vecs = self.embedder.embed_texts([doc_text(f["name"], t["text"]) for t in batch])
+                rows += [("text", t["text"], t["locator"], v) for t, v in zip(batch, vecs)]
+            for item in items:                            # images and audio: one per call
+                if item["kind"] == "text":
+                    continue
+                if not self.wait_clear():
+                    return
+                vec = self.embedder.embed_image(item["image"]) if item["kind"] == "image" else self.embedder.embed_audio(item["audio"])
+                rows.append((item["kind"], None, item["locator"], vec))
+            self.store.replace_chunks(f["id"], rows)
+        except Exception as e:                            # one unreadable file must not stop the crawl
+            self.store.mark_error(f["id"], f"{type(e).__name__}: {e}"[:300])
+        finally:
+            self.current = None
+
+    def run_once(self):
+        cfg, no_access = self.config(), []
+        found = list(walk(cfg["roots"], cfg["removed"], no_access))
+        self.no_access = no_access
+        self.store.sync(found, keep_prefixes=no_access)
+        for f in self.store.pending():
+            if not self.wait_clear():
+                return
+            self.index_file(f)
+
+    def run(self):
+        while not self.stop.is_set():
+            if self.error is None:
+                try:
+                    self.run_once()
+                except Exception as e:
+                    print(f"index pass failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            self.state, self.paused_reason = "idle", None
+            deadline = time.time() + RESCAN_SECONDS
+            while not self.stop.is_set() and not self.wake.is_set() and time.time() < deadline:
+                if self.embedder.loaded and time.time() - self.embedder.last_used > IDLE_UNLOAD_SECONDS:
+                    self.embedder.unload()                # give the memory back until the next query or change
+                self.wake.wait(5)
+            self.wake.clear()
+
+    def status(self):
+        return {"state": self.state, "paused_reason": self.paused_reason, "current": self.current,
+                "model_loaded": self.embedder.loaded, "roots": self.config()["roots"], "no_access": self.no_access,
+                "error": self.error, **self.store.counts()}
