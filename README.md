@@ -117,9 +117,10 @@ Turn on **Search** in Settings and Local Studio indexes your Documents, Desktop,
 Pictures, Movies, Music and iCloud Drive in the background, on this Mac. You can then:
 
 - **Find** a file by describing it: "the invoice from the plumber", "photo of a desert plant at
-  night", "voice memo about the dentist". Text, images and spoken audio are all searchable.
+  night", "voice memo about the dentist". Text, images, spoken audio and videos (by what is on
+  screen and what is said, first 10 minutes) are all searchable.
 - **Preview** a result where it matched: the PDF page with the passage highlighted, the passage in
-  context for Word, Excel, notes and code, the picture, or the recording from the matching moment.
+  context for Word, Excel, notes and code, the picture, or the recording or video from the matching moment.
   The arrow keys move between results.
 - **Ask** in chat with the **My files** switch on. The active chat model answers from your files
   and lists the ones it used.
@@ -132,8 +133,8 @@ Settings → Search. The index lives in `data/search/`.
 
 Not indexed: hidden files, `Library`, apps and other packages (including the Photos library),
 developer folders such as `node_modules` and `.git`, Python environments (recognised by their
-contents, whatever they are called), copied `node_modules` contents, and private keys. Video files, unrecognised
-types and iCloud files that are not downloaded to this Mac are found by name only.
+contents, whatever they are called), copied `node_modules` contents, and private keys. Unrecognised types and
+iCloud files that are not downloaded to this Mac are found by name only.
 
 ## Models
 

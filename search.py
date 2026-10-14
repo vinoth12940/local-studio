@@ -108,6 +108,7 @@ TEXT_EXT = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl", ".yam
 DOC_EXT = TEXT_EXT | {".pdf", ".docx", ".xlsx", ".xlsm"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".heic"}
 AUDIO_EXT = {".mp3", ".m4a", ".wav", ".aiff", ".aif", ".caf", ".flac"}
+VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 SKIP_DIRS = {"node_modules", "venv", "__pycache__", "build", "dist", "target", "DerivedData", "Pods",
              "site-packages", "dist-packages"}
 PACKAGE_SUFFIXES = (".app", ".photoslibrary", ".musiclibrary", ".tvlibrary", ".imovielibrary", ".bundle",
@@ -128,6 +129,8 @@ def classify(name, size):
         return "image"
     if ext in AUDIO_EXT:
         return "audio"
+    if ext in VIDEO_EXT:
+        return "video"
     return "name"
 
 
@@ -235,7 +238,7 @@ def walk(roots, removed=(), no_access=None, failed=None):
 # SQLite holds files, chunks, a keyword index and each chunk's vector (float16 on disk). The vectors
 # are also kept in one float32 matrix in memory, so a query is a single matrix product.
 
-KIND_ORDER = {"document": 0, "image": 1, "audio": 2, "name": 3}
+KIND_ORDER = {"document": 0, "image": 1, "audio": 2, "video": 3, "name": 4}
 EXTRACT_VERSION = 2               # bump when a version can read files an earlier one could not: failed files get another go
 VACUUM_AFTER = 1000               # files deleted in one crawl before the database file is compacted
 SCHEMA = """
@@ -634,6 +637,8 @@ SCAN_PAGES = 20
 SAMPLE_RATE = 16000
 SEGMENT_SECONDS = 30
 MAX_SEGMENTS = 20                 # the first 10 minutes of a file
+VIDEO_SECONDS = 600               # how much of a video is looked at
+FRAME_SECONDS = 5                 # one frame this often: a hit points at the moment, and 10 minutes cost ~30 s to index
 
 
 def _fit(im, side=IMAGE_SIDE):
@@ -708,9 +713,47 @@ def _audio_segments(p):
     return [s for i, s in enumerate(segs) if i == 0 or len(s) >= SAMPLE_RATE]     # drop a tail shorter than a second
 
 
+def _frame_times(duration):
+    end = min(duration, VIDEO_SECONDS)
+    return [t for t in range(0, int(end) + 1, FRAME_SECONDS) if t < end] or [0]
+
+
+def _video_frames(p, times=None):
+    """[(seconds, image)] sampled from a video. Each seek lands on the keyframe at or before the
+    time asked for, which is fast and close enough; the frame's real time is what's returned."""
+    import av
+    out, last = [], None
+    with av.open(str(p)) as c:
+        if not c.streams.video:
+            return out
+        st = c.streams.video[0]
+        duration = float(c.duration / av.time_base) if c.duration else float((st.duration or 0) * st.time_base)
+        for t in (_frame_times(duration) if times is None else times):
+            try:
+                c.seek(int(t / st.time_base), stream=st)
+                frame = next(c.decode(st), None)
+            except Exception:                             # damaged from here on: keep what we have
+                break
+            if frame is None:
+                break
+            when = float(frame.pts * st.time_base) if frame.pts is not None else float(t)
+            if last is not None and abs(when - last) < 0.5:        # keyframes further apart than our step: same frame again
+                continue
+            last = when
+            out.append((max(0, int(round(when))), _fit(frame.to_image())))
+    return out
+
+
 def extract(path, kind):
     p = Path(path)
     ext = p.suffix.lower()
+    if kind == "video":
+        items = [{"kind": "image", "image": im, "locator": f"{t}s"} for t, im in _video_frames(p)]
+        try:
+            sound = _audio_segments(p)
+        except (RuntimeError, subprocess.TimeoutExpired):  # no soundtrack, or one afconvert can't read
+            sound = []
+        return items + [{"kind": "audio", "audio": seg, "locator": f"{i * SEGMENT_SECONDS}s"} for i, seg in enumerate(sound)]
     if kind == "image":
         im = _load_image(p)
         return [{"kind": "image", "image": im, "locator": ""}] if im is not None else []
@@ -960,9 +1003,9 @@ def preview_info(store, file_id, chunk_id=None):
            "chunk_id": chunk_id, "locator": c["locator"] if c else ""}
     if f["kind"] == "image":
         out["type"] = "image"
-    elif f["kind"] == "audio":
+    elif f["kind"] in ("audio", "video"):
         m = re.fullmatch(r"(\d+)s", out["locator"])
-        out.update(type="audio", start=int(m.group(1)) if m else 0)
+        out.update(type=f["kind"], start=int(m.group(1)) if m else 0)
     elif f["kind"] == "document" and f["name"].lower().endswith(".pdf"):
         m = re.fullmatch(r"p(\d+)", out["locator"])
         out.update(type="page", page=int(m.group(1)) if m else 1, match=c["match"] if c else "")
@@ -1111,12 +1154,16 @@ def make_app(store, embedder, indexer, searcher):
         return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @api.get("/thumb/{file_id}")
-    def thumb(file_id: int):
+    def thumb(file_id: int, t: int = 0):
         f = store.file_info([file_id]).get(file_id)
-        if not f or f["kind"] != "image":
-            raise HTTPException(404, "not an indexed image")
+        if not f or f["kind"] not in ("image", "video"):
+            raise HTTPException(404, "not an indexed image or video")
         try:
-            im = _load_image(Path(f["path"]))
+            if f["kind"] == "video":
+                frames = _video_frames(Path(f["path"]), times=[t])
+                im = frames[0][1] if frames else None
+            else:
+                im = _load_image(Path(f["path"]))
         except Exception:
             im = None
         if im is None:
@@ -1166,7 +1213,8 @@ def _eval_previews(store, searcher):
                                                 ("scanned parking fine", "scan_0042.pdf", "page", False),
                                                 ("cover letter for the nursing job", "cover_letter.docx", "text", None),
                                                 ("photo of a desert plant at night", "IMG_2001.jpg", "image", None),
-                                                ("voice note about the dentist", "voice_memo_1.aiff", "audio", None)):
+                                                ("voice note about the dentist", "voice_memo_1.aiff", "audio", None),
+                                                ("misty blue mountain ridges", "MOV_0031.mp4", "video", None)):
         top = searcher.search(query)[0]
         info = preview_info(store, top["file_id"], top["chunk_id"])
         ok, note = top["name"] == name and info["type"] == want_type, ""

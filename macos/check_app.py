@@ -308,6 +308,7 @@ def preview_serves_only_indexed_audio():
     audio = TMP / "memo.wav"
     audio.write_bytes(b"RIFF" + bytes(2000))
     answers = {7: {"path": str(audio), "name": "memo.wav", "kind": "audio", "mtime": 1.0},
+               6: {"path": str(audio), "name": "holiday.mp4", "kind": "video", "mtime": 1.0},
                8: {"path": str(TMP / "state" / "data" / "settings.json"), "name": "settings.json", "kind": "document", "mtime": 1.0}}
 
     class Resp:
@@ -332,6 +333,7 @@ def preview_serves_only_indexed_audio():
         c = TestClient(app.app, base_url="http://127.0.0.1:7860")
         r = c.get("/api/search/media/7", headers={"range": "bytes=0-99"})
         assert r.status_code == 206 and len(r.content) == 100, (r.status_code, len(r.content))
+        assert c.get("/api/search/media/6", headers={"range": "bytes=0-9"}).status_code == 206, "a video plays in the preview too"
         assert c.get("/api/search/media/8").status_code == 404, "a document is not served as media"
         assert c.get("/api/search/media/9").status_code == 404
     finally:

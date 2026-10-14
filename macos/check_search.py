@@ -82,7 +82,7 @@ def crawler():
                    search.walk([str(root), str(locked)], removed=[str(root / "removed")], no_access=no_access)}
         finally:
             locked.chmod(0o700)
-        assert got == {"notes.txt": "document", "photo.jpg": "image", "song.mp3": "audio", "movie.mp4": "name",
+        assert got == {"notes.txt": "document", "photo.jpg": "image", "song.mp3": "audio", "movie.mp4": "video",
                        "talk.key": "name", "sub/deep.md": "document", "big.log": "name"}, got
         assert no_access == [str(locked)], no_access
         row = next(search.walk([str(root)]))
@@ -324,7 +324,7 @@ def _tree(d, files):
 def indexer_changes():
     with tempfile.TemporaryDirectory() as d:
         root, st, ix, _ = _tree(d, {"plumber.txt": "plumber invoice kitchen sink valve", "sub/tokyo.md": "japan itinerary kyoto cherry blossoms",
-                                    "holiday.mp4": "not text", "long.txt": "\n\n".join(f"paragraph {i} " + "word " * 230 for i in range(300))})
+                                    "archive.zip": "not text", "long.txt": "\n\n".join(f"paragraph {i} " + "word " * 230 for i in range(300))})
         s = search.Searcher(st, ix.embedder)
         assert ix.status()["state"] == "starting" and ix.status()["roots"] == [str(root)]
         ix.run_once()
@@ -822,6 +822,48 @@ def preview_describes_the_match():
     n = search._needles("Rent is 2,450 dollars per month, due on the first of every month without exception.\n\nshort\n   Bond of   four weeks' rent.  ")
     assert n == ["Rent is 2,450 dollars per month, due on the first of every month without exception.", "Bond of four weeks' rent."], n
     assert search._needles("x" * 500) == ["x" * search.NEEDLE_CHARS], "a very long line is cut"
+
+
+# ---- video: frames every few seconds plus the soundtrack
+
+@check
+def videos_are_indexed_by_picture_and_sound():
+    assert search.classify("holiday.MP4", 10) == "video" and search.classify("clip.mov", 5 * 2 ** 30) == "video"
+    assert search._frame_times(0) == [0] and search._frame_times(12.4) == [0, 5, 10]
+    assert search._frame_times(3600)[-1] == search.VIDEO_SECONDS - search.FRAME_SECONDS and len(search._frame_times(3600)) == 120
+    with tempfile.TemporaryDirectory() as d:
+        root, st, ix, _ = _tree(d, {"notes.txt": "plumber invoice", "holiday.mp4": "not really a video", "song.mp3": "x"})
+        real = search.extract
+
+        def fake(path, kind):                              # stands in for the decoder: two frames and one spoken segment
+            if kind == "video":
+                return [{"kind": "image", "image": "beach sunset waves", "locator": "0s"},
+                        {"kind": "image", "image": "birthday cake candles", "locator": "35s"},
+                        {"kind": "audio", "audio": "happy birthday singing", "locator": "30s"}]
+            if kind == "audio":
+                return [{"kind": "audio", "audio": "piano music", "locator": "0s"}]
+            return real(path, kind)
+
+        search.extract = fake
+        try:
+            assert [f["kind"] for f in (st.sync(list(search.walk([str(root)]))), st.pending())[1]] == ["document", "audio", "video"], "videos come after audio"
+            ix.run_once()
+        finally:
+            search.extract = real
+        s = search.Searcher(st, ix.embedder)
+        hit = s.search("birthday cake candles", kind="video")
+        assert [(r["name"], r["kind"], r["locator"], r["snippet"]) for r in hit] == [("holiday.mp4", "video", "35s", "")], hit
+        assert s.search("happy birthday singing")[0]["locator"] == "30s", "the soundtrack is searchable too"
+        assert s.search("birthday cake", kind="image") == [] or all(r["kind"] == "image" for r in s.search("birthday cake", kind="image"))
+        p = search.preview_info(st, hit[0]["file_id"], hit[0]["chunk_id"])
+        assert (p["type"], p["start"]) == ("video", 35)
+
+    with tempfile.TemporaryDirectory() as d:               # an index made before videos were read: they were name-only
+        st = search.Store(Path(d) / "index.db")
+        st.sync([("/r/old.mp4", 5, 1.0, "name")])
+        st.replace_chunks(st.pending()[0]["id"], [])
+        assert st.pending() == []
+        assert st.sync([("/r/old.mp4", 5, 1.0, "video")])["changed"] == 1 and st.pending()[0]["kind"] == "video", "they are picked up without a rebuild"
 
 
 if __name__ == "__main__":

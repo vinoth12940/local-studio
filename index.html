@@ -604,7 +604,7 @@ dialog::backdrop { background: var(--overlay); }
           <div class="prompt-card" style="padding:10px 14px 10px 18px">
             <div class="srbox"><svg class="i"><use href="#i-search"/></svg>
               <input id="srQuery" placeholder="Describe what you're looking for" autocomplete="off">
-              <div class="sel"><select id="srKind" title="Kind"><option value="">All</option><option value="document">Documents</option><option value="image">Images</option><option value="audio">Audio</option></select></div>
+              <div class="sel"><select id="srKind" title="Kind"><option value="">All</option><option value="document">Documents</option><option value="image">Images</option><option value="audio">Audio</option><option value="video">Video</option></select></div>
             </div>
           </div>
           <div class="srstatus" id="srStatus"></div>
@@ -1533,7 +1533,8 @@ function syncFiles() {
 $("filesPill").onclick = () => { useFiles = !useFiles; syncFiles(); };
 const srHome = (p) => p.replace(/^\/Users\/[^/]+/, "~");
 const srLoc = (l) => !l ? "" : /^p\d+$/.test(l) ? `page ${l.slice(1)}` : /^\d+s$/.test(l) ? `${Math.floor(+l.slice(0, -1) / 60)}:${String(+l.slice(0, -1) % 60).padStart(2, "0")}` : l;
-const SR_ICON = { document: "i-file", image: "i-image", audio: "i-spark", name: "i-file" };
+const SR_ICON = { document: "i-file", image: "i-image", audio: "i-spark", video: "i-image", name: "i-file" };
+const srSecs = (l) => /^\d+s$/.test(l || "") ? +l.slice(0, -1) : 0;
 const SR_PAUSED = { user: "Paused", busy: "Waiting while chat or image generation is running", battery: "Paused on battery power" };
 const SR_OFF = "Turn it on to index your documents, images and audio. Nothing is read or downloaded until you do.";
 function srStatusLine(s, buttons = true) {
@@ -1612,7 +1613,9 @@ $("srErrBtn").onclick = async () => {
 document.addEventListener("click", (e) => { const b = e.target.closest("[data-srpause]"); if (b) srSave({ paused: b.dataset.srpause === "1" }); });
 function srRow(r, i) {
   const dir = srHome(r.path.slice(0, r.path.length - r.name.length - 1)), loc = srLoc(r.locator);
-  const th = r.kind === "image" ? `<img src="/api/search/thumb/${r.file_id}" alt="" loading="lazy">` : icon(SR_ICON[r.kind] || "i-file");
+  const th = r.kind === "image" ? `<img src="/api/search/thumb/${+r.file_id}" alt="" loading="lazy">`
+    : r.kind === "video" ? `<img src="/api/search/thumb/${+r.file_id}?t=${srSecs(r.locator)}" alt="" loading="lazy">`   // the frame at the matching moment
+    : icon(SR_ICON[r.kind] || "i-file");
   const open = `data-open="${r.file_id}" data-path="${esc(r.path)}"`;
   return `<div class="srrow" data-i="${i}"><div class="th">${th}</div><div style="flex:1; min-width:0"><div class="nm">${esc(r.name)}</div><div class="pt">${esc(dir)}${loc ? " · " + esc(loc) : ""}</div>${r.snippet ? `<div class="sn">${esc(r.snippet)}</div>` : ""}</div>
     <div class="acts"><button class="btn sm" ${open}>Open</button><button class="btn sm" ${open} data-reveal="1">Reveal</button></div></div>`;
@@ -1678,6 +1681,7 @@ async function srSelect(i, byKey = false) {
     body.innerHTML = `<div class="pvtext">${info.before ? `<div class="ctx">${srMark(info.before, q)}</div>` : ""}<div class="hit">${srMark(info.match, q)}</div>${info.after ? `<div class="ctx">${srMark(info.after, q)}</div>` : ""}</div>`;
     const hit = body.querySelector(".hit"); body.scrollTop = Math.max(0, hit.offsetTop - body.offsetTop - 60);   // scroll the panel, not the page
   } else if (info.type === "image") body.innerHTML = `<img class="pg" src="/api/search/image/${+info.file_id}" alt="">`;
+  else if (info.type === "video") body.innerHTML = `<video controls preload="metadata" playsinline style="width:100%; border-radius:8px; background:#000" src="/api/search/media/${+info.file_id}#t=${+info.start}"></video><p class="lead" style="margin:12px 2px 0">The match is at ${srLoc(info.start + "s")}.</p>`;
   else if (info.type === "audio") body.innerHTML = `<audio controls preload="metadata" style="width:100%" src="/api/search/media/${+info.file_id}#t=${+info.start}"></audio><p class="lead" style="margin:12px 2px 0">The match starts at ${srLoc(info.start + "s")}.</p>`;
   else body.innerHTML = `<p class="lead">This file was found by its name. Its contents are not indexed, so there is nothing to preview.</p>`;
 }

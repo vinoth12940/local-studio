@@ -1402,8 +1402,8 @@ def search_errors():
 
 
 @app.get("/api/search/thumb/{file_id}")
-def search_thumb(file_id: int):
-    r = _search_proxy("GET", f"/thumb/{file_id}")
+def search_thumb(file_id: int, t: int = 0):
+    r = _search_proxy("GET", f"/thumb/{file_id}", params={"t": t})
     return Response(r.content, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
 
 
@@ -1425,11 +1425,11 @@ def search_image(file_id: int):
 
 @app.get("/api/search/media/{file_id}")
 def search_media(file_id: int):
-    """The audio file itself, for the preview player (FileResponse handles the player's range
-    requests). The path comes from the index, never from the request, and only audio is served."""
+    """The audio or video file itself, for the preview player (FileResponse handles the player's
+    range requests). The path comes from the index, never from the request, and nothing else is served."""
     f = _search_proxy("GET", f"/file/{file_id}").json()
-    if f.get("kind") != "audio" or not Path(f["path"]).is_file():
-        raise HTTPException(404, "No audio preview for this file.")
+    if f.get("kind") not in ("audio", "video") or not Path(f["path"]).is_file():
+        raise HTTPException(404, "No player preview for this file.")
     return FileResponse(f["path"])
 
 

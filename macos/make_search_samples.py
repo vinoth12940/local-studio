@@ -39,6 +39,7 @@ QUERIES = [
     ("warranty period for the washing machine", "warranty.pdf"), ("monthly grocery and electricity spending", "budget.xlsx"),
     ("cover letter for the nursing job", "cover_letter.docx"), ("scanned parking fine", "scan_0042.pdf"),
     ("closing balance on my savings account", "bank_statement.pdf"),
+    ("misty blue mountain ridges", "MOV_0031.mp4"), ("when do the swimming lessons start", "MOV_0031.mp4"),
 ]
 
 
@@ -57,6 +58,39 @@ def text_pdf(path, lines):
     out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode() + b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
     out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
     path.write_bytes(out)
+
+
+def video(path, images, speech, seconds_each=6, fps=5):
+    """A short H.264 clip: each image held for a few seconds, with a spoken soundtrack."""
+    from fractions import Fraction
+    import av
+    import soundfile as sf
+    from PIL import Image
+    samples, rate = sf.read(str(speech), dtype="float32")
+    out = av.open(str(path), "w")
+    vs = out.add_stream("libx264", rate=fps)               # both streams must exist before the first packet is written
+    vs.width, vs.height, vs.pix_fmt, vs.options = 640, 360, "yuv420p", {"g": str(fps)}     # a keyframe every second
+    sound = out.add_stream("aac", rate=rate)
+    sound.layout, sound.codec_context.time_base = "mono", Fraction(1, rate)
+    n = 0
+    for img in images:
+        im = Image.open(img).convert("RGB").resize((640, 360))
+        for _ in range(seconds_each * fps):
+            frame = av.VideoFrame.from_image(im)
+            frame.pts = n
+            n += 1
+            for pkt in vs.encode(frame):
+                out.mux(pkt)
+    for pkt in vs.encode():
+        out.mux(pkt)
+    for i in range(0, len(samples) - 1023, 1024):          # whole AAC frames only
+        frame = av.AudioFrame.from_ndarray(samples[i:i + 1024].reshape(1, -1).copy(), format="fltp", layout="mono")
+        frame.sample_rate, frame.pts, frame.time_base = rate, i, Fraction(1, rate)
+        for pkt in sound.encode(frame):
+            out.mux(pkt)
+    for pkt in sound.encode():
+        out.mux(pkt)
+    out.close()
 
 
 def main(out):
@@ -83,6 +117,15 @@ def main(out):
         if name.endswith(".m4a"):
             subprocess.run(["afconvert", "-f", "m4af", "-d", "aac", str(aiff), str(out / name)], check=True)
             aiff.unlink()
+
+    scratch = top / "scratch"                               # inputs for the clip; not part of the indexed folder
+    scratch.mkdir()
+    for i, src in enumerate(("Big Sur Mountains.heic", "Dome.heic")):
+        subprocess.run(["sips", "-s", "format", "jpeg", "-Z", "1280", str(WALLPAPERS / src), "--out", str(scratch / f"{i}.jpg")],
+                       check=True, capture_output=True)
+    subprocess.run(["say", "-o", str(scratch / "speech.aiff"), "The swimming lessons start next Tuesday at four thirty."], check=True)
+    video(out / "MOV_0031.mp4", [scratch / "0.jpg", scratch / "1.jpg"], scratch / "speech.aiff")
+    shutil.rmtree(scratch)
 
     text_pdf(out / "warranty.pdf", ["Warranty certificate", "Product: Bosch Series 6 washing machine, model WAU28T64.",
                                     "The warranty period is 24 months from the date of purchase, 3 March 2026.",
