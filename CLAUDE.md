@@ -105,7 +105,9 @@ patterns in sync. Its dependencies live in `search-requirements.txt` and are ins
 `setup.sh --search` when the user turns Search on, never by `--install`. The index is
 `data/search/index.db` under `STATE`. Module level in `search.py` imports only the standard
 library and numpy so `macos/check_search.py` can run without a model. For development set
-`LOCAL_STUDIO_SEARCH_ROOTS` to a sample folder so the real default folders are never crawled.
+`LOCAL_STUDIO_SEARCH_ROOTS` to a sample folder so the real default folders are never crawled, and
+`LOCAL_STUDIO_SEARCH_PORT` (for example 8093) so a development server gets its own search
+service and can never reach or stop the one in the app the user is running.
 Because these routes return the text of the user's files, `/api/search*` and `/api/chat` reject
 requests with a non-loopback `Host` or a foreign `Origin` (`LocalOnly` in `app.py`), and the
 service itself refuses any request that carries an `Origin` (`_local_request`).

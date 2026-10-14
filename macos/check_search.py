@@ -249,7 +249,8 @@ def searcher():
         st, s = _library(d)
         r = s.search("how much is the plumber invoice")
         assert r[0]["name"] == "plumber.txt" and r[0]["snippet"].startswith("plumber invoice") and r[0]["locator"] == "p1"
-        assert set(r[0]) == {"file_id", "path", "name", "kind", "score", "snippet", "locator", "mtime"}
+        assert set(r[0]) == {"file_id", "chunk_id", "path", "name", "kind", "score", "snippet", "locator", "mtime"}
+        assert st.chunk_info([r[0]["chunk_id"]])[r[0]["chunk_id"]]["text"] == r[0]["snippet"], "chunk_id is the passage shown"
         assert s.search("japan cherry blossoms itinerary")[0]["name"] == "tokyo.txt"
         img = s.search("desert plant night", kind="image")
         assert [x["name"] for x in img] == ["IMG_0001.jpg"] and img[0]["snippet"] == ""
@@ -777,6 +778,50 @@ def a_name_finds_the_files_with_that_name():
         got = [r["name"] for r in search.Searcher(st, emb).search("Mithran", limit=50)]
         assert set(named) <= set(got), f"missing: {sorted(set(named) - set(got))}"
         assert not [n for n in got if n in code], "unrelated code files must not be listed for a name"
+
+
+# ---- preview: show the file at the place that matched
+
+@check
+def preview_describes_the_match():
+    with tempfile.TemporaryDirectory() as d:
+        st = search.Store(Path(d) / "index.db")
+        st.sync([("/r/lease.pdf", 1, 1.0, "document"), ("/r/notes.docx", 1, 1.0, "document"), ("/r/scan.pdf", 1, 1.0, "document"),
+                 ("/r/pic.heic", 1, 1.0, "image"), ("/r/memo.m4a", 1, 1.0, "audio"), ("/r/clip.mp4", 1, 1.0, "name")])
+        fid = {f["name"]: f["id"] for f in st.pending()}
+        st.replace_chunks(fid["lease.pdf"], [("text", "page one text", "p1", _unit(1)), ("text", "Rent is 2,450 dollars.\nDue on the first.", "p2", _unit(2)),
+                                             ("text", "page three text", "p3", _unit(3))])
+        st.replace_chunks(fid["notes.docx"], [("text", "first part", "", _unit(4)), ("text", "second part", "", _unit(5))])
+        st.replace_chunks(fid["scan.pdf"], [("image", None, "p1", _unit(6)), ("image", None, "p2", _unit(7))])
+        st.replace_chunks(fid["pic.heic"], [("image", None, "", _unit(8))])
+        st.replace_chunks(fid["memo.m4a"], [("audio", None, "0s", _unit(9)), ("audio", None, "30s", _unit(10)), ("audio", None, "60s", _unit(11))])
+        st.replace_chunks(fid["clip.mp4"], [])
+        ids = lambda name: [r[0] for r in st.db.execute("SELECT id FROM chunks WHERE file_id=? ORDER BY ord", (fid[name],))]   # noqa: E731
+
+        c = st.context(ids("lease.pdf")[1])
+        assert (c["before"], c["match"], c["after"], c["locator"]) == ("page one text", "Rent is 2,450 dollars.\nDue on the first.", "page three text", "p2")
+        assert st.context(ids("lease.pdf")[0])["before"] == "" and st.context(999999) is None
+
+        p = search.preview_info(st, fid["lease.pdf"], ids("lease.pdf")[1])
+        assert (p["type"], p["page"], p["chunk_id"], p["name"], p["path"]) == ("page", 2, ids("lease.pdf")[1], "lease.pdf", "/r/lease.pdf")
+        p = search.preview_info(st, fid["lease.pdf"])                      # matched by name: open at the beginning
+        assert (p["type"], p["page"]) == ("page", 1)
+        p = search.preview_info(st, fid["scan.pdf"], ids("scan.pdf")[1])
+        assert (p["type"], p["page"]) == ("page", 2)
+        p = search.preview_info(st, fid["notes.docx"], ids("notes.docx")[1])
+        assert (p["type"], p["before"], p["match"], p["after"]) == ("text", "first part", "second part", "")
+        assert search.preview_info(st, fid["notes.docx"])["match"] == "first part"
+        assert search.preview_info(st, fid["pic.heic"], ids("pic.heic")[0])["type"] == "image"
+        p = search.preview_info(st, fid["memo.m4a"], ids("memo.m4a")[2])
+        assert (p["type"], p["start"]) == ("audio", 60)
+        assert search.preview_info(st, fid["clip.mp4"])["type"] == "none"
+        assert search.preview_info(st, 424242) is None
+        # a chunk id from another file must not leak that file's text into this preview
+        assert search.preview_info(st, fid["notes.docx"], ids("lease.pdf")[1])["match"] == "first part"
+
+    n = search._needles("Rent is 2,450 dollars per month, due on the first of every month without exception.\n\nshort\n   Bond of   four weeks' rent.  ")
+    assert n == ["Rent is 2,450 dollars per month, due on the first of every month without exception.", "Bond of four weeks' rent."], n
+    assert search._needles("x" * 500) == ["x" * search.NEEDLE_CHARS], "a very long line is cut"
 
 
 if __name__ == "__main__":

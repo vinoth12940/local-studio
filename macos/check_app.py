@@ -301,6 +301,59 @@ def search_sets_itself_up_again_after_an_update():
         app.search_job.clear(); app.search_job.update(status="idle")
 
 
+@check
+def preview_serves_only_indexed_audio():
+    """The preview player gets the audio file itself. Its path comes from the index, and only audio is served."""
+    from fastapi.testclient import TestClient
+    audio = TMP / "memo.wav"
+    audio.write_bytes(b"RIFF" + bytes(2000))
+    answers = {7: {"path": str(audio), "name": "memo.wav", "kind": "audio", "mtime": 1.0},
+               8: {"path": str(TMP / "state" / "data" / "settings.json"), "name": "settings.json", "kind": "document", "mtime": 1.0}}
+
+    class Resp:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def __init__(self, body):
+            self._b = body
+
+        def json(self):
+            return self._b
+
+    def fake(method, url, **kw):
+        fid = int(url.rsplit("/", 1)[-1])
+        if fid not in answers:
+            r = Resp({"detail": "not in the index"}); r.status_code = 404
+            return r
+        return Resp(answers[fid])
+
+    real, app.httpx.request = app.httpx.request, fake
+    try:
+        c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+        r = c.get("/api/search/media/7", headers={"range": "bytes=0-99"})
+        assert r.status_code == 206 and len(r.content) == 100, (r.status_code, len(r.content))
+        assert c.get("/api/search/media/8").status_code == 404, "a document is not served as media"
+        assert c.get("/api/search/media/9").status_code == 404
+    finally:
+        app.httpx.request = real
+
+
+@check
+def test_runs_use_their_own_search_port():
+    """A development server must never reach (or stop) the search service of the app the user is
+    running. LOCAL_STUDIO_SEARCH_PORT moves everything: the URL, the launch and the stop patterns."""
+    import importlib, subprocess as sp
+    code = ("import os, sys; os.environ['LOCAL_STUDIO_SEARCH_PORT'] = '8093'; os.environ['LOCAL_STUDIO_HOME'] = sys.argv[1]; "
+            "sys.path.insert(0, '.'); import app; calls = []; "
+            "app.subprocess.run = lambda cmd, **k: calls.append(cmd) or type('R', (), {'returncode': 1})(); "
+            "app._search_running = lambda: False; app._stop_search(); app._search_process(); "
+            "print(app.SEARCH_URL); print(all('8093' in c[-1] and '8083' not in c[-1] for c in calls), len(calls))")
+    out = sp.run([sys.executable, "-c", code, str(TMP / "port-state")], capture_output=True, text=True,
+                 cwd=str(Path(__file__).resolve().parent.parent)).stdout.split()
+    assert out == ["http://127.0.0.1:8093", "True", "3"], out
+    assert app.SEARCH_PORT == 8083, "the default is unchanged"
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

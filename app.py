@@ -54,7 +54,10 @@ BREW = shutil.which("brew") or "/opt/homebrew/bin/brew"
 CONTEXT = 32768
 # mflux editing needs a complete checkpoint; the q4 export used here is text-to-image only.
 EDIT_MODEL = os.environ.get("EDIT_MODEL")
-SEARCH_URL = "http://127.0.0.1:8083"                         # search.py, see the search section
+# Testing: LOCAL_STUDIO_SEARCH_PORT gives a development server its own search service, so it can
+# never reach or stop the one belonging to the app the user is running.
+SEARCH_PORT = int(os.environ.get("LOCAL_STUDIO_SEARCH_PORT", 8083))
+SEARCH_URL = f"http://127.0.0.1:{SEARCH_PORT}"                # search.py, see the search section
 SEARCH_DIR = DATA / "search"                                 # its index
 SEARCH_REQS = ROOT / "search-requirements.txt"
 SEARCH_DEPS_OK = DATA / "search-deps.ok"                     # written by setup.sh --search
@@ -1225,7 +1228,7 @@ def _search_running():
 
 def _search_process():
     """True while a search.py process exists, including one that is still loading."""
-    return subprocess.run(["pgrep", "-f", r"^[^ ]*python[^ ]* search.py --port 8083"], capture_output=True).returncode == 0
+    return subprocess.run(["pgrep", "-f", rf"^[^ ]*python[^ ]* search.py --port {SEARCH_PORT}"], capture_output=True).returncode == 0
 
 
 def _start_search():
@@ -1235,7 +1238,7 @@ def _start_search():
     # Relative file names with cwd=ROOT: the bundled path contains a space, which would defeat
     # stop.sh's pkill patterns.
     proc = subprocess.Popen([UV, "run", "--no-project", "--python", "3.12", "--with-requirements", SEARCH_REQS.name,
-                             "python", "search.py", "--port", "8083"], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                             "python", "search.py", "--port", str(SEARCH_PORT)], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                             env={**os.environ, "LOCAL_STUDIO_HOME": str(STATE)}, start_new_session=True)
     (LOGS / "search.pid").write_text(str(proc.pid))
 
@@ -1247,8 +1250,8 @@ def _stop_search():
             os.killpg(pid, signal.SIGTERM)            # uv and its python child share the session
         except OSError:
             pass
-    subprocess.run(["pkill", "-f", r"^[^ ]*uv run .*python search.py --port 8083"])
-    subprocess.run(["pkill", "-f", r"^[^ ]*python[^ ]* search.py --port 8083"])
+    subprocess.run(["pkill", "-f", rf"^[^ ]*uv run .*python search.py --port {SEARCH_PORT}"])
+    subprocess.run(["pkill", "-f", rf"^[^ ]*python[^ ]* search.py --port {SEARCH_PORT}"])
     (LOGS / "search.pid").unlink(missing_ok=True)
     for _ in range(40):                               # wait for the port to free before any restart
         if not _search_running():
@@ -1402,6 +1405,32 @@ def search_errors():
 def search_thumb(file_id: int):
     r = _search_proxy("GET", f"/thumb/{file_id}")
     return Response(r.content, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+
+@app.get("/api/search/preview/{file_id}")
+def search_preview(file_id: int, chunk_id: int | None = None):
+    return _search_proxy("GET", f"/preview/{file_id}", params={"chunk_id": chunk_id} if chunk_id else None).json()
+
+
+@app.get("/api/search/page/{file_id}/{page}")
+def search_page(file_id: int, page: int, chunk_id: int | None = None):
+    r = _search_proxy("GET", f"/page/{file_id}/{page}", params={"chunk_id": chunk_id} if chunk_id else None)
+    return Response(r.content, media_type="image/jpeg", headers={"X-Pages": r.headers.get("x-pages", ""), "Cache-Control": "no-store"})
+
+
+@app.get("/api/search/image/{file_id}")
+def search_image(file_id: int):
+    return Response(_search_proxy("GET", f"/image/{file_id}").content, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/search/media/{file_id}")
+def search_media(file_id: int):
+    """The audio file itself, for the preview player (FileResponse handles the player's range
+    requests). The path comes from the index, never from the request, and only audio is served."""
+    f = _search_proxy("GET", f"/file/{file_id}").json()
+    if f.get("kind") != "audio" or not Path(f["path"]).is_file():
+        raise HTTPException(404, "No audio preview for this file.")
+    return FileResponse(f["path"])
 
 
 @app.post("/api/search/open")

@@ -333,13 +333,34 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .srrow .th { width: 56px; height: 56px; flex: none; border-radius: 10px; border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; color: var(--muted); }
 .srrow .th img { width: 100%; height: 100%; object-fit: cover; }
 .srrow .nm { font-size: 14px; font-weight: 500; word-break: break-word; }
-.srrow .pt { font-size: 12px; color: var(--muted); word-break: break-all; }
+.srrow .pt { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .srrow .sn { font-size: 13px; color: var(--ink-2); margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .srrow .acts { display: flex; gap: 6px; flex: none; }
 .srpath { width: 220px; height: 30px; border: 1px solid var(--line-2); border-radius: 8px; padding: 0 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px; outline: 0; }
 .sources { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
 .sources .chip { cursor: pointer; font: inherit; font-size: 12.5px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .sources .chip:hover { background: var(--hover); }
+#srWide { max-width: 880px; }
+#srWide.wide { max-width: 1400px; }
+#srBody.pv { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 48%); gap: 22px; align-items: start; }
+.srrow { cursor: pointer; border-radius: 10px; }
+.srrow.picked { background: var(--hover); }
+#srBody.pv .srrow .acts { display: none; }                  /* the preview panel has them */
+.srpv { position: sticky; top: 8px; border: 1px solid var(--line); border-radius: 16px; background: var(--raised); max-height: calc(100vh - 120px); display: flex; flex-direction: column; overflow: hidden; }
+.srpv .ph { display: flex; gap: 8px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.srpv .ph .nm { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srpv .ph .pt { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srpv .pb { overflow: auto; padding: 14px; }
+.srpv img.pg { display: block; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.pgbar { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 10px; font-size: 12.5px; color: var(--muted); }
+.pvtext { font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.pvtext .ctx { color: var(--muted); }
+.pvtext .hit { margin: 10px 0; padding: 10px 12px; border-left: 3px solid var(--ok); border-radius: 6px; background: color-mix(in srgb, var(--ok) 9%, transparent); color: var(--ink); }
+.srpv mark, .srrow mark { background: rgba(255, 214, 0, .42); color: inherit; border-radius: 3px; padding: 0 1px; }
+@media (max-width: 980px) {
+  #srBody.pv { display: block; }
+  .srpv { position: fixed; inset: 56px 8px 8px 8px; z-index: 30; max-height: none; box-shadow: var(--shadow); }
+}
 .row .size { font-family: "JetBrains Mono", monospace; font-size: 13px; color: var(--ink-2); min-width: 80px; text-align: right; }
 .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500; padding: 2px 8px; border-radius: 999px; background: var(--soft); color: var(--ink-2); white-space: nowrap; }
 .badge.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
@@ -572,7 +593,7 @@ dialog::backdrop { background: var(--overlay); }
     </section>
 
     <section class="view" id="v-search">
-      <div class="scroll"><div class="page" style="max-width:880px">
+      <div class="scroll"><div class="page" id="srWide">
         <h2>Search</h2>
         <p class="lead">Find your files by what they contain. Runs entirely on this Mac.</p>
         <div class="section" id="srOff" style="display:none">
@@ -587,7 +608,10 @@ dialog::backdrop { background: var(--overlay); }
             </div>
           </div>
           <div class="srstatus" id="srStatus"></div>
-          <div id="srResults"></div>
+          <div id="srBody">
+            <div id="srResults"></div>
+            <aside class="srpv" id="srPv" style="display:none"></aside>
+          </div>
         </div>
       </div></div>
     </section>
@@ -1586,27 +1610,98 @@ $("srErrBtn").onclick = async () => {
   } catch (e) { toast(e.message); }
 };
 document.addEventListener("click", (e) => { const b = e.target.closest("[data-srpause]"); if (b) srSave({ paused: b.dataset.srpause === "1" }); });
-function srRow(r) {
+function srRow(r, i) {
   const dir = srHome(r.path.slice(0, r.path.length - r.name.length - 1)), loc = srLoc(r.locator);
   const th = r.kind === "image" ? `<img src="/api/search/thumb/${r.file_id}" alt="" loading="lazy">` : icon(SR_ICON[r.kind] || "i-file");
   const open = `data-open="${r.file_id}" data-path="${esc(r.path)}"`;
-  return `<div class="srrow"><div class="th">${th}</div><div style="flex:1; min-width:0"><div class="nm">${esc(r.name)}</div><div class="pt">${esc(dir)}${loc ? " · " + esc(loc) : ""}</div>${r.snippet ? `<div class="sn">${esc(r.snippet)}</div>` : ""}</div>
+  return `<div class="srrow" data-i="${i}"><div class="th">${th}</div><div style="flex:1; min-width:0"><div class="nm">${esc(r.name)}</div><div class="pt">${esc(dir)}${loc ? " · " + esc(loc) : ""}</div>${r.snippet ? `<div class="sn">${esc(r.snippet)}</div>` : ""}</div>
     <div class="acts"><button class="btn sm" ${open}>Open</button><button class="btn sm" ${open} data-reveal="1">Reveal</button></div></div>`;
 }
 async function runSearch() {
   const q = $("srQuery").value.trim(), seq = ++srSeq;                 // srSeq: a slow earlier query must not overwrite a newer one
-  if (!q) { $("srResults").innerHTML = ""; return; }
+  if (!q) { srRes = []; srClosePreview(); $("srResults").innerHTML = ""; return; }
   let res;
   try { res = (await jpost("/api/search", { query: q, kind: $("srKind").value })).results; }
   catch (e) { if (seq === srSeq) $("srResults").innerHTML = `<p class="lead" style="margin-top:18px">${esc(e.message)}</p>`; return; }
   if (seq !== srSeq) return;
+  srRes = res; srClosePreview();
   $("srResults").innerHTML = res.length ? res.map(srRow).join("") : `<p class="lead" style="margin-top:18px">Nothing found.</p>`;
 }
 function srOpen(b) { return jpost("/api/search/open", { file_id: +b.dataset.open, path: b.dataset.path, reveal: b.dataset.reveal === "1" }).catch((e) => toast(e.message)); }
 $("srQuery").addEventListener("input", () => { clearTimeout(srTimer); srTimer = setTimeout(runSearch, 300); });
-$("srQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") { clearTimeout(srTimer); runSearch(); } });
+$("srQuery").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { clearTimeout(srTimer); runSearch(); }
+  else if (e.key === "ArrowDown" && srRes.length) { e.preventDefault(); srSelect(Math.min(srRes.length - 1, srSel + 1), true); }
+  else if (e.key === "ArrowUp" && srSel > 0) { e.preventDefault(); srSelect(srSel - 1, true); }
+  else if (e.key === "Escape" && srSel >= 0) srClosePreview();
+});
 $("srKind").onchange = runSearch;
-$("srResults").onclick = (e) => { const b = e.target.closest("[data-open]"); if (b) srOpen(b); };
+$("srResults").onclick = (e) => {
+  const b = e.target.closest("[data-open]"); if (b) return srOpen(b);
+  const row = e.target.closest(".srrow"); if (row) srSelect(+row.dataset.i);
+};
+// ---- preview: the selected result, shown at the place that matched
+let srRes = [], srSel = -1, srPvState = null;
+const SR_STOP = new Set("the and for are was were with that this from have has had you your what when where which who how why did does about into out not but can all any our its".split(" "));
+function srMark(text, q) {
+  const words = [...new Set(q.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || [])].filter((w) => !SR_STOP.has(w)).slice(0, 8);
+  const html = esc(text);
+  return words.length ? html.replace(new RegExp(`(${words.join("|")})`, "gi"), "<mark>$1</mark>") : html;
+}
+function srClosePreview() {
+  srSel = -1; srPvState = null;
+  $("srPv").style.display = "none"; $("srPv").innerHTML = "";
+  $("srBody").classList.remove("pv"); $("srWide").classList.remove("wide");
+  document.querySelectorAll(".srrow.picked").forEach((x) => x.classList.remove("picked"));
+}
+async function srSelect(i, byKey = false) {
+  const r = srRes[i]; if (!r) return;
+  srSel = i; srPvState = null;
+  document.querySelectorAll(".srrow").forEach((x) => x.classList.toggle("picked", +x.dataset.i === i));
+  $("srBody").classList.add("pv"); $("srWide").classList.add("wide");
+  if (byKey) document.querySelector(`.srrow[data-i="${i}"]`)?.scrollIntoView({ block: "nearest" });   // a click must not move the page
+  const dir = srHome(r.path.slice(0, r.path.length - r.name.length - 1)), open = `data-open="${+r.file_id}" data-path="${esc(r.path)}"`;
+  const pv = $("srPv"); pv.style.display = "";
+  pv.innerHTML = `<div class="ph"><div style="flex:1; min-width:0"><div class="nm">${esc(r.name)}</div><div class="pt">${esc(dir)}</div></div>
+    <button class="btn sm" ${open}>Open</button><button class="btn sm" ${open} data-reveal="1">Reveal</button><button class="iconbtn" id="srPvClose" title="Close preview">${icon("i-x")}</button></div>
+    <div class="pb" id="srPvBody"><span class="shimmer">Loading preview</span></div>`;
+  let info;
+  try { info = await api(`/api/search/preview/${+r.file_id}` + (r.chunk_id ? `?chunk_id=${+r.chunk_id}` : "")); }
+  catch (e) { if (srSel === i) $("srPvBody").innerHTML = `<p class="lead">${esc(e.message)}</p>`; return; }
+  if (srSel !== i) return;                                   // the user moved on while this was loading
+  const body = $("srPvBody"), q = $("srQuery").value;
+  srPvState = { info, page: info.page || 1, pages: 1 };
+  if (info.type === "page") {
+    body.innerHTML = `<div class="pgbar"><button class="btn sm" id="srPgPrev">Previous</button><span id="srPgTxt">Page ${+info.page}</span><button class="btn sm" id="srPgNext">Next</button></div><img class="pg" id="srPgImg" alt="">`;
+    srShowPage(info.page);
+  } else if (info.type === "text") {
+    body.innerHTML = `<div class="pvtext">${info.before ? `<div class="ctx">${srMark(info.before, q)}</div>` : ""}<div class="hit">${srMark(info.match, q)}</div>${info.after ? `<div class="ctx">${srMark(info.after, q)}</div>` : ""}</div>`;
+    const hit = body.querySelector(".hit"); body.scrollTop = Math.max(0, hit.offsetTop - body.offsetTop - 60);   // scroll the panel, not the page
+  } else if (info.type === "image") body.innerHTML = `<img class="pg" src="/api/search/image/${+info.file_id}" alt="">`;
+  else if (info.type === "audio") body.innerHTML = `<audio controls preload="metadata" style="width:100%" src="/api/search/media/${+info.file_id}#t=${+info.start}"></audio><p class="lead" style="margin:12px 2px 0">The match starts at ${srLoc(info.start + "s")}.</p>`;
+  else body.innerHTML = `<p class="lead">This file was found by its name. Its contents are not indexed, so there is nothing to preview.</p>`;
+}
+async function srShowPage(n) {
+  const st = srPvState; if (!st) return;
+  const marked = n === st.info.page && st.info.chunk_id;     // only the matching page carries the highlight
+  try {
+    const res = await fetch(`/api/search/page/${+st.info.file_id}/${n}` + (marked ? `?chunk_id=${+st.info.chunk_id}` : ""));
+    if (!res.ok) throw new Error("This page could not be shown.");
+    const blob = await res.blob();
+    if (srPvState !== st) return;
+    st.page = n; st.pages = +res.headers.get("X-Pages") || 1;
+    const img = $("srPgImg"), old = img.src;
+    img.src = URL.createObjectURL(blob);
+    if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+    $("srPgTxt").textContent = `Page ${n} of ${st.pages}`; $("srPgPrev").disabled = n <= 1; $("srPgNext").disabled = n >= st.pages;
+  } catch (e) { toast(e.message); }
+}
+$("srPv").onclick = (e) => {
+  if (e.target.closest("#srPvClose")) return srClosePreview();
+  if (e.target.closest("#srPgPrev")) return srShowPage(srPvState.page - 1);
+  if (e.target.closest("#srPgNext")) return srShowPage(srPvState.page + 1);
+  const b = e.target.closest("[data-open]"); if (b) srOpen(b);
+};
 // Also while the service is still coming up after launch, so the My files pill enables without a visit to Search.
 setInterval(() => { if (view === "search" || view === "manage" || sr?.setup?.status === "running" || (sr?.enabled && !sr.running)) loadSearch(); }, 3000);
 

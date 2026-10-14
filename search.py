@@ -454,6 +454,23 @@ class Store:
         return {i: {"path": p, "name": n, "kind": k, "mtime": m}
                 for i, p, n, k, m in self._in("SELECT id, path, name, kind, mtime FROM files WHERE id IN (%s)", ids)}
 
+    def context(self, chunk_id):
+        """A chunk with the text just before and after it in the same file, or None."""
+        with self.lock:
+            row = self.db.execute("SELECT file_id, ord, kind, text, locator FROM chunks WHERE id=?", (chunk_id,)).fetchone()
+            if row is None:
+                return None
+            fid, ord_, kind, text, locator = row
+            near = dict(self.db.execute("SELECT ord, text FROM chunks WHERE file_id=? AND ord IN (?, ?) AND kind='text'",
+                                        (fid, ord_ - 1, ord_ + 1)))
+        return {"file_id": fid, "kind": kind, "locator": locator or "", "before": near.get(ord_ - 1) or "",
+                "match": text or "", "after": near.get(ord_ + 1) or ""}
+
+    def first_chunk(self, file_id):
+        with self.lock:
+            row = self.db.execute("SELECT id FROM chunks WHERE file_id=? ORDER BY ord LIMIT 1", (file_id,)).fetchone()
+        return row[0] if row else None
+
     def counts(self):
         with self.lock:
             by = dict(self.db.execute("SELECT status, COUNT(*) FROM files GROUP BY status"))
@@ -565,7 +582,7 @@ class Searcher:
             if f is None or (folder and not _under(f["path"], folder)):
                 continue
             c = chunks.get(r["chunk"]) or {}
-            out.append({"file_id": r["file_id"], "path": f["path"], "name": f["name"], "kind": f["kind"],
+            out.append({"file_id": r["file_id"], "chunk_id": r["chunk"], "path": f["path"], "name": f["name"], "kind": f["kind"],
                         "score": round(r["vec"], 3) if r["vec"] is not None else None,
                         "snippet": c.get("text") or "", "locator": c.get("locator") or "", "mtime": f["mtime"]})
             if len(out) == limit:
@@ -619,13 +636,13 @@ SEGMENT_SECONDS = 30
 MAX_SEGMENTS = 20                 # the first 10 minutes of a file
 
 
-def _fit(im):
+def _fit(im, side=IMAGE_SIDE):
     im = im.convert("RGB")
-    im.thumbnail((IMAGE_SIDE, IMAGE_SIDE))
+    im.thumbnail((side, side))
     return im
 
 
-def _load_image(p):
+def _load_image(p, side=IMAGE_SIDE):
     from PIL import Image
     if p.suffix.lower() == ".heic":
         import pillow_heif
@@ -633,8 +650,11 @@ def _load_image(p):
     with Image.open(p) as im:
         if min(im.size) < MIN_IMAGE_SIDE:
             return None
-        im.draft("RGB", (IMAGE_SIDE, IMAGE_SIDE))         # lets the JPEG decoder downscale while decoding
-        return _fit(im)
+        im.draft("RGB", (side, side))                     # lets the JPEG decoder downscale while decoding
+        return _fit(im, side)
+
+
+PDFIUM = threading.Lock()         # pdfium is not thread-safe: the indexer and the preview both render pages
 
 
 def _pdf_items(p):
@@ -643,9 +663,10 @@ def _pdf_items(p):
     chars = sum(len(t) for t in pages)
     if pages and chars < 80 * len(pages) and chars < 2000:            # scanned: same test as app.py's attachments
         import pypdfium2 as pdfium
-        doc = pdfium.PdfDocument(str(p))
-        return [{"kind": "image", "image": _fit(doc[i].render(scale=2).to_pil()), "locator": f"p{i + 1}"}
-                for i in range(min(SCAN_PAGES, len(doc)))]
+        with PDFIUM:
+            doc = pdfium.PdfDocument(str(p))
+            return [{"kind": "image", "image": _fit(doc[i].render(scale=2).to_pil()), "locator": f"p{i + 1}"}
+                    for i in range(min(SCAN_PAGES, len(doc)))]
     return _text_items([(f"p{i + 1}", t) for i, t in enumerate(pages) if t])
 
 
@@ -904,6 +925,95 @@ class Indexer:
                 "error": self.error, "problem": self.problem, **self.store.counts()}
 
 
+# ---------------------------------------------------------------- preview
+# Shows a result at the place that matched: the PDF page with the passage marked, the passage in
+# context for other documents, the picture, or the audio from the matching moment.
+
+PREVIEW_WIDTH = 1100              # pixels
+NEEDLE_CHARS = 200                # the longest line searched for whole
+NEEDLE_START = 60                 # if the whole line isn't found (the page's text can differ slightly), look for its start
+
+
+def _needles(text, limit=24):
+    """What to look for on a PDF page to find where a passage sits: each of its lines."""
+    out = []
+    for line in text.split("\n"):
+        line = " ".join(line.split())
+        if len(line) >= 8:
+            out.append(line[:NEEDLE_CHARS])
+        if len(out) == limit:
+            break
+    return out
+
+
+def preview_info(store, file_id, chunk_id=None):
+    """What the UI needs to preview a result. Without a passage (a match on the file name) it
+    describes the beginning of the file."""
+    f = store.file_info([file_id]).get(file_id)
+    if f is None:
+        return None
+    c = store.context(chunk_id) if chunk_id else None
+    if c is None or c["file_id"] != file_id:              # an id from another file must not bring that file's text
+        chunk_id = store.first_chunk(file_id)
+        c = store.context(chunk_id) if chunk_id else None
+    out = {"file_id": file_id, "name": f["name"], "path": f["path"], "kind": f["kind"], "type": "none",
+           "chunk_id": chunk_id, "locator": c["locator"] if c else ""}
+    if f["kind"] == "image":
+        out["type"] = "image"
+    elif f["kind"] == "audio":
+        m = re.fullmatch(r"(\d+)s", out["locator"])
+        out.update(type="audio", start=int(m.group(1)) if m else 0)
+    elif f["kind"] == "document" and f["name"].lower().endswith(".pdf"):
+        m = re.fullmatch(r"p(\d+)", out["locator"])
+        out.update(type="page", page=int(m.group(1)) if m else 1, match=c["match"] if c else "")
+    elif c and c["kind"] == "text":
+        out.update(type="text", before=c["before"], match=c["match"], after=c["after"])
+    return out
+
+
+def render_page(path, page, needles=()):
+    """One PDF page as a JPEG with the lines in `needles` marked. Returns (bytes, pages in the file,
+    lines found). A passage that can't be located still gets its page, unmarked."""
+    import io
+    import pypdfium2 as pdfium
+    from PIL import Image, ImageDraw
+    with PDFIUM:
+        doc = pdfium.PdfDocument(str(path))
+        total = len(doc)
+        pg = doc[max(1, min(page, total)) - 1]
+        width, height = pg.get_size()
+        scale = min(PREVIEW_WIDTH / width, 2.5)
+        im = pg.render(scale=scale).to_pil().convert("RGB")
+        rects = []
+        if needles:
+            tp = pg.get_textpage()
+            for needle in needles:
+                hit = tp.search(needle, match_case=False).get_next() or \
+                    (len(needle) > NEEDLE_START and tp.search(needle[:NEEDLE_START], match_case=False).get_next())
+                if hit:
+                    rects += [tp.get_rect(i) for i in range(tp.count_rects(*hit))]
+    if rects:
+        overlay = Image.new("RGBA", im.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        for left, bottom, right, top in rects:            # PDF points, origin bottom-left
+            draw.rectangle([left * scale - 2, (height - top) * scale - 2, right * scale + 2, (height - bottom) * scale + 2],
+                           fill=(255, 214, 0, 96))
+        im = Image.alpha_composite(im.convert("RGBA"), overlay).convert("RGB")
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=85)
+    return buf.getvalue(), total, len(rects)
+
+
+def large_image(path, side=1600):
+    import io
+    im = _load_image(Path(path), side)
+    if im is None:
+        return None
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=88)
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------- HTTP API
 
 def _local_request(host, origin):
@@ -970,6 +1080,36 @@ def make_app(store, embedder, indexer, searcher):
             raise HTTPException(404, "not in the index")
         return f
 
+    @api.get("/preview/{file_id}")
+    def preview(file_id: int, chunk_id: int | None = None):
+        info = preview_info(store, file_id, chunk_id)
+        if info is None:
+            raise HTTPException(404, "not in the index")
+        return info
+
+    @api.get("/page/{file_id}/{page}")
+    def page(file_id: int, page: int, chunk_id: int | None = None):
+        info = preview_info(store, file_id, chunk_id)
+        if info is None or info["type"] != "page":
+            raise HTTPException(404, "no page preview for this file")
+        marks = _needles(info["match"]) if chunk_id and page == info["page"] else ()      # only the matching page is marked
+        try:
+            data, total, _ = render_page(info["path"], page, marks)
+        except Exception as e:
+            raise HTTPException(404, f"This page couldn't be shown: {type(e).__name__}")
+        return Response(data, media_type="image/jpeg", headers={"X-Pages": str(total), "Cache-Control": "no-store"})
+
+    @api.get("/image/{file_id}")
+    def image(file_id: int):
+        f = store.file_info([file_id]).get(file_id)
+        try:
+            data = large_image(f["path"]) if f and f["kind"] == "image" else None
+        except Exception:
+            data = None
+        if data is None:
+            raise HTTPException(404, "image unavailable")
+        return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
     @api.get("/thumb/{file_id}")
     def thumb(file_id: int):
         f = store.file_info([file_id]).get(file_id)
@@ -1014,7 +1154,36 @@ def run_eval(folder):
             print(f"{'ok  ' if ok else 'FAIL'} {q['query']:48s} -> {top['name'] if top else '(nothing)'} "
                   f"{top['score'] if top else ''}{'' if ok else '   expected ' + q['expect']}")
         print(f"{len(queries) - failed}/{len(queries)} queries ranked the expected file first")
+        failed += _eval_previews(store, searcher)
         return 1 if failed or c["files_error"] else 0
+
+
+def _eval_previews(store, searcher):
+    """The preview for the top result of a few sample queries: the right page, located and rendered."""
+    bad = 0
+    for query, name, want_type, highlighted in (("warranty period for the washing machine", "warranty.pdf", "page", True),
+                                                ("closing balance on my savings account", "bank_statement.pdf", "page", True),
+                                                ("scanned parking fine", "scan_0042.pdf", "page", False),
+                                                ("cover letter for the nursing job", "cover_letter.docx", "text", None),
+                                                ("photo of a desert plant at night", "IMG_2001.jpg", "image", None),
+                                                ("voice note about the dentist", "voice_memo_1.aiff", "audio", None)):
+        top = searcher.search(query)[0]
+        info = preview_info(store, top["file_id"], top["chunk_id"])
+        ok, note = top["name"] == name and info["type"] == want_type, ""
+        if ok and want_type == "page":
+            data, total, marks = render_page(info["path"], info["page"], _needles(info.get("match", "")))
+            ok = data[:2] == b"\xff\xd8" and total >= 1 and (marks > 0) == highlighted
+            note = f"page {info['page']} of {total}, {len(data) // 1024} KB, {marks} highlighted line(s)"
+        elif ok and want_type == "image":
+            data = large_image(info["path"])
+            ok, note = data[:2] == b"\xff\xd8", f"{len(data) // 1024} KB"
+        elif ok and want_type == "text":
+            ok, note = "nurse" in info["match"].lower(), f"{len(info['match'])} characters of passage"
+        elif ok:
+            note = f"starts at {info['start']}s"
+        bad += not ok
+        print(f"{'ok  ' if ok else 'FAIL'} preview of {name:22s} {info['type']:6s} {note}")
+    return bad
 
 
 def shutdown(indexer):

@@ -118,6 +118,9 @@ Pictures, Movies, Music and iCloud Drive in the background, on this Mac. You can
 
 - **Find** a file by describing it: "the invoice from the plumber", "photo of a desert plant at
   night", "voice memo about the dentist". Text, images and spoken audio are all searchable.
+- **Preview** a result where it matched: the PDF page with the passage highlighted, the passage in
+  context for Word, Excel, notes and code, the picture, or the recording from the matching moment.
+  The arrow keys move between results.
 - **Ask** in chat with the **My files** switch on. The active chat model answers from your files
   and lists the ones it used.
 
