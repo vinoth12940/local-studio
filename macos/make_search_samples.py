@@ -69,7 +69,9 @@ def video(path, images, speech, seconds_each=6, fps=5):
     samples, rate = sf.read(str(speech), dtype="float32")
     out = av.open(str(path), "w")
     vs = out.add_stream("libx264", rate=fps)               # both streams must exist before the first packet is written
-    vs.width, vs.height, vs.pix_fmt, vs.options = 640, 360, "yuv420p", {"g": str(fps)}     # a keyframe every second
+    # One keyframe for the whole clip, as in many generated clips and screen recordings: sampling has to decode
+    # forward to each moment, not just jump to keyframes.
+    vs.width, vs.height, vs.pix_fmt, vs.options = 640, 360, "yuv420p", {"g": "1000", "keyint_min": "1000", "sc_threshold": "0"}
     sound = out.add_stream("aac", rate=rate)
     sound.layout, sound.codec_context.time_base = "mono", Fraction(1, rate)
     n = 0

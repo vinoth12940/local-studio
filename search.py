@@ -239,7 +239,8 @@ def walk(roots, removed=(), no_access=None, failed=None):
 # are also kept in one float32 matrix in memory, so a query is a single matrix product.
 
 KIND_ORDER = {"document": 0, "image": 1, "audio": 2, "video": 3, "name": 4}
-EXTRACT_VERSION = 2               # bump when a version can read files an earlier one could not: failed files get another go
+EXTRACT_VERSION = 3               # bump when a version can read files an earlier one could not: failed files get another go
+REDO_KINDS = {3: ("video",)}      # version -> kinds it reads better, indexed again once (3: frames between sparse keyframes)
 VACUUM_AFTER = 1000               # files deleted in one crawl before the database file is compacted
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -273,6 +274,10 @@ class Store:
             row = self.db.execute("SELECT value FROM meta WHERE key='extract_version'").fetchone()
             if row is None or row[0] != str(EXTRACT_VERSION):     # this version may read what an older one could not
                 self.db.execute("UPDATE files SET status='pending', error=NULL WHERE status='error'")
+                was = int(row[0]) if row and row[0].isdigit() else 0
+                for version, kinds in REDO_KINDS.items():
+                    if was < version <= EXTRACT_VERSION and kinds:
+                        self.db.execute("UPDATE files SET status='pending' WHERE kind IN (%s)" % ",".join("?" * len(kinds)), kinds)
                 self.db.execute("INSERT OR REPLACE INTO meta VALUES ('extract_version', ?)", (str(EXTRACT_VERSION),))
         self._load()
 
@@ -718,29 +723,56 @@ def _frame_times(duration):
     return [t for t in range(0, int(end) + 1, FRAME_SECONDS) if t < end] or [0]
 
 
-def _video_frames(p, times=None):
-    """[(seconds, image)] sampled from a video. Each seek lands on the keyframe at or before the
-    time asked for, which is fast and close enough; the frame's real time is what's returned."""
+def _video_frames(p, times=None, ahead=None):
+    """[(seconds, image)] sampled from a video at `times` (default: every FRAME_SECONDS). `ahead`
+    caps how many frames are decoded to reach one moment, for a thumbnail that must be quick."""
     import av
-    out, last = [], None
+    out, shown = [], []
     with av.open(str(p)) as c:
         if not c.streams.video:
             return out
         st = c.streams.video[0]
-        duration = float(c.duration / av.time_base) if c.duration else float((st.duration or 0) * st.time_base)
-        for t in (_frame_times(duration) if times is None else times):
-            try:
-                c.seek(int(t / st.time_base), stream=st)
-                frame = next(c.decode(st), None)
-            except Exception:                             # damaged from here on: keep what we have
-                break
-            if frame is None:
-                break
-            when = float(frame.pts * st.time_base) if frame.pts is not None else float(t)
-            if last is not None and abs(when - last) < 0.5:        # keyframes further apart than our step: same frame again
-                continue
-            last = when
-            out.append((max(0, int(round(when))), _fit(frame.to_image())))
+        st.thread_type = "AUTO"
+        tb = st.time_base
+        duration = float(c.duration / av.time_base) if c.duration else float((st.duration or 0) * tb)
+        want = list(_frame_times(duration) if times is None else times)
+
+        def when(frame, t):
+            return float(frame.pts * tb) if frame.pts is not None else float(t)
+
+        def take(frame, t):
+            at = when(frame, t)
+            if not shown or abs(at - shown[-1]) >= 0.5:    # never the same frame twice
+                shown.append(at)
+                out.append((max(0, int(round(at))), _fit(frame.to_image())))
+
+        try:
+            # A seek lands on the keyframe before the time asked for. Many clips (screen recordings,
+            # generated video) have one keyframe for the whole file, so check where a seek really lands:
+            # if it is far from the target, read straight through once instead of seeking each time.
+            dense = True
+            if len(want) > 1:
+                c.seek(int(want[1] / tb), stream=st)
+                first = next(c.decode(st), None)
+                dense = first is not None and when(first, want[1]) >= want[1] - 2.0
+            if dense:
+                for t in want:
+                    c.seek(int(t / tb), stream=st)
+                    for n, frame in enumerate(c.decode(st)):
+                        if when(frame, t) >= t - 0.02 or (ahead and n >= ahead):
+                            take(frame, t)
+                            break
+            else:
+                c.seek(0, stream=st)
+                i = 0
+                for frame in c.decode(st):
+                    if when(frame, want[i]) >= want[i] - 0.02:
+                        take(frame, want[i])
+                        i += 1
+                        if i == len(want):
+                            break
+        except Exception:                                 # damaged part of the file: keep the frames we have
+            pass
     return out
 
 
@@ -1160,7 +1192,7 @@ def make_app(store, embedder, indexer, searcher):
             raise HTTPException(404, "not an indexed image or video")
         try:
             if f["kind"] == "video":
-                frames = _video_frames(Path(f["path"]), times=[t])
+                frames = _video_frames(Path(f["path"]), times=[t], ahead=90)
                 im = frames[0][1] if frames else None
             else:
                 im = _load_image(Path(f["path"]))
@@ -1202,6 +1234,11 @@ def run_eval(folder):
                   f"{top['score'] if top else ''}{'' if ok else '   expected ' + q['expect']}")
         print(f"{len(queries) - failed}/{len(queries)} queries ranked the expected file first")
         failed += _eval_previews(store, searcher)
+        moments = [r[0] for r in store.db.execute("SELECT c.locator FROM chunks c JOIN files f ON f.id = c.file_id "
+                                                  "WHERE f.name = 'MOV_0031.mp4' AND c.kind = 'image' ORDER BY c.ord")]
+        ok = moments == ["0s", "5s", "10s"]                  # a 12-second clip with a single keyframe
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'} video sampled at {moments}")
         return 1 if failed or c["files_error"] else 0
 
 

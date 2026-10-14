@@ -866,6 +866,28 @@ def videos_are_indexed_by_picture_and_sound():
         assert st.sync([("/r/old.mp4", 5, 1.0, "video")])["changed"] == 1 and st.pending()[0]["kind"] == "video", "they are picked up without a rebuild"
 
 
+@check
+def a_better_reader_redoes_only_that_kind():
+    """When a new version reads one kind of file better (videos with sparse keyframes), files of
+    that kind are indexed again by themselves; everything else is left alone."""
+    with tempfile.TemporaryDirectory() as d:
+        db = Path(d) / "index.db"
+        real = (search.EXTRACT_VERSION, dict(search.REDO_KINDS))
+        search.EXTRACT_VERSION, search.REDO_KINDS = 50, {}
+        try:
+            st = search.Store(db)
+            st.sync([("/r/clip.mp4", 1, 1.0, "video"), ("/r/notes.txt", 1, 1.0, "document")])
+            for f in st.pending():
+                st.replace_chunks(f["id"], [("image" if f["kind"] == "video" else "text", None if f["kind"] == "video" else "x", "0s", _unit(f["id"]))])
+            search.EXTRACT_VERSION, search.REDO_KINDS = 52, {51: ("video",), 52: ()}
+            st2 = search.Store(db)
+            assert [f["name"] for f in st2.pending()] == ["clip.mp4"], st2.pending()
+            assert st2.counts()["chunks"] == 2, "its old frames stay searchable until it is redone"
+            assert search.Store(db).pending() == st2.pending() and search.Store(db).get_meta("extract_version") == "52"
+        finally:
+            search.EXTRACT_VERSION, search.REDO_KINDS = real[0], real[1]
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:
