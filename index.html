@@ -1627,24 +1627,27 @@ async function runSearch() {
   try { res = (await jpost("/api/search", { query: q, kind: $("srKind").value })).results; }
   catch (e) { if (seq === srSeq) $("srResults").innerHTML = `<p class="lead" style="margin-top:18px">${esc(e.message)}</p>`; return; }
   if (seq !== srSeq) return;
-  srRes = res; srClosePreview();
+  srRes = res;
   $("srResults").innerHTML = res.length ? res.map(srRow).join("") : `<p class="lead" style="margin-top:18px">Nothing found.</p>`;
+  // Show the best match straight away, as the user types. Not on a narrow window, where the preview
+  // covers the search box, and not after the user has closed it.
+  if (res.length && srAuto && innerWidth > 980) srSelect(0); else srClosePreview();
 }
 function srOpen(b) { return jpost("/api/search/open", { file_id: +b.dataset.open, path: b.dataset.path, reveal: b.dataset.reveal === "1" }).catch((e) => toast(e.message)); }
 $("srQuery").addEventListener("input", () => { clearTimeout(srTimer); srTimer = setTimeout(runSearch, 300); });
 $("srQuery").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { clearTimeout(srTimer); runSearch(); }
-  else if (e.key === "ArrowDown" && srRes.length) { e.preventDefault(); srSelect(Math.min(srRes.length - 1, srSel + 1), true); }
+  else if (e.key === "ArrowDown" && srRes.length) { e.preventDefault(); srAuto = true; srSelect(Math.min(srRes.length - 1, srSel + 1), true); }
   else if (e.key === "ArrowUp" && srSel > 0) { e.preventDefault(); srSelect(srSel - 1, true); }
-  else if (e.key === "Escape" && srSel >= 0) srClosePreview();
+  else if (e.key === "Escape" && srSel >= 0) { srAuto = false; srClosePreview(); }
 });
 $("srKind").onchange = runSearch;
 $("srResults").onclick = (e) => {
   const b = e.target.closest("[data-open]"); if (b) return srOpen(b);
-  const row = e.target.closest(".srrow"); if (row) srSelect(+row.dataset.i);
+  const row = e.target.closest(".srrow"); if (row) { srAuto = true; srSelect(+row.dataset.i); }
 };
 // ---- preview: the selected result, shown at the place that matched
-let srRes = [], srSel = -1, srPvState = null;
+let srRes = [], srSel = -1, srPvState = null, srAuto = true, srPvSeq = 0;
 const SR_STOP = new Set("the and for are was were with that this from have has had you your what when where which who how why did does about into out not but can all any our its".split(" "));
 function srMark(text, q) {
   const words = [...new Set(q.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || [])].filter((w) => !SR_STOP.has(w)).slice(0, 8);
@@ -1652,13 +1655,14 @@ function srMark(text, q) {
   return words.length ? html.replace(new RegExp(`(${words.join("|")})`, "gi"), "<mark>$1</mark>") : html;
 }
 function srClosePreview() {
-  srSel = -1; srPvState = null;
+  srSel = -1; srPvState = null; srPvSeq++;
   $("srPv").style.display = "none"; $("srPv").innerHTML = "";
   $("srBody").classList.remove("pv"); $("srWide").classList.remove("wide");
   document.querySelectorAll(".srrow.picked").forEach((x) => x.classList.remove("picked"));
 }
 async function srSelect(i, byKey = false) {
   const r = srRes[i]; if (!r) return;
+  const seq = ++srPvSeq;                                     // typing selects result 0 again and again: only the latest may draw
   srSel = i; srPvState = null;
   document.querySelectorAll(".srrow").forEach((x) => x.classList.toggle("picked", +x.dataset.i === i));
   $("srBody").classList.add("pv"); $("srWide").classList.add("wide");
@@ -1670,8 +1674,8 @@ async function srSelect(i, byKey = false) {
     <div class="pb" id="srPvBody"><span class="shimmer">Loading preview</span></div>`;
   let info;
   try { info = await api(`/api/search/preview/${+r.file_id}` + (r.chunk_id ? `?chunk_id=${+r.chunk_id}` : "")); }
-  catch (e) { if (srSel === i) $("srPvBody").innerHTML = `<p class="lead">${esc(e.message)}</p>`; return; }
-  if (srSel !== i) return;                                   // the user moved on while this was loading
+  catch (e) { if (seq === srPvSeq) $("srPvBody").innerHTML = `<p class="lead">${esc(e.message)}</p>`; return; }
+  if (seq !== srPvSeq) return;                               // the user moved on while this was loading
   const body = $("srPvBody"), q = $("srQuery").value;
   srPvState = { info, page: info.page || 1, pages: 1 };
   if (info.type === "page") {
@@ -1701,7 +1705,7 @@ async function srShowPage(n) {
   } catch (e) { toast(e.message); }
 }
 $("srPv").onclick = (e) => {
-  if (e.target.closest("#srPvClose")) return srClosePreview();
+  if (e.target.closest("#srPvClose")) { srAuto = false; return srClosePreview(); }   // closed on purpose: stay closed until a result is picked
   if (e.target.closest("#srPgPrev")) return srShowPage(srPvState.page - 1);
   if (e.target.closest("#srPgNext")) return srShowPage(srPvState.page + 1);
   const b = e.target.closest("[data-open]"); if (b) srOpen(b);
