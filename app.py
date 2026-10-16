@@ -2409,7 +2409,8 @@ AGENT_TOOLS = [
 
 AGENT_BIND_TRIES = 10                                        # list_windows polls for the isolated browser's window (0.5 s apart)
 AGENT_SCROLL_PX = 600
-_STALE_MARKERS = ("browser_binding_stale", "browser_ref_stale", "browser_tab_not_found", "browser_wrong_target_refused", "stale")
+AGENT_VIEWPORT = (600, 400)                                  # where a scroll is aimed when the snapshot did not give the viewport size
+_STALE_MARKERS = ("browser_binding_stale", "browser_ref_stale", "browser_tab_not_found")
 
 
 def _agent_sleep(s):
@@ -2449,6 +2450,10 @@ class Adapter:
         self.pid = self.window_id = self.target = self.tab = None
         self._rebind_due = False
         self._history: list[str] = []                        # pages before the current one, for back()
+        self._unconfirmed = False                            # self.url is the address we navigated to, not yet seen in a snapshot (a redirect is not a new page)
+        self._viewport = AGENT_VIEWPORT
+        self._actions: dict = {}                             # CuaDriver ref -> its actions, from the last semantic read
+        self._last_res = None
 
     def _call(self, name, args):
         return self.client.call(name, {**args, "session": self.session})
@@ -2493,9 +2498,11 @@ class Adapter:
     def _act(self, make, reread=True):
         """One CuaDriver call built by make() -> (tool, args). A stale binding or ref gets one re-bind (and re-read, so make()
         can look its short ref up again) and one retry; any other failure, and a second one, raises McpError."""
+        self._last_res = None
         for attempt in (0, 1):
             name, args = make()
-            res = self._call(name, args)
+            res = self.client.call(name, {**args, "session": self.session})
+            self._last_res = res
             why = _cua_problem(res)
             if why is None:
                 return res
@@ -2532,16 +2539,27 @@ class Adapter:
         sem = self._state({"snapshot_format": "semantic_v2", **({"query": query} if query else {})})
         if _cua_problem(sem) or not sem.get("data"):
             raise McpError(_cua_problem(sem) or "the page could not be read")
-        dom = self._state()                                  # dom_refs_v1: input types, autocomplete, links; the gate depends on it
+        dom = self._state({"snapshot_format": "dom_refs_v1"})        # input types, autocomplete, links; the gate depends on it
         if _cua_problem(dom) or not dom.get("data"):
             raise McpError("could not read the page's form fields: " + (_cua_problem(dom) or "no data"))
         sd, dd = sem["data"], dom["data"]
+        links = set()                                        # anchors only (not <link> head tags), and only those on this page
         for r in dd.get("refs") or []:
-            if r.get("node") in ("a", "link"):
+            if r.get("node") == "a":
                 href = _dom_attrs(r.get("label")).get("href") or ""
                 if re.match(r"^(?:https?:)?//", href, re.I) and _host(href):
-                    self.link_domains.add(_host(href))
-        self._set_page((sd.get("page") or {}).get("url") or dd.get("url"))
+                    links.add(_host(href))
+        self.link_domains = links
+        url = (sd.get("page") or {}).get("url") or dd.get("url")
+        if url and self.url and url != self.url and not self._unconfirmed:          # a click (or script) moved the tab: back() can return
+            self._history = (self._history + [self.url])[-50:]
+        if url:
+            self._unconfirmed = False
+        self._set_page(url)
+        shot = sd.get("screenshot") or {}
+        w, h = shot.get("viewport_css_width"), shot.get("viewport_css_height")
+        self._viewport = (round(w / 2), round(h / 2)) if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0 else AGENT_VIEWPORT
+        self._actions = {r.get("ref"): set(r.get("actions") or ()) for r in sd.get("refs") or []}
         self.view = browser_view(sd, dd)
         return self.view
 
@@ -2559,7 +2577,7 @@ class Adapter:
             return None
         try:
             return self._state({"snapshot_format": "semantic_v2", "include_screenshot": True}).get("image")
-        except McpError:
+        except Exception:                                    # a screenshot is optional; nothing here may end the run
             return None
 
     # -- acting
@@ -2578,6 +2596,7 @@ class Adapter:
         if self.url and self.url != new:
             self._history = (self._history + [self.url])[-50:]
         self.view = None                                     # the old page's refs are gone
+        self._unconfirmed = True
         self._set_page(new)
         return new
 
@@ -2598,26 +2617,55 @@ class Adapter:
         self._ids()
         return self._read(str(args.get("query") or "").strip() or None)["text"]
 
+    @staticmethod
+    def _sig(hit):
+        f = hit["facts"]
+        return (f.get("role"), f.get("name"), f.get("input_type"))
+
+    def _same_ref(self, args, sig):
+        """The CuaDriver ref for args["ref"] in the current view, only if it is still the control the gate judged: after a
+        re-bind and re-read eN may be a different element."""
+        hit = self._ref(args)[1]
+        if self._sig(hit) != sig:
+            raise McpError("the page changed; read_page to refresh")
+        return hit["ref"]
+
     def _click(self, args):
         short, hit = self._ref(args)
-        self._act(lambda: ("browser_click", {**self._ids(), "ref": self._ref(args)[1]["ref"], "input_route": "dom_event"}))
+        sig = self._sig(hit)
+        self._act(lambda: ("browser_click", {**self._ids(), "ref": self._same_ref(args, sig), "input_route": "dom_event"}))
         return f"Clicked {_clip(hit['facts']['name'], 60) or short}; read the page to see the result."
 
     def _type(self, args):
         short, hit = self._ref(args)
         if args.get("text") is None:
             raise McpError("text is needed")
-        text = str(args["text"])
-        self._act(lambda: ("browser_type", {**self._ids(), "ref": self._ref(args)[1]["ref"], "text": text}))
-        if args.get("submit") is True:
-            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._ref(args)[1]["ref"], "text": "\n"}))      # Enter, as typed text
-        return f"Typed into {_clip(hit['facts']['name'], 60) or short}" + (" and pressed Enter" if args.get("submit") is True else "") + "; read the page to see the result."
+        text, sig, submit = str(args["text"]), self._sig(hit), args.get("submit") is True
+        self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref(args, sig), "text": text, "replace": True}))
+        if submit:                                           # Enter as a key press; an inserted "\n" would not submit
+            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref(args, sig), "text": "\n", "mode": "keystrokes"}))
+        return f"Typed into {_clip(hit['facts']['name'], 60) or short}" + (" and pressed Enter" if submit else "") + "; read the page to see the result."
+
+    def _scroll_ref(self):
+        """A ref in the current view that takes pointer input, for the dom_event scroll route."""
+        for r in ((self.view or {}).get("refs") or {}).values():
+            if self._actions.get(r["ref"], set()) & {"scroll", "pointer"}:
+                return r["ref"]
+        raise McpError("the page cannot be scrolled without bringing the browser forward")
 
     def _scroll(self, args):
         d = args.get("direction")
         if d not in ("up", "down"):
             raise McpError('direction must be "up" or "down"')
-        self._act(lambda: ("browser_pointer", {**self._ids(), "action": "scroll", "delta_y": AGENT_SCROLL_PX if d == "down" else -AGENT_SCROLL_PX}))
+        dy = AGENT_SCROLL_PX if d == "down" else -AGENT_SCROLL_PX
+        try:                                                 # the trusted route first; it is refused when it would foreground the window
+            self._act(lambda: ("browser_pointer", {**self._ids(), "action": "scroll", "delta_y": dy, "input_route": "trusted",
+                                                   "x": self._viewport[0], "y": self._viewport[1]}))
+        except McpError as e:
+            blob = _cua_blob(self._last_res) if self._last_res else str(e).lower()
+            if "browser_input_trust_unavailable" not in blob and "trusted" not in blob:
+                raise
+            self._act(lambda: ("browser_pointer", {**self._ids(), "action": "scroll", "delta_y": dy, "input_route": "dom_event", "ref": self._scroll_ref()}))
         return f"Scrolled {d}; read the page to see more."
 
     def _back(self, args):
@@ -2627,6 +2675,7 @@ class Adapter:
         res = self._act(lambda: ("browser_navigate", {**self._ids(), "url": prev}), reread=False)
         self._history.pop()
         self.view = None
+        self._unconfirmed = True
         self._set_page((res.get("data") or {}).get("url") or prev)
         return f"Went back to {self.url}; read the page to see it."
 
@@ -2645,7 +2694,7 @@ class Adapter:
     # -- handing the browser to the user and back
     def take_over(self):
         if self.pid is not None:
-            res = self._call("bring_to_front", {"pid": self.pid})
+            res = self._call("bring_to_front", {"pid": self.pid, "window_id": self.window_id})
             if _cua_problem(res):
                 raise McpError(_cua_problem(res))
 
