@@ -392,6 +392,82 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .kl dt { color: var(--muted); } .kl dd { margin: 0; text-align: right; font-family: "JetBrains Mono", monospace; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spark { width: 100%; height: 44px; margin-top: 10px; color: var(--ink); }
 
+/* agent */
+.navitem[hidden] { display: none; }
+.navitem.attn { color: var(--warn); font-weight: 500; }
+.navitem.attn::after { content: ""; margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); animation: pulse 1s ease-in-out infinite; }
+.agpanes { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; align-items: start; }
+.agmain, .agright { min-width: 0; }
+.agright { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 18px; }
+.agright .section { margin-bottom: 0; }
+.agex { justify-content: flex-start; max-width: none; margin-top: 14px; }
+.aglog { margin-top: 18px; display: flex; flex-direction: column; gap: 6px; }
+.aglog:empty { display: none; }
+.agstep { border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+.agrow { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; padding: 8px 12px; cursor: pointer; text-align: left; font-size: 13.5px; color: var(--ink); border-radius: 12px; }
+.agrow:hover { background: var(--hover); }
+.agic { width: 18px; flex: none; text-align: center; font-size: 14px; color: var(--muted); }
+.agic.ok { color: var(--ok); } .agic.bad { color: var(--bad); } .agic.warn { color: var(--warn); }
+.agsum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agtag { flex: none; font-size: 11.5px; color: var(--muted); }
+.agdet { border-top: 1px solid var(--line); padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.agdet[hidden] { display: none; }
+.agdet img { width: 100%; display: block; border: 1px solid var(--line); border-radius: 8px; }
+.agdet pre { margin: 4px 0 0; padding: 8px 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; font: 12px/1.5 "JetBrains Mono", ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+.agstep .thought { margin: 0; padding: 0 12px 8px 40px; }
+.agstep .thought summary { font-size: 12.5px; }
+.agstep .thought .tb { font-size: 12.5px; max-height: 220px; }
+.agnote { font-size: 12.5px; color: var(--muted); padding: 2px 12px; overflow-wrap: anywhere; }
+.agerr { padding: 2px 12px; margin: 0; }
+.agend { font-size: 12.5px; color: var(--muted); padding: 6px 12px 0; }
+.agcard { border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line)); background: color-mix(in srgb, var(--warn) 6%, var(--bg)); border-radius: 14px; padding: 14px 16px; }
+.agcard.done { border-color: var(--line); background: var(--bg); }
+.agcard.done .agact { display: none; }
+.agcardh { font-size: 12.5px; color: var(--warn); font-weight: 500; margin-bottom: 4px; }
+.agcard.done .agcardh { color: var(--muted); }
+.agtitle { font-size: 14.5px; overflow-wrap: anywhere; }
+.agshot { position: relative; margin: 10px 0 2px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); line-height: 0; }
+.agshot img { width: 100%; display: block; }
+.agbox { position: absolute; border: 2px solid var(--bad); border-radius: 4px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .22); pointer-events: none; }
+.agact { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.agact input { flex: 1; min-width: 160px; height: 34px; border: 1px solid var(--line-2); border-radius: 999px; padding: 0 14px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13.5px; outline: 0; }
+.agact input:focus { border-color: var(--ink-2); }
+.agres { font-size: 12.5px; color: var(--muted); margin-top: 8px; overflow-wrap: anywhere; }
+.agres:empty { display: none; }
+.agans { border-color: var(--line-2); background: var(--bg); }
+.agans .agcardh { color: var(--ink-2); }
+.agans .sources a.chip { text-decoration: none; }
+.agans .agact { margin-top: 14px; }
+.aglive { border: 1px solid var(--line); border-radius: 16px; background: var(--raised); overflow: hidden; }
+.agstate { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 13px; color: var(--ink-2); }
+.agshotbox { background: var(--soft); min-height: 150px; display: grid; place-items: center; color: var(--muted); font-size: 13px; text-align: center; padding: 14px; border-top: 1px solid var(--line); }
+.agshotbox.has { padding: 0; display: block; line-height: 0; }
+.agshotbox img { width: 100%; display: block; }
+.agwhere { padding: 8px 14px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
+.agwhere:empty { display: none; }
+.agctl { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+#agRecent { max-height: 360px; overflow-y: auto; }
+.agrun { display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.agrun:last-child { border-bottom: 0; }
+.agrun:hover, .agrun.on { background: var(--hover); }
+.agrun .grow { flex: 1; min-width: 0; }
+.agrun .nm { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agrun .pt { font-size: 11.5px; color: var(--muted); }
+.agrun .iconbtn { width: 28px; height: 28px; }
+.agrun .iconbtn svg { width: 15px; height: 15px; }
+.agtier { display: flex; align-items: center; gap: 10px; padding: 7px 20px; border-bottom: 1px solid var(--line); }
+.agtier .nm { flex: 1; min-width: 0; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agtierh { padding: 10px 20px 4px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.sel.sm select { height: 30px; font-size: 12.5px; padding-right: 28px; }
+.sel.sm::after { top: 11px; }
+#agTierDefaults > summary { padding: 10px 20px; font-size: 13px; color: var(--ink-2); cursor: pointer; border-bottom: 1px solid var(--line); }
+#agTierDefaults[open] > summary { border-bottom: 1px solid var(--line); }
+.agnum { width: 84px; height: 30px; border: 1px solid var(--line-2); border-radius: 8px; padding: 0 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px; outline: 0; }
+@media (max-width: 900px) {
+  .agpanes { grid-template-columns: minmax(0, 1fr); }
+  .agright { position: static; }
+}
+
 /* modal / lightbox / toast */
 dialog { border: 0; padding: 0; background: transparent; color: var(--ink); }
 dialog::backdrop { background: var(--overlay); }
@@ -453,6 +529,7 @@ dialog::backdrop { background: var(--overlay); }
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
   <symbol id="i-sheet" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 3v18"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-agent" viewBox="0 0 24 24"><path d="M5 3l15 7-6.5 2.5L11 20z"/></symbol>
   <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></symbol>
 </svg>
 
@@ -467,6 +544,7 @@ dialog::backdrop { background: var(--overlay); }
       <button class="navitem" id="newChat"><svg class="i"><use href="#i-new"/></svg>New chat<span class="kbd">⇧⌘O</span></button>
       <button class="navitem" data-view="images"><svg class="i"><use href="#i-image"/></svg>Images</button>
       <button class="navitem" data-view="search"><svg class="i"><use href="#i-search"/></svg>Search</button>
+      <button class="navitem" data-view="agent" id="navAgent" hidden><svg class="i"><use href="#i-agent"/></svg>Agent</button>
       <button class="navitem" data-view="library"><svg class="i"><use href="#i-box"/></svg>Model library</button>
       <button class="navitem" data-view="manage"><svg class="i"><use href="#i-sliders"/></svg>Settings</button>
     </div>
@@ -616,6 +694,44 @@ dialog::backdrop { background: var(--overlay); }
       </div></div>
     </section>
 
+    <section class="view" id="v-agent">
+      <div class="scroll"><div class="page">
+        <h2>Agent</h2>
+        <p class="lead">Give it a task. It works in a browser and in Mac apps, on this Mac, and asks before anything risky.</p>
+        <div class="section" id="agSetup" style="display:none">
+          <div class="sh"><div><h3 id="agSetupTtl"></h3><p id="agSetupMsg"></p></div><span id="agSetupAct"></span></div>
+        </div>
+        <div class="agpanes">
+          <div class="agmain">
+            <div class="prompt-card">
+              <textarea id="agTask" rows="3" placeholder="What should the agent do?"></textarea>
+              <div class="opts">
+                <div class="sel"><select id="agModel" title="Model for this task"></select></div>
+                <div style="flex:1"></div>
+                <button class="btn" id="agNew" style="display:none">New task</button>
+                <button class="btn primary" id="agRun">Run</button>
+              </div>
+            </div>
+            <div class="err" id="agErr" hidden></div>
+            <div class="starters agex" id="agChips"></div>
+            <div class="aglog" id="agLog"></div>
+          </div>
+          <aside class="agright">
+            <div class="aglive" id="agLive">
+              <div class="agstate"><span class="dot" id="agDot"></span><span id="agState">Ready</span></div>
+              <div class="agshotbox" id="agShotBox"></div>
+              <div class="agwhere" id="agWhere"></div>
+              <div class="agctl"><button class="btn sm" id="agTakeover" disabled>Take over</button><button class="btn sm danger" id="agStop" disabled>Stop</button></div>
+            </div>
+            <div class="section">
+              <div class="sh"><div><h3>Recent tasks</h3></div></div>
+              <div id="agRecent"></div>
+            </div>
+          </aside>
+        </div>
+      </div></div>
+    </section>
+
     <section class="view" id="v-library">
       <div class="scroll"><div class="page">
         <h2>Model library</h2>
@@ -684,6 +800,30 @@ dialog::backdrop { background: var(--overlay); }
           </div>
           <div class="row" id="srDelRow" style="display:none"><div class="grow"><div class="ttl">Index on disk</div><div class="sub">Search is off, but its index is still stored</div></div>
             <button class="btn sm danger" id="srDelete">Delete index</button></div>
+        </div>
+
+        <div class="section" id="agSet">
+          <div class="sh"><div><h3>Agent</h3><p id="agSetSum">–</p></div>
+            <label class="switch"><input type="checkbox" id="agEnable"><span></span></label></div>
+          <div class="row" id="agCua"></div>
+          <div id="agSetBody" style="display:none">
+            <div class="row" id="agTelemetry" style="display:none"></div>
+            <div class="row" style="flex-direction:column; align-items:stretch; gap:6px">
+              <div class="ttl">Mac apps</div>
+              <div class="sub">Read-only: the agent can look, never act. Ask first: every click or keystroke that changes something waits for your OK. Allowed: it acts freely; sending, deleting and paying still ask. Apps not listed are Allowed.</div>
+            </div>
+            <div id="agTiers">
+              <div class="row"><input class="srpath" id="agTierName" placeholder="App name, like Notes" autocomplete="off" style="flex:1; min-width:0; width:auto">
+                <div class="sel sm"><select id="agTierNew"><option value="read">Read-only</option><option value="ask" selected>Ask first</option><option value="allowed">Allowed</option></select></div>
+                <button class="btn sm" id="agTierAdd">Add app</button></div>
+              <div id="agTierList"></div>
+            </div>
+            <div class="row" id="agLimits"><div class="grow"><div class="ttl">Limits</div><div class="sub">A task stops at whichever comes first. Time spent waiting for you does not count.</div></div>
+              <label class="field" style="flex-direction:row; align-items:center; gap:8px">Steps<input class="agnum" id="agSteps" type="number" min="1" max="200" step="1"></label>
+              <label class="field" style="flex-direction:row; align-items:center; gap:8px">Minutes<input class="agnum" id="agMins" type="number" min="1" max="120" step="1"></label></div>
+            <div class="row"><div class="grow"><div class="ttl">Browser profile</div><div class="sub">The sign-ins and cookies the agent's browser keeps. Your own browser is not touched.</div></div>
+              <button class="btn sm danger" id="agReset">Reset</button></div>
+          </div>
         </div>
 
         <div class="section">
@@ -797,6 +937,7 @@ function showView(v) {
   if (v === "library") loadLibrary();
   if (v === "manage") loadManage();
   if (v === "search") { loadSearch(); setTimeout(() => $("srQuery").focus(), 0); }
+  if (v === "agent") agOpen();
   if (v === "chat") setTimeout(() => $("input").focus(), 0);
   renderHistory();
   if (innerWidth < 820) setCollapsed(true);
@@ -1334,11 +1475,12 @@ function updateHeader() {
   } else if (view === "images") { $("hdrTitle").textContent = activeImage()?.name || "Images"; $("hdrSub").textContent = "mflux"; }
   else if (view === "library") { $("hdrTitle").textContent = "Model library"; $("hdrSub").textContent = ""; }
   else if (view === "search") { $("hdrTitle").textContent = "Search"; $("hdrSub").textContent = "EmbeddingGemma 2"; }
+  else if (view === "agent") { $("hdrTitle").textContent = "Agent"; $("hdrSub").textContent = ""; }
   else { $("hdrTitle").textContent = "Settings"; $("hdrSub").textContent = ""; }
 }
 async function loadLibrary() {
   try { lib = await api("/api/models"); } catch { return; }
-  renderMenu(); renderImgModels(); updateHeader(); syncThink();
+  renderMenu(); renderImgModels(); updateHeader(); syncThink(); agRenderModels();
   if (view === "library") renderLibrary();
   const noModel = !lib.chat.some((m) => m.installed);
   if (!current?.messages?.length && view === "chat" && (noModel || loadLibrary._noModel)) renderThread();   // onboarding only
@@ -1480,7 +1622,7 @@ $("hfResults").onclick = async (e) => {
   }
 };
 // ---------------- settings
-async function loadManage() { loadStorage(); loadVersions(); loadSearch(); loadLibrary().then(() => {
+async function loadManage() { loadStorage(); loadVersions(); loadSearch(); loadAgent(); loadLibrary().then(() => {
   const inst = lib.chat.concat(lib.image).filter((m) => m.installed);
   $("modelsSum").textContent = `${inst.length} downloaded · ${human(inst.reduce((a, m) => a + m.size_bytes, 0))} on disk · ${human(lib.disk_free_bytes)} free`;
 }); }
@@ -1713,11 +1855,483 @@ $("srPv").onclick = (e) => {
 // Also while the service is still coming up after launch, so the My files pill enables without a visit to Search.
 setInterval(() => { if (view === "search" || view === "manage" || sr?.setup?.status === "running" || (sr?.enabled && !sr.running)) loadSearch(); }, 3000);
 
+// ---------------- agent
+const AG_TITLE = "Local Studio", AG_CUA_MIN = "0.28.2", AG_CUA_URL = "https://github.com/trycua/cua";
+const AG_EXAMPLES = [
+  ["Research laptops", "Research the three best laptops under $1,000 and compare them in a table with prices and links."],
+  ["Apple Store hours", "Find the opening hours of the Apple Store on Fifth Avenue in New York."],
+  ["Fill a form", "Open https://httpbin.org/forms/post, fill in the form with sample details, and stop before submitting it."],
+  ["Add to cart", "Find a USB-C cable on Amazon and add it to my cart. Don't check out."],
+];
+const AG_TIER = { read: "Read-only", ask: "Ask first", allowed: "Allowed" };
+const AG_STATUS = { done: "Finished", stopped: "Stopped", failed: "Failed", interrupted: "Interrupted", running: "Running", waiting: "Waiting for you", paused: "Paused" };
+const ag = { st: null, runs: [], rid: null, es: null, events: [], last: -1, live: false, pinned: false, replay: false, retries: 0, timer: 0,
+  cards: {}, pending: null, paused: false, pausing: false, stopping: false, replyingN: null, engine: "", shot: null, shotShown: null,
+  where: "", urls: [], answer: "", task: "", status: "", reason: "", setSig: "", runsSig: "" };
+
+// Pure helpers (also run under plain node by the author's checks).
+// An approval title is markdown the server has already escaped: **bold** and \x escapes are all that is honoured, the rest is text.
+function agTitleHTML(s) {
+  const t = String(s ?? ""); let out = "", bold = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c === "\\" && i + 1 < t.length) { out += esc(t[++i]); continue; }
+    if (c === "*" && t[i + 1] === "*") { out += bold ? "</strong>" : "<strong>"; bold = !bold; i++; continue; }
+    out += esc(c);
+  }
+  return out + (bold ? "</strong>" : "");
+}
+// The run's pending step: the last approval or question that has no step of the same n after it (and no end).
+function agPendingOf(events) {
+  let p = null;
+  for (const e of events) {
+    if (e.type === "approval" || e.type === "question") p = e;
+    else if (e.type === "step" && p && e.n === p.n) p = null;
+    else if (e.type === "end") p = null;
+  }
+  return p;
+}
+function agPausedOf(events) {
+  let paused = false;
+  for (const e of events) {
+    if (e.type === "note" && typeof e.text === "string") { if (e.text.startsWith("Paused while you take over")) paused = true; else if (e.text === "Resumed.") paused = false; }
+    else if (e.type === "end") paused = false;
+  }
+  return paused;
+}
+const agBoxOf = (b) => Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && isFinite(v)) && b[2] > 0 && b[3] > 0 ? b : null;
+const agWeb = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x : null; } catch { return null; } };
+const AG_TAGS = new Set("p br strong em b i del ul ol li a code pre blockquote h1 h2 h3 h4 h5 h6 table thead tbody tr th td hr".split(" "));
+const AG_DROP = new Set("script style iframe object embed form input button textarea select svg math link meta base template noscript".split(" "));
+function agClean(node) {
+  for (const ch of [...node.childNodes]) {
+    if (ch.nodeType === 3) continue;
+    if (ch.nodeType !== 1) { ch.remove(); continue; }
+    const tag = ch.localName;
+    if (AG_DROP.has(tag)) { ch.remove(); continue; }
+    if (tag === "img") { ch.replaceWith(document.createTextNode(ch.getAttribute("alt") || "")); continue; }   // model output never loads an image
+    agClean(ch);
+    if (!AG_TAGS.has(tag)) { ch.replaceWith(...ch.childNodes); continue; }
+    const href = tag === "a" ? (ch.getAttribute("href") || "").trim() : "";
+    for (const a of [...ch.attributes]) ch.removeAttribute(a.name);                // no on* handlers, styles or anything else
+    if (tag === "a" && /^(https?:|mailto:)/i.test(href)) { ch.setAttribute("href", href); ch.setAttribute("target", "_blank"); ch.setAttribute("rel", "noopener noreferrer"); }
+  }
+}
+// The final answer is model text: markdown, then only a short list of tags survives.
+function agMd(s) {
+  const html = window.marked ? marked.parse(String(s || "")) : esc(s).replace(/\n/g, "<br>");
+  const t = document.createElement("template"); t.innerHTML = html;
+  agClean(t.content);
+  const d = document.createElement("div"); d.appendChild(t.content);
+  return d.innerHTML;
+}
+const agShotUrl = (n) => `/api/agent/runs/${ag.rid}/shots/${encodeURIComponent(n)}`;
+const agWhen = (t) => t ? new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+const agNoteEl = (text) => { const d = document.createElement("div"); d.className = "agnote"; d.textContent = text; return d; };
+const agTierKey = (n) => { const k = String(n ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase(); return k.endsWith(".app") ? k.slice(0, -4) : k; };
+
+// ---- status, navigation, attention
+async function loadAgent() {
+  let st; try { st = await api("/api/agent/status"); } catch { return; }
+  ag.st = st;
+  $("navAgent").hidden = !st.enabled;
+  agRenderSettings(); agRenderSetup(); agSync();
+  if (st.running && st.running !== ag.rid && !ag.live && !ag.pinned) agAttach(st.running);   // a task is in progress: follow it from its start
+}
+function agOpen() {
+  loadAgent(); loadAgentRuns(); loadLibrary();
+  agSync();
+}
+setInterval(() => { if (view === "agent" || view === "manage") loadAgent(); }, 5000);
+function agAttn(on) { document.title = (on ? "⏸ " : "") + AG_TITLE; $("navAgent").classList.toggle("attn", on); }
+
+// ---- the view
+function agRenderModels() {
+  const sel = $("agModel"); if (!lib) return;
+  const inst = lib.chat.filter((m) => m.installed), cur = sel.value || store.get("agModel", "");
+  sel.innerHTML = inst.length ? inst.map((m) => `<option value="${esc(m.id)}">${esc(m.name)} · ${m.vision ? "can read pages as images" : "text only"}</option>`).join("") : `<option value="">No chat model downloaded</option>`;
+  const want = inst.some((m) => m.id === cur) ? cur : (inst.find((m) => m.active) || inst[0])?.id;
+  if (want) sel.value = want;
+  agSync();
+}
+function agRenderSetup() {
+  const st = ag.st, box = $("agSetup"); if (!st) return;
+  const c = st.cua || {}, link = (label) => `<a class="btn primary" href="${AG_CUA_URL}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  let t = "", m = "", act = "";
+  if (!st.enabled) { t = "Agent is off"; m = "Turn it on to let the agent use a browser and Mac apps. Nothing runs until you start a task."; act = `<button class="btn primary" id="agSetupOn">Turn on Agent</button>`; }
+  else if (!c.installed) { t = "CuaDriver is not installed"; m = "Agent needs CuaDriver to control the browser and apps. Install it from github.com/trycua/cua, then come back."; act = link("Get CuaDriver"); }
+  else if (!c.ok_version) { t = "CuaDriver needs an update"; m = `You have ${c.version || "an unknown version"}. Agent needs ${AG_CUA_MIN} or later. Update it from github.com/trycua/cua.`; act = link("Update CuaDriver"); }
+  box.style.display = t ? "" : "none";
+  if (t) { $("agSetupTtl").textContent = t; $("agSetupMsg").textContent = m; $("agSetupAct").innerHTML = act; }
+}
+$("agSetup").onclick = async (e) => {
+  if (!e.target.closest("#agSetupOn")) return;
+  try { await jpost("/api/agent/enable", { on: true }); } catch (err) { toast(err.message); }
+  loadAgent();
+};
+function agSetErr(msg) { const el = $("agErr"); el.textContent = msg || ""; el.hidden = !msg; }
+function agSync() {
+  const st = ag.st, live = ag.live, c = st?.cua || {};
+  ag.pending = live ? agPendingOf(ag.events) : null;
+  ag.paused = live && agPausedOf(ag.events);
+  if (ag.paused) ag.pausing = false;
+  if (ag.replyingN != null && ag.pending?.n !== ag.replyingN) ag.replyingN = null;
+  for (const [n, el] of Object.entries(ag.cards)) {
+    const active = !!ag.pending && String(ag.pending.n) === n;
+    el.classList.toggle("done", !active);
+    el.querySelectorAll(".agact button, .agact input").forEach((x) => { x.disabled = ag.paused || ag.replyingN === ag.pending?.n; });
+  }
+  agAttn(live && !!ag.pending && !ag.paused);
+  // state line
+  let txt = "Ready", dot = "";
+  if (live) {
+    dot = "ok";
+    if (ag.paused) { txt = "Paused: you have control"; dot = "warn"; }
+    else if (ag.pending) { txt = ag.pending.type === "question" ? "Waiting for your answer" : "Waiting for your OK"; dot = "warn"; }
+    else if (ag.stopping) txt = "Stopping after this step…";
+    else if (ag.pausing) txt = "Pausing…";
+    else txt = ag.engine || "Working…";
+  } else if (ag.status) { txt = AG_STATUS[ag.status] || ag.status; dot = ag.status === "done" ? "ok" : ag.status === "failed" ? "bad" : ""; }
+  $("agState").textContent = txt; $("agDot").className = "dot " + dot;
+  // live view
+  const url = ag.shot && ag.rid ? agShotUrl(ag.shot) : "";
+  if (url !== ag.shotShown) {
+    ag.shotShown = url;
+    const box = $("agShotBox"); box.classList.toggle("has", !!url);
+    box.innerHTML = url ? `<img src="${esc(url)}" alt="Latest screenshot">` : "The page or app the agent is working on shows here.";
+  }
+  $("agWhere").textContent = ag.where || "";
+  $("agTakeover").disabled = !live || ag.pausing || ag.stopping;
+  $("agTakeover").textContent = ag.paused ? "Resume" : ag.pausing ? "Pausing…" : "Take over";
+  $("agStop").disabled = !live || ag.stopping;
+  $("agStop").textContent = ag.stopping ? "Stopping…" : "Stop";
+  // task box
+  $("agTask").readOnly = live; $("agModel").disabled = live || !lib?.chat.some((m) => m.installed);
+  const ready = !!st && st.enabled && c.installed && c.ok_version;
+  $("agRun").disabled = live || !ready || !$("agTask").value.trim() || !$("agModel").value;
+  $("agNew").style.display = !live && ag.events.length ? "" : "none";
+  $("agChips").style.display = !live && !ag.events.length ? "" : "none";
+  agRenderRuns();
+}
+$("agChips").innerHTML = AG_EXAMPLES.map(([label, q], i) => `<button data-i="${i}">${esc(label)}</button>`).join("");
+$("agChips").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; $("agTask").value = AG_EXAMPLES[+b.dataset.i][1]; agSize(); agSync(); $("agTask").focus(); };
+function agSize() { const t = $("agTask"); t.style.height = "auto"; t.style.height = Math.min(220, t.scrollHeight) + "px"; }
+$("agTask").addEventListener("input", () => { agSize(); agSync(); });
+$("agTask").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); agStart(); } });
+$("agModel").onchange = () => { store.set("agModel", $("agModel").value); agSync(); };
+$("agRun").onclick = () => agStart();
+$("agNew").onclick = () => { agClear(); ag.pinned = false; $("agTask").value = ""; agSize(); agSync(); $("agTask").focus(); };
+
+// ---- a run
+function agClose() { if (ag.es) { ag.es.onmessage = ag.es.onerror = null; ag.es.close(); ag.es = null; } clearTimeout(ag.timer); }
+function agClear() {
+  agClose();
+  Object.assign(ag, { rid: null, events: [], last: -1, live: false, retries: 0, cards: {}, pending: null, paused: false, pausing: false, stopping: false,
+    replyingN: null, engine: "", shot: null, where: "", urls: [], answer: "", task: "", status: "", reason: "" });
+  $("agLog").innerHTML = ""; agSetErr("");
+}
+async function agStart() {
+  const task = $("agTask").value.trim(), model_id = $("agModel").value;
+  if (!task || !model_id || ag.live) return;
+  $("agRun").disabled = true; agSetErr("");
+  try {
+    const r = await jpost("/api/agent/run", { task, model_id });
+    store.set("agModel", model_id);
+    agClear(); Object.assign(ag, { rid: r.run_id, live: true, pinned: false, task });
+    agConnect(); loadAgentRuns();
+  } catch (e) { agSetErr(e.message); toast(e.message); }
+  agSync();
+}
+async function agAttach(rid) {
+  agClear(); Object.assign(ag, { rid, live: true, pinned: false });
+  agSync();
+  try { const d = await api(`/api/agent/runs/${rid}`); if (ag.rid === rid) { ag.task = d.task || ""; $("agTask").value = ag.task; agSize(); } } catch {}
+  if (ag.rid === rid && ag.live) agConnect();
+}
+// One EventSource per (re)connect: the browser's own reconnect would replay from the original URL. `after` is inclusive.
+function agConnect() {
+  agClose();
+  const rid = ag.rid; if (!rid || !ag.live) return;
+  const es = new EventSource(`/api/agent/runs/${rid}/events?after=${ag.last + 1}`);
+  ag.es = es;
+  es.onmessage = (m) => { let e; try { e = JSON.parse(m.data); } catch { return; } ag.retries = 0; agEvent(e); };
+  es.onerror = () => {
+    if (ag.es !== es) return;
+    agClose();
+    if (!ag.live || ag.rid !== rid) return;
+    if (++ag.retries > 8) { agLost(); return; }
+    ag.timer = setTimeout(() => { if (ag.live && ag.rid === rid) agConnect(); }, Math.min(5000, 700 * ag.retries));
+  };
+}
+function agLost() {
+  ag.live = false; ag.status = "interrupted";
+  $("agLog").append(agNoteEl("Lost connection to the task. Open it from Recent tasks to see where it got to."));
+  agSync(); loadAgentRuns();
+}
+function agEvent(e) {
+  if (!e || typeof e !== "object") return;
+  if (typeof e.i === "number") { if (e.i <= ag.last) return; ag.last = e.i; }           // a replayed event is dropped
+  const sc = document.querySelector("#v-agent .scroll"), near = !ag.replay && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 200;
+  ag.events.push(e);
+  const before = $("agLog").lastElementChild;
+  agRender(e);
+  if (ag.replay) return;
+  agSync();
+  const added = $("agLog").lastElementChild;
+  if (added && added !== before) { if (e.type === "approval" || e.type === "question") added.scrollIntoView({ block: "nearest", behavior: "smooth" }); else if (near) sc.scrollTop = sc.scrollHeight; }
+}
+function agDecision(e) {
+  const d = e.decision || "", failed = typeof e.result === "string" && /^(Error|Blocked)/.test(e.result);
+  if (d === "blocked") return ["✕", "bad", "blocked"];
+  if (d === "denied") return ["✕", "bad", "denied"];
+  if (d === "skipped") return ["↻", "warn", "skipped"];
+  if (d === "stopped") return ["⏸", "warn", "stopped"];
+  if (d === "error") return ["↻", "warn", "retry"];
+  if (failed) return ["✕", "bad", "failed"];
+  if (d === "allowed") return ["✓", "ok", "approved"];
+  return ["✓", "ok", ""];
+}
+function agRender(e) {
+  const log = $("agLog");
+  if (e.type === "x_engine") ag.engine = e.status === "switching" ? `Loading ${e.model || "the model"}…` : "";
+  else if (e.type === "step") agStepRow(e);
+  else if (e.type === "approval") agApprovalCard(e);
+  else if (e.type === "question") agQuestionCard(e);
+  else if (e.type === "note") { log.append(agNoteEl(e.text || "")); if (/^Stopping/.test(e.text || "")) ag.stopping = true; }
+  else if (e.type === "answer") agAnswerCard(e);
+  else if (e.type === "error") { const d = document.createElement("div"); d.className = "err agerr"; d.textContent = e.message || "Something went wrong."; log.append(d); }
+  else if (e.type === "end") {
+    Object.assign(ag, { status: e.status, reason: e.reason || "", live: false, stopping: false, pausing: false }); agClose();
+    if (e.status !== "done") { const d = document.createElement("div"); d.className = "agend"; d.textContent = (AG_STATUS[e.status] || e.status) + (e.reason ? ` · ${e.reason}` : ""); log.append(d); }
+    if (!ag.replay) { loadAgentRuns(); loadAgent(); }
+  }
+}
+function agStepRow(e) {
+  const log = $("agLog");
+  if (e.n == null) { log.append(agNoteEl(e.result || e.summary || "")); return; }
+  const [ic, cls, tag] = agDecision(e), el = document.createElement("div");
+  el.className = "agstep"; el.dataset.n = e.n; el._e = e;
+  el.innerHTML = `<button class="agrow" data-agrow title="Show the screenshot and the call"><span class="agic ${cls}">${ic}</span><span class="agsum">${esc(e.summary || e.tool || "Step")}</span>${tag ? `<span class="agtag">${tag}</span>` : ""}</button>`
+    + (e.thought ? `<details class="thought"><summary>Reasoning${icon("i-right")}</summary><div class="tb">${esc(e.thought)}</div></details>` : "");
+  log.append(el);
+  if (e.shot) ag.shot = e.shot;
+  const a = e.args && typeof e.args === "object" ? e.args : {}, visited = e.decision === "safe" || e.decision === "allowed";
+  if (e.tool === "open_url" && typeof a.url === "string" && visited && !/^(Error|Blocked)/.test(e.result || "")) {
+    ag.where = a.url; if (agWeb(a.url) && !ag.urls.includes(a.url)) ag.urls.push(a.url);
+  } else if ((e.tool === "open_app" || e.tool === "read_app") && typeof a.name === "string" && visited) ag.where = "App: " + a.name;
+  const card = ag.cards[e.n]; if (card) agResolve(card, e);
+}
+function agDetail(e) {
+  const d = document.createElement("div"); d.className = "agdet";
+  const call = e.tool ? `${e.tool}(${e.args && Object.keys(e.args).length ? JSON.stringify(e.args, null, 1) : ""})` : "(no tool call)";
+  d.innerHTML = (e.shot ? `<img loading="lazy" alt="Screenshot after this step" src="${esc(agShotUrl(e.shot))}">` : "")
+    + `<div><div class="sub">Call</div><pre>${esc(call)}</pre></div><div><div class="sub">Result</div><pre>${esc(e.result || "")}</pre></div>`;
+  return d;
+}
+function agCardEl(e, kind, inner) {
+  const el = document.createElement("div"); el.className = "agcard"; el.dataset.n = e.n; el.dataset.kind = kind;
+  el.innerHTML = inner; $("agLog").append(el); ag.cards[e.n] = el; return el;
+}
+function agApprovalCard(e) {
+  const box = agBoxOf(e.box);
+  const el = agCardEl(e, "approval", `<div class="agcardh">⏸ Needs your OK</div><div class="agtitle">${agTitleHTML(e.title)}</div>`
+    + (e.shot ? `<div class="agshot"><img alt="Screenshot of the page before this action" src="${esc(agShotUrl(e.shot))}">${box ? `<i class="agbox" hidden></i>` : ""}</div>` : "")
+    + `<div class="agact"><button class="btn primary sm" data-agreply="allow">Allow once</button><button class="btn sm" data-agreply="deny">Deny</button><button class="btn sm danger" data-agreply="stop">Stop run</button></div><div class="agres"></div>`);
+  const img = el.querySelector("img");
+  if (e.shot) ag.shot = e.shot;
+  if (img && box) {
+    const place = () => {                               // the outline is a share of the picture, so it follows the picture's size
+      const W = img.naturalWidth, H = img.naturalHeight, o = el.querySelector(".agbox"); if (!W || !H || !o) return;
+      const p = (v) => Math.max(0, Math.min(100, v)) + "%";
+      Object.assign(o.style, { left: p(box[0] / W * 100), top: p(box[1] / H * 100), width: p(box[2] / W * 100), height: p(box[3] / H * 100) }); o.hidden = false;
+    };
+    if (img.complete && img.naturalWidth) place(); else img.addEventListener("load", place);
+  }
+}
+function agQuestionCard(e) {
+  const el = agCardEl(e, "question", `<div class="agcardh">⏸ The agent has a question</div><div class="agtitle"></div>`
+    + `<div class="agact"><input placeholder="Your answer" autocomplete="off"><button class="btn primary sm" data-agsend>Send</button><button class="btn sm danger" data-agreply="stop">Stop run</button></div><div class="agres"></div>`);
+  el.querySelector(".agtitle").textContent = e.text || "";
+}
+function agResolve(card, e) {
+  const res = card.querySelector(".agres"), d = e.decision;
+  res.textContent = card.dataset.kind === "question" ? (d === "safe" ? "You answered: " + String(e.result || "").replace(/^The user answered: /, "") : "Not answered.")
+    : { allowed: "You allowed this.", denied: "You denied this.", skipped: "Skipped because you took over.", stopped: "Stopped." }[d] || "";
+}
+function agAnswerCard(e) {
+  ag.answer = String(e.markdown || "");
+  const pages = ag.urls.slice(0, 8).map((u) => `<a class="chip" href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="${esc(u)}">${esc(agWeb(u)?.host || u)}</a>`).join("");
+  const el = document.createElement("div"); el.className = "agcard agans";
+  el.innerHTML = `<div class="agcardh">Answer</div><div class="content">${agMd(ag.answer)}</div>${pages ? `<div class="sources"><span class="sub" style="align-self:center">Pages used</span>${pages}</div>` : ""}`
+    + `<div class="agact"><button class="btn primary sm" data-agcont>Continue in chat</button></div>`;
+  $("agLog").append(el);
+}
+$("agLog").onclick = (e) => {
+  const row = e.target.closest("[data-agrow]");
+  if (row) { const step = row.closest(".agstep"); let det = step.querySelector(".agdet"); if (!det) { det = agDetail(step._e); step.insertBefore(det, step.querySelector(".thought")); } else det.hidden = !det.hidden; return; }
+  if (e.target.closest("[data-agcont]")) return agContinue();
+  const card = e.target.closest(".agcard[data-n]"), n = card && +card.dataset.n;
+  const r = e.target.closest("[data-agreply]"); if (r && card) return agReply(n, { decision: r.dataset.agreply });
+  if (e.target.closest("[data-agsend]") && card) { const v = card.querySelector("input").value.trim(); if (v) agReply(n, { text: v }); }
+};
+$("agLog").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.matches(".agact input")) { e.preventDefault(); e.target.closest(".agcard").querySelector("[data-agsend]").click(); } });
+async function agReply(n, body) {
+  const rid = ag.rid; if (!rid || !ag.live) return;
+  ag.replyingN = n; agSync();
+  try { await jpost(`/api/agent/runs/${rid}/reply`, { n, ...body }); }
+  catch (err) {                                                      // maybe answered elsewhere or already past: show what the run really waits for
+    toast(err.message); ag.replyingN = null;
+    try { const d = await api(`/api/agent/runs/${rid}`); if (ag.rid === rid) (d.events || []).forEach(agEvent); } catch {}
+    agSync();
+  }
+}
+async function agContinue() {
+  if (streaming) return toast("Wait for the reply to finish");
+  if (!ag.answer) return;
+  const task = ag.task || $("agTask").value.trim();
+  current = { id: newId(), title: task.replace(/\s+/g, " ").slice(0, 48) || "Agent task", messages: [{ role: "user", content: task }, { role: "assistant", content: ag.answer }] };
+  await saveChat(); showView("chat"); renderThread(); scrollBottom(true);
+}
+$("agStop").onclick = async () => {
+  if (!ag.rid || !ag.live) return;
+  ag.stopping = true; agSync();
+  try { await jpost(`/api/agent/runs/${ag.rid}/stop`); } catch (e) { toast(e.message); ag.stopping = false; agSync(); }
+};
+$("agTakeover").onclick = async () => {
+  if (!ag.rid || !ag.live) return;
+  const resume = ag.paused; if (!resume) { ag.pausing = true; agSync(); }
+  try { await jpost(`/api/agent/runs/${ag.rid}/${resume ? "resume" : "takeover"}`); } catch (e) { toast(e.message); ag.pausing = false; agSync(); }
+};
+
+// ---- recent tasks
+async function loadAgentRuns() { try { ag.runs = await api("/api/agent/runs"); } catch { return; } agRenderRuns(); }
+function agRenderRuns() {
+  const sig = JSON.stringify([ag.runs.slice(0, 30), ag.rid]);
+  if (sig === ag.runsSig) return;
+  ag.runsSig = sig;
+  $("agRecent").innerHTML = ag.runs.length ? ag.runs.slice(0, 30).map((r) => `<div class="agrun${r.id === ag.rid ? " on" : ""}" data-rid="${esc(r.id)}"><div class="grow"><div class="nm" title="${esc(r.task)}">${esc(r.task)}</div><div class="pt">${esc(agWhen(r.started))}</div></div><span class="badge${r.status === "done" ? " ok" : ""}">${esc(AG_STATUS[r.status] || r.status || "")}</span><button class="iconbtn" data-agdel title="Delete">${icon("i-trash")}</button></div>`).join("")
+    : `<div class="hempty">Finished tasks appear here.</div>`;
+}
+$("agRecent").onclick = async (e) => {
+  const row = e.target.closest(".agrun"); if (!row) return;
+  const rid = row.dataset.rid;
+  if (e.target.closest("[data-agdel]")) {
+    if (!(await confirmBox("Delete this task?", "Its steps and screenshots are removed from this Mac.", "Delete"))) return;
+    try { await api(`/api/agent/runs/${rid}`, { method: "DELETE" }); } catch (err) { return toast(err.message); }
+    if (ag.rid === rid && !ag.live) { agClear(); agSync(); }
+    return loadAgentRuns();
+  }
+  agOpenSaved(rid);
+};
+async function agOpenSaved(rid) {
+  if (ag.rid === rid) return;
+  if (ag.live) return toast("Stop the running task first to open another");
+  let d; try { d = await api(`/api/agent/runs/${rid}`); } catch (e) { return toast(e.message); }
+  if (ag.st?.running === rid) return agAttach(rid);
+  agClear(); Object.assign(ag, { rid, pinned: true, task: d.task || "", replay: true });
+  $("agTask").value = ag.task; agSize();
+  const evs = Array.isArray(d.events) ? d.events : [];
+  evs.forEach(agEvent);
+  if (!evs.some((x) => x.type === "end")) agEvent({ i: evs.length, type: "end", status: d.status || "interrupted" });
+  ag.replay = false; ag.live = false; ag.status = ag.status || d.status || "";
+  agSync();
+  document.querySelector("#v-agent .scroll").scrollTop = 0;
+}
+
+// ---- settings
+function agRenderSettings() {
+  const st = ag.st; if (!st) return;
+  const c = st.cua || {}, s = st.settings || {}, ready = c.installed && c.ok_version;
+  $("agEnable").checked = !!st.enabled;
+  $("agSetSum").textContent = !st.enabled ? "Let a local model use a browser and Mac apps for you. Off until you turn it on." : ready ? "On. The agent asks before anything risky." : "On, but CuaDriver needs attention.";
+  $("agSetBody").style.display = st.enabled ? "" : "none";
+  if (document.activeElement !== $("agSteps")) $("agSteps").value = s.max_steps ?? "";
+  if (document.activeElement !== $("agMins")) $("agMins").value = s.max_minutes ?? "";
+  const sig = JSON.stringify([st.enabled, c, s]);
+  if (sig === ag.setSig) return;
+  ag.setSig = sig;
+  const link = `<a href="${AG_CUA_URL}" target="_blank" rel="noopener noreferrer">github.com/trycua/cua</a>`;
+  let msg, act = "";
+  if (!c.installed) msg = `Not installed. Get it from ${link}.`;
+  else if (!c.ok_version) msg = `Update needed (have ${esc(c.version || "unknown")}, need ${AG_CUA_MIN}). Update it from ${link}.`;
+  else { msg = `Ready v${esc(c.version)}. macOS asks once for Accessibility and Screen Recording.`; act = `<button class="btn sm" data-agperm>Grant permissions</button>`; }
+  $("agCua").innerHTML = `<div class="grow"><div class="ttl">CuaDriver</div><div class="sub">${msg}</div></div>${act}`;
+  const tel = $("agTelemetry"); tel.style.display = c.installed ? "" : "none";
+  tel.innerHTML = `<div class="grow"><div class="ttl">Telemetry</div><div class="sub">${c.telemetry === true ? "On. CuaDriver may send usage data off this Mac." : c.telemetry === false ? "Off." : "Unknown."}</div></div>${c.telemetry === true ? `<button class="btn sm" data-agtele>Turn off</button>` : ""}`;
+  agRenderTiers();
+}
+function agTierSelect(name, tier) {
+  return `<div class="sel sm"><select data-agtier="${esc(name)}" title="${esc(name)}">${Object.entries(AG_TIER).map(([v, l]) => `<option value="${v}"${v === tier ? " selected" : ""}>${l}</option>`).join("")}</select></div>`;
+}
+function agRenderTiers() {
+  const st = ag.st, defs = st.tier_defaults || {}, ov = st.settings?.tiers || {};
+  const defByKey = new Map(Object.entries(defs).map(([n, t]) => [agTierKey(n), t]));
+  const mineKeys = new Set(Object.keys(ov).map(agTierKey));
+  const mine = Object.entries(ov).sort((a, b) => a[0].localeCompare(b[0]));
+  const rest = Object.entries(defs).filter(([n]) => !mineKeys.has(agTierKey(n))).sort((a, b) => AG_TIER_ORDER.indexOf(a[1]) - AG_TIER_ORDER.indexOf(b[1]) || a[0].localeCompare(b[0]));
+  const open = $("agTierList").querySelector("#agTierDefaults")?.open;
+  $("agTierList").innerHTML = (mine.length ? `<div class="agtierh">Your changes</div>` + mine.map(([n, t]) => `<div class="agtier"><span class="nm" title="${esc(n)}">${esc(n)}</span>${agTierSelect(n, t)}<button class="btn sm" data-agtierrm="${esc(n)}">${defByKey.has(agTierKey(n)) ? "Use default" : "Remove"}</button></div>`).join("") : "")
+    + `<details id="agTierDefaults"${open ? " open" : ""}><summary>Built-in apps (${rest.length})</summary>${rest.map(([n, t]) => `<div class="agtier"><span class="nm" title="${esc(n)}">${esc(n)}</span>${agTierSelect(n, t)}</div>`).join("")}</details>`;
+}
+const AG_TIER_ORDER = ["read", "ask", "allowed"];
+async function agSave(patch) {
+  try { await jpost("/api/agent/settings", patch, "PUT"); } catch (e) { toast(e.message); }
+  ag.setSig = ""; loadAgent();
+}
+function agSetTier(name, tier) {                          // PUT replaces the whole map; a default app set back to its default needs no entry
+  const ov = { ...(ag.st.settings.tiers || {}) }, key = agTierKey(name);
+  for (const k of Object.keys(ov)) if (agTierKey(k) === key) delete ov[k];
+  const def = Object.entries(ag.st.tier_defaults || {}).find(([n]) => agTierKey(n) === key);
+  if (!(def && def[1] === tier)) ov[name.trim()] = tier;
+  return agSave({ tiers: ov });
+}
+$("agTierList").onchange = (e) => { const s = e.target.closest("[data-agtier]"); if (s) agSetTier(s.dataset.agtier, s.value); };
+$("agTierList").onclick = (e) => {
+  const b = e.target.closest("[data-agtierrm]"); if (!b) return;
+  const ov = { ...(ag.st.settings.tiers || {}) }, key = agTierKey(b.dataset.agtierrm);
+  for (const k of Object.keys(ov)) if (agTierKey(k) === key) delete ov[k];
+  agSave({ tiers: ov });
+};
+$("agTierAdd").onclick = async () => {
+  const name = $("agTierName").value.trim().slice(0, 80); if (!name || !ag.st) return $("agTierName").focus();
+  await agSetTier(name, $("agTierNew").value); $("agTierName").value = "";
+};
+$("agTierName").addEventListener("keydown", (e) => { if (e.key === "Enter") $("agTierAdd").click(); });
+function agLimit(el, key, lo, hi, label) {
+  el.onchange = () => {
+    let v = parseInt(el.value, 10);
+    if (!isFinite(v)) v = ag.st?.settings?.[key] ?? lo;
+    const c = Math.max(lo, Math.min(hi, v));
+    if (c !== v) toast(`${label} must be ${lo} to ${hi}`);
+    el.value = c; agSave({ [key]: c });
+  };
+}
+agLimit($("agSteps"), "max_steps", 1, 200, "Steps"); agLimit($("agMins"), "max_minutes", 1, 120, "Minutes");
+$("agEnable").onchange = async () => {
+  try { await jpost("/api/agent/enable", { on: $("agEnable").checked }); } catch (e) { toast(e.message); }
+  ag.setSig = ""; loadAgent();
+};
+$("agCua").onclick = async (e) => {
+  if (!e.target.closest("[data-agperm]")) return;
+  try { await jpost("/api/agent/permissions"); toast("Follow the macOS prompts for Accessibility and Screen Recording"); } catch (err) { toast(err.message); }
+};
+$("agTelemetry").onclick = async (e) => {
+  if (!e.target.closest("[data-agtele]")) return;
+  if (!(await confirmBox("Turn off CuaDriver telemetry?", "This runs cua-driver telemetry disable, so CuaDriver stops sending usage data. It changes a CuaDriver setting, not a Local Studio one.", "Turn off"))) return;
+  try { await jpost("/api/agent/telemetry/disable"); toast("Telemetry turned off"); } catch (err) { toast(err.message); }
+  ag.setSig = ""; loadAgent();
+};
+$("agReset").onclick = async () => {
+  if (!(await confirmBox("Reset the browser profile?", "The agent's browser forgets every site it signed in to and deletes its cookies. Your own browser is not touched.", "Reset"))) return;
+  try { await jpost("/api/agent/profile/reset"); toast("Browser profile reset"); } catch (e) { toast(e.message); }
+};
+
 // ---------------- boot
 (async () => {
   await api("/api/system").then((s) => { $("verBadge").textContent = s.version; sysRam = s.total_bytes; }).catch(() => {});
   await loadLibrary();
   loadSearch();
+  loadAgent();
   showView("chat");
   renderThread();
   await loadChats();
