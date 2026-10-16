@@ -1746,6 +1746,265 @@ def _agent_reaper_start():
     _agent_reaper.start()
 
 
+# -- views: CuaDriver page/app snapshots -> compact text with short refs (e1..eN) for a 32k-context model
+
+def est_tokens(s):
+    return int(len(s) / 3.2)                                 # the same heuristic /api/chat uses
+
+
+def _clip(s, n):
+    s = " ".join(str(s or "").split())                       # one line, no stray control whitespace
+    return s if len(s) <= n else s[:n - 1] + "…"
+
+
+_OUTLINE_LINE = re.compile(r'^(\s*)- ([\w-]+)(?: "(.*?)"(?= \[|\s*$))?')
+_VIEW_TEXT_ROLES = frozenset(("statictext", "text", "heading"))
+_VIEW_PLAIN_ROLES = frozenset((                              # page structure that is neither a control nor text worth a line
+    "generic image figure paragraph none rootwebarea group list listitem labeltext legend form main banner navigation "
+    "contentinfo search region article section table row cell rowgroup columnheader presentation separator").split())
+_VIEW_LANDMARKS = frozenset(("main", "banner", "navigation", "contentinfo", "search", "region"))
+_VIEW_FLAGS = ("required", "focused", "selected", "expanded", "pressed", "disabled", "invalid")
+# A button counts as a submit when the DOM says type=submit, or (no DOM info) its label starts like one.
+_SUBMIT_RE = re.compile(r"^(submit|send|place order|sign in|log in|continue|next)\b", re.I)
+_PASSWORD_RE = re.compile(r"pass(word|code)", re.I)         # a semantic textbox so named is treated as a password field when the DOM did not say
+_DOM_KEY = re.compile(r"(?:^|\s)(\w[\w-]*)=")
+_AX_INTERACTIVE = frozenset((
+    "Button TextField TextArea SearchField SecureTextField CheckBox RadioButton PopUpButton MenuButton MenuItem MenuBarItem Link "
+    "Row Cell Slider ComboBox Tab DisclosureTriangle Switch Stepper").split())
+_AX_ACTIONS = frozenset(("AXPress", "AXConfirm", "AXPick"))
+
+
+def _dom_attrs(label):
+    """`name=password id=password type=password` -> dict. A value runs to the next `key=`, so it may hold spaces."""
+    out, ms = {}, list(_DOM_KEY.finditer(label or ""))
+    for i, m in enumerate(ms):
+        end = ms[i + 1].start() if i + 1 < len(ms) else len(label)
+        out[m.group(1).lower()] = label[m.end():end].strip()
+    return out
+
+
+def _dom_class(node, attrs):
+    t = attrs.get("type")
+    if node == "button" or t in ("submit", "button", "reset", "image"):
+        return "button"
+    return t if t in ("checkbox", "radio") else "text"
+
+
+def _sem_class(role):
+    if role in ("textbox", "searchbox", "spinbutton", "combobox") or role.startswith("input"):
+        return "text"
+    return role if role in ("checkbox", "radio", "button") else None
+
+
+def _dom_join(sem, dom):
+    """Pair each interactive semantic ref with the DOM element it came from. By name first (case-insensitive, against
+    aria-label/name/id/value/placeholder); then by order within a role class, but only when the leftovers on both
+    sides are equally many (honeypot inputs and icon buttons would otherwise shift every pairing). {index: attrs}"""
+    cands = []
+    for r in (dom or {}).get("refs") or []:
+        if r.get("node") in ("input", "button", "textarea"):
+            a = _dom_attrs(r.get("label"))
+            if a.get("type") != "hidden":
+                cands.append((_dom_class(r["node"], a), a))
+    used, got = set(), {}
+    for i, s in enumerate(sem):
+        c, nm = _sem_class(s["role"]), (s.get("name") or "").strip().lower()
+        if c and nm:
+            for j, (k, a) in enumerate(cands):
+                if j not in used and k == c and nm in (a.get(f, "").strip().lower() for f in ("aria-label", "name", "id", "value", "placeholder")):
+                    used.add(j); got[i] = a
+                    break
+    for c in ("text", "button", "checkbox", "radio"):
+        left_s = [i for i, s in enumerate(sem) if i not in got and _sem_class(s["role"]) == c]
+        left_d = [j for j, (k, _) in enumerate(cands) if j not in used and k == c]
+        if left_s and len(left_s) == len(left_d):
+            for i, j in zip(left_s, left_d):
+                got[i] = cands[j][1]
+    return got
+
+
+def _on(v):
+    return v not in (None, False, 0, "", "false", "0", "no")
+
+
+def _facts(role, name, input_type=None, autocomplete=None, in_form=False, is_submit=False, href=None, box=None):
+    return {"role": role, "name": name, "input_type": input_type, "autocomplete": autocomplete,
+            "in_form": in_form, "is_submit": is_submit, "href": href, "box": box}
+
+
+def _assemble(header, items, budget):
+    """items (document order): {kind: "i"|"t", vis, line: fn(id) -> str, ref, facts}. Keeps interactive-and-visible, then
+    visible text, then off-screen interactive, then off-screen text, until the budget is spent; ids e1..eN are then handed
+    out in document order to the interactive items that made it."""
+    total = sum(1 for it in items if it["kind"] == "i")
+    idw = len(str(max(total, 1)))
+    room = int(budget * 3.2) - len("\n".join(header)) - 1 - 32           # 32 = the "(+N more not shown)" footer
+    chosen = set()
+    for tier in ((True, "i"), (True, "t"), (False, "i"), (False, "t")):
+        for n, it in enumerate(items):
+            if (it["vis"], it["kind"]) != tier:
+                continue
+            cost = len(it["line"]("e" + "9" * idw)) + 1
+            if cost > room:
+                break
+            room -= cost
+            chosen.add(n)
+        else:
+            continue
+        break
+    lines, refs = list(header), {}
+    for n, it in enumerate(items):
+        if n in chosen:
+            eid = None
+            if it["kind"] == "i":
+                eid = f"e{len(refs) + 1}"
+                refs[eid] = {"ref": it["ref"], "facts": it["facts"]}
+            lines.append(it["line"](eid))
+    if len(chosen) < len(items):
+        lines.append(f"(+{len(items) - len(chosen)} more not shown)")
+    body = sum(len(it["line"]("e1")) for it in items)
+    return {"text": "\n".join(lines), "refs": refs, "interactive": len(refs),
+            "sparse": total < 5 or body < 200}                             # judged on the whole snapshot, not on what fit
+
+
+def _control_line(role, name, extras=""):
+    return lambda eid: f"[{eid}] {role}" + (f' "{name}"' if name else "") + extras
+
+
+def browser_view(state, dom=None, budget=6000):
+    refs = state.get("refs") or []
+    sem = [r for r in refs if r.get("role") not in _VIEW_TEXT_ROLES and r.get("role") not in _VIEW_PLAIN_ROLES]
+    joined = _dom_join(sem, dom)
+    dom_of = {id(s): joined[i] for i, s in enumerate(sem) if i in joined}
+    sem_ids = {id(r) for r in sem}
+    # walk the outline for document order, text and <form> scope; refs are matched to outline lines in order
+    seq, ptr, forms, vis, form_at = [], 0, [], "in_viewport", None
+    names = {" ".join((r.get("name") or "").split()) for r in sem}
+    for raw in (state.get("outline") or "").splitlines():
+        m = _OUTLINE_LINE.match(raw)
+        if not m:
+            continue
+        ind, role, name = len(m.group(1)), m.group(2), " ".join((m.group(3) or "").split())
+        # in_form is lenient: the outline's indentation drifts, so a form runs until a shallower line, a landmark or the next form
+        if forms and ind < forms[-1]:
+            forms = []
+        if role == "form":
+            forms = [ind]                                    # forms do not nest; a new one ends the last
+        elif role in _VIEW_LANDMARKS:
+            forms = []
+        if role in _VIEW_TEXT_ROLES or role not in _VIEW_PLAIN_ROLES:
+            hit = next((j for j in range(ptr, min(ptr + 60, len(refs)))
+                        if refs[j].get("role") == role and " ".join((refs[j].get("name") or "").split()) == name), None)
+            if hit is not None:
+                for r in refs[ptr:hit]:
+                    if id(r) in sem_ids:
+                        seq.append(("i", r, bool(forms)))
+                ptr = hit + 1
+            if role in _VIEW_TEXT_ROLES:
+                if name and name not in names and (not seq or seq[-1][:2] != ("t", name)):
+                    seq.append(("t", name, role, vis))
+            elif hit is not None:
+                seq.append(("i", refs[hit], bool(forms)))
+                vis = refs[hit].get("visibility", vis)
+    for r in refs[ptr:]:
+        if id(r) in sem_ids:
+            seq.append(("i", r, False))
+    items = []
+    for e in seq:
+        if e[0] == "t":
+            items.append({"kind": "t", "vis": e[3] == "in_viewport", "line": (lambda t, n: lambda eid: f'{t} "{_clip(n, 160)}"')("heading" if e[2] == "heading" else "text", e[1])})
+            continue
+        r, in_form = e[1], e[2]
+        a = dom_of.get(id(r)) or {}
+        role, name = r["role"], _clip(r.get("name"), 100)
+        itype = a.get("type") or ("password" if _sem_class(role) == "text" and _PASSWORD_RE.search(name) else None)
+        submit = a.get("type") == "submit" or (role == "button" and bool(_SUBMIT_RE.match(name)))
+        st = r.get("states") or {}
+        flags = [f for f in _VIEW_FLAGS if _on(st.get(f))] + (["checked" if _on(st["checked"]) else "unchecked"] if "checked" in st else [])
+        extra = (f" type={itype}" if itype and itype not in ("text", "submit", "button") else "") + (f" [{' '.join(flags)}]" if flags else "")
+        if r.get("value") not in (None, "") and itype != "password":
+            extra += f' = "{_clip(r["value"], 80)}"'
+        items.append({"kind": "i", "vis": r.get("visibility") == "in_viewport", "ref": r["ref"], "line": _control_line(role, name, extra),
+                      "facts": _facts(role, r.get("name"), itype, a.get("autocomplete"), in_form, submit)})
+    page = state.get("page") or {}
+    title = page.get("title")
+    if not title or title == "about:blank":                  # the root web area carries the real title
+        title = next((c.get("name") for c in state.get("content_refs") or [] if c.get("role") == "rootwebarea" and c.get("name")), title)
+    header = [f"Page: {_clip(title, 120)}", f"URL: {_clip(page.get('url'), 200)}"]
+    if (state.get("snapshot") or {}).get("complete") is False:
+        header.append("(the page continues below the part listed here)")
+    return _assemble(header, items, budget)
+
+
+def app_view(state, budget=6000):
+    els = state.get("elements") or []
+    wb = state.get("window_bounds") or {}
+    sw, sh = state.get("screenshot_width"), state.get("screenshot_height")
+    sx = sw / wb["width"] if sw and wb.get("width") else state.get("screenshot_scale") or 1.0
+    sy = sh / wb["height"] if sh and wb.get("height") else state.get("screenshot_scale") or 1.0
+    kids = {}
+    for e in els:
+        kids.setdefault(e.get("parent_index"), []).append(e)
+
+    def inner(e, depth=3):                                   # the first text under a row or cell, which is what names it
+        for c in kids.get(e["element_index"], ()):
+            t = c.get("label") or c.get("value") if c.get("role") in ("AXStaticText", "AXTextField", "AXTextArea") else None
+            if t or depth > 1 and (t := inner(c, depth - 1)):
+                return t
+        return None
+    items = []
+    for e in els:
+        role = e.get("role") or ""
+        short = role[2:] if role.startswith("AX") else role
+        label, value, f = e.get("label"), e.get("value"), e.get("frame")
+        if short in ("Row", "Cell") and not (label or value):
+            label = inner(e)
+        if short == "StaticText":
+            t = value or label
+            if t:
+                items.append({"kind": "t", "vis": True, "line": (lambda n: lambda eid: f'text "{_clip(n, 160)}"')(t)})
+            continue
+        if not (short in _AX_INTERACTIVE or _AX_ACTIONS & set(e.get("actions") or ())):
+            continue
+        if not (label or value or f) or short in ("Row", "Cell") and not (label or value):
+            continue                                         # nothing to call it by (and, for controls, nowhere to see it)
+        box = [round((f["x"] - wb.get("x", 0)) * sx), round((f["y"] - wb.get("y", 0)) * sy), round(f["w"] * sx), round(f["h"] * sy)] if f else None
+        vis = bool(box and sw and sh and box[0] < sw and box[1] < sh and box[0] + box[2] > 0 and box[1] + box[3] > 0)
+        name = _clip(label or (value if short not in ("TextField", "TextArea", "SearchField", "SecureTextField", "ComboBox") else ""), 100)
+        flags = [k for k in ("selected",) if e.get(k)] + (["disabled"] if e.get("enabled") is False else [])
+        extra = (f" [{' '.join(flags)}]" if flags else "") + (f' = "{_clip(value, 80)}"' if value and label and short != "SecureTextField" else "")
+        kind = short.lower()
+        secure = short == "SecureTextField"
+        if secure:
+            kind = "textfield"
+        items.append({"kind": "i", "vis": vis, "line": _control_line(kind, name, extra),
+                      "ref": {"element_index": e["element_index"], "window_id": state.get("window_id"), "pid": state.get("pid")},
+                      "facts": _facts(kind, label or value, "password" if secure else None, None, False,
+                                      kind == "button" and bool(_SUBMIT_RE.match(label or "")), None, box)})
+    header = [f"App: {_clip(state.get('app_name'), 80)}" + (f' - window "{_clip(state.get("window_title"), 100)}"' if state.get("window_title") else "")]
+    return _assemble(header, items, budget)
+
+
+def fold_history(lines, budget=3000):
+    """Newest steps stay whole (each capped); the oldest become one `Earlier: …` line. Fits est_tokens(...) <= budget."""
+    cap = int(budget * 3.2)
+    if est_tokens("\n".join(lines)) <= budget:
+        return list(lines)
+    head = max(40, cap // 5)
+    room = cap - head - 1
+    keep, used = [], 0
+    for ln in reversed(lines):
+        ln = _clip(ln, min(400, room))
+        if keep and used + len(ln) + 1 > room:
+            break
+        keep.append(ln); used += len(ln) + 1
+    older = lines[:len(lines) - len(keep)]
+    out = list(reversed(keep))
+    if older:
+        out.insert(0, _clip("Earlier: " + "; ".join(_clip(l, 50) for l in older), head))
+    return out
+
+
 # ---------------------------------------------------------------- versions & updates
 
 update_job: dict = {"status": "idle"}

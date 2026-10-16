@@ -369,6 +369,124 @@ def agent_client_is_a_singleton_that_ensures_the_daemon():
         app.McpClient, app._agent_daemon_running, app.start_agent_daemon, app._agent_reaper_start, app._agent_cli = saved
 
 
+FIX = Path(__file__).resolve().parent / "fixtures" / "agent"
+
+
+def _fx(name):
+    return json.load(open(FIX / f"{name}.json"))
+
+
+@check
+def views_fit_budget():
+    for name in ("form", "login", "wikipedia"):
+        v = app.browser_view(_fx(f"browser_semantic_{name}"))
+        assert app.est_tokens(v["text"]) <= 6000, name
+        print(f"      {name}: {app.est_tokens(v['text'])} tokens, {v['interactive']} interactive, sparse={v['sparse']}")
+    big = _fx("browser_semantic_wikipedia")
+    big = {**big, "refs": big["refs"] * 20, "outline": big["outline"] * 20}
+    v = app.browser_view(big)
+    assert app.est_tokens(v["text"]) <= 6000 and "more not shown" in v["text"], app.est_tokens(v["text"])
+    print(f"      wikipedia x20: {app.est_tokens(v['text'])} tokens, {v['interactive']} interactive")
+    n = app.app_view(_fx("window_state_notes"))
+    assert app.est_tokens(n["text"]) <= 6000
+    print(f"      notes: {app.est_tokens(n['text'])} tokens, {n['interactive']} interactive, sparse={n['sparse']}")
+    assert len(app.app_view(_fx("window_state_notes"), budget=300)["text"]) / 3.2 <= 300
+
+
+@check
+def views_keep_interactive_first():
+    st = _fx("browser_semantic_login")
+    full = app.browser_view(st)
+    vis = [r["name"] for r in st["refs"] if r["visibility"] == "in_viewport" and r["role"] in ("textbox", "button", "link")]
+    small = app.browser_view(st, budget=110)
+    assert app.est_tokens(small["text"]) <= 110
+    got = [f["facts"]["name"] for f in small["refs"].values()]
+    assert all(n in got for n in vis), (vis, got)
+    assert full["text"].count('text "') > small["text"].count('text "') and "more not shown" in small["text"]
+    assert len(small["refs"]) < len(full["refs"]) or small["text"].count('text "') == 0
+    # app: visible controls survive, frameless (hidden-menu) ones go first
+    n = _fx("window_state_notes")
+    tiny = app.app_view(n, budget=400)
+    assert tiny["refs"] and all(f["facts"]["box"] for f in tiny["refs"].values()), tiny["text"]
+
+
+@check
+def refs_are_short_and_stable():
+    for name in ("form", "wikipedia"):
+        st = _fx(f"browser_semantic_{name}")
+        a, b = app.browser_view(st), app.browser_view(st)
+        assert a == b
+        assert list(a["refs"]) == [f"e{i}" for i in range(1, len(a["refs"]) + 1)]
+        assert all(k in a["text"] for k in ("[e1]", f"[e{len(a['refs'])}]"))
+        assert a["refs"]["e1"]["ref"] == st["refs"][0]["ref"]
+        order = [e["ref"] for e in a["refs"].values()]
+        assert order == sorted(order, key=[r["ref"] for r in st["refs"]].index)    # document order
+    n = app.app_view(_fx("window_state_notes"))
+    assert list(n["refs"]) == [f"e{i}" for i in range(1, len(n["refs"]) + 1)]
+    e1 = n["refs"]["e1"]["ref"]
+    assert set(e1) == {"element_index", "window_id", "pid"} and e1["window_id"] == 480 and e1["pid"] == 12282
+
+
+@check
+def facts_from_fixture():
+    keys = {"role", "name", "input_type", "autocomplete", "in_form", "is_submit", "href", "box"}
+    login, dom = _fx("browser_semantic_login"), _fx("browser_domrefs_login")
+    v = app.browser_view(login, dom)
+    by = {r["facts"]["name"]: r["facts"] for r in v["refs"].values()}
+    assert all(set(r["facts"]) == keys for r in v["refs"].values())
+    assert by["Password"]["input_type"] == "password" and by["Password"]["role"] == "textbox"
+    assert by["Sign in"]["is_submit"] is True and by["Username or email address"]["input_type"] in (None, "text")
+    assert all(r["facts"]["box"] is None for r in v["refs"].values())
+    assert "password" in v["text"].split("Password")[1].split("\n")[0]
+    # an unrelated button does not inherit submit from a DOM button it was not matched to
+    assert by["Manage cookies"]["is_submit"] is False and by["Forgot password?"]["is_submit"] is False
+    f = app.browser_view(_fx("browser_semantic_form"))
+    fb = {r["facts"]["name"]: r["facts"] for r in f["refs"].values()}
+    assert fb["Submit order"]["is_submit"] is True and fb["Submit order"]["in_form"] is True
+    assert fb["Customer name:"]["input_type"] is None and fb["Customer name:"]["autocomplete"] is None and fb["Customer name:"]["is_submit"] is False
+    assert fb["Customer name:"]["href"] is None and fb["Customer name:"]["box"] is None
+    # app: box = frame in screenshot pixels
+    n = _fx("window_state_notes")
+    av = app.app_view(n)
+    wb = n["window_bounds"]; sx, sy = n["screenshot_width"] / wb["width"], n["screenshot_height"] / wb["height"]
+    el = next(e for e in n["elements"] if e["element_index"] == 6)
+    want = [round((el["frame"]["x"] - wb["x"]) * sx), round((el["frame"]["y"] - wb["y"]) * sy), round(el["frame"]["w"] * sx), round(el["frame"]["h"] * sy)]
+    hit = [r for r in av["refs"].values() if r["ref"]["element_index"] == 6]
+    assert hit and hit[0]["facts"]["box"] == want and hit[0]["facts"]["role"] == "textfield" and hit[0]["facts"]["name"] == "Text 2", hit
+    assert "AXRaise" not in av["text"] and "Notes" in av["text"] and "All iCloud" in av["text"]
+
+
+@check
+def sparse_detection():
+    v = app.app_view({"elements": [{"element_index": 0, "role": "AXGroup", "label": "canvas", "actions": [], "frame": {"x": 0, "y": 0, "w": 10, "h": 10}}]})
+    assert v["sparse"] is True and v["interactive"] == 0 and v["refs"] == {}
+    assert app.browser_view({"page": {"title": "x", "url": "https://x"}, "outline": "", "refs": []})["sparse"] is True
+    assert app.browser_view(_fx("browser_semantic_wikipedia"))["sparse"] is False
+
+
+@check
+def unicode_labels():
+    st = {"page": {"title": "Café — 東京", "url": "https://x.test/東京"}, "outline": '- button "Café — 東京" [focusable=true]\n',
+          "refs": [{"ref": "p1:0", "role": "button", "name": "Café — 東京", "actions": ["click"], "states": {}, "value": None, "visibility": "in_viewport", "frame": "main"}]}
+    v = app.browser_view(st)
+    assert '[e1] button "Café — 東京"' in v["text"] and v["refs"]["e1"]["facts"]["name"] == "Café — 東京"
+    a = app.app_view({"elements": [{"element_index": 3, "role": "AXButton", "label": "Café — 東京", "actions": ["AXPress"]}], "pid": 1, "window_id": 2, "app_name": "Café"})
+    assert 'button "Café — 東京"' in a["text"]
+
+
+@check
+def fold_history_budget():
+    lines = [f"step {i}: click e{i} -> ok " + "x" * 120 for i in range(200)]
+    out = app.fold_history(lines)
+    assert app.est_tokens("\n".join(out)) <= 3000 and out[0].startswith("Earlier:")
+    assert out[-1] == lines[-1], "newest line is kept whole"
+    short = lines[:3]
+    assert app.fold_history(short) == short
+    huge = ["y" * 50000, "z" * 50000]
+    assert app.est_tokens("\n".join(app.fold_history(huge))) <= 3000
+    assert app.est_tokens("\n".join(app.fold_history(lines, budget=100))) <= 100
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:
