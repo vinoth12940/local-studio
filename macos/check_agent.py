@@ -543,6 +543,19 @@ def dom_attrs_cannot_be_spoofed():
     fs = {r["facts"]["name"]: r["facts"] for r in app.browser_view(st, d)["refs"].values()}
     assert fs["Card number"]["autocomplete"] == "cc-number" and fs["Verification code"]["autocomplete"] == "one-time-code"
     assert fs["Nickname"]["autocomplete"] == "nickname"
+    # a "show password" toggle makes the DOM say type=text: the name still marks it, and its value never reaches the model
+    st3 = {"page": {"title": "t", "url": "u"}, "outline": "", "refs": [
+        {"ref": "p1:0", "role": "textbox", "name": "Password", "actions": ["type"], "states": {}, "value": "hunter2", "visibility": "in_viewport"},
+        {"ref": "p1:1", "role": "textbox", "name": "Card number", "actions": ["type"], "states": {}, "value": "4111111111111111", "visibility": "in_viewport"},
+        {"ref": "p1:2", "role": "textbox", "name": "Nickname", "actions": ["type"], "states": {}, "value": "bobby", "visibility": "in_viewport"}]}
+    d3 = {"refs": [{"node": "input", "label": "aria-label=Password type=text"},
+                   {"node": "input", "label": "aria-label=Card number type=text autocomplete=off"},
+                   {"node": "input", "label": "aria-label=Nickname type=text"}]}
+    v3 = app.browser_view(st3, d3)
+    assert "hunter2" not in v3["text"] and "4111" not in v3["text"] and "bobby" in v3["text"], v3["text"]
+    f3 = {r["facts"]["name"]: r["facts"] for r in v3["refs"].values()}
+    assert f3["Password"]["input_type"] == "password" and f3["Card number"]["autocomplete"] == "cc-number" and f3["Nickname"]["input_type"] == "text"
+    assert app.gate("type", {"text": "x"}, f3["Password"], _gc())[0] == "blocked"
     d2 = {"refs": [{"node": "input", "label": "aria-label=Card number type=text autocomplete=billing cc-number"}]}
     assert app.browser_view(st, d2)["refs"]["e1"]["facts"]["autocomplete"] == "billing cc-number"
 
@@ -596,6 +609,14 @@ def app_tiers():
     for n in ("Telegram", "Discord", "Signal", "Microsoft Teams", "Skype", "LINE", "WeChat", "Zoom", "zoom.us"):
         assert t(n, {}) == "ask", n
     assert t("Notes", {}) == "allowed" and t("Pages", {}) == "allowed" and t("Preview", {}) == "allowed"
+    for n in ("Microsoft Teams (work or school)", "Microsoft Teams classic", "Telegram Desktop", "Outlook", "Microsoft Outlook",
+              "Outlook (new)", "Signal Desktop", "Zoom Workplace"):
+        assert t(n, {}) == "ask", n
+    for n in ("Chase Mobile", "Proton Pass Desktop", "Terminal 2", "System Settings (beta)"):
+        assert t(n, {}) == "read", n
+    for n in ("Mailchimp Helper", "Signalfire", "Notebook", "Teams Planner", "Microsoft Word"):
+        assert t(n, {}) == "allowed", n
+    assert t("Telegram Desktop", {"Telegram Desktop": "allowed"}) == "allowed"
     assert t("Mail", {"Mail": "bogus"}) == "ask"                       # a junk override is ignored
     assert app.RISKY_WORDS.search("Place order") and not app.RISKY_WORDS.search("Bold")
 
@@ -647,7 +668,8 @@ def gate_table():
         ("open_url control chars around", "open_url", {"url": "\x01 https://evil.net/ \x02"}, None, _gc(), "risky"),
         ("open_url idn lookalike", "open_url", {"url": "https://exаmple.com/"}, None, _gc(), "risky"),
         ("open_url port", "open_url", {"url": "https://example.com:8443/x"}, None, _gc(), "safe"),
-        ("open_url host:port no scheme", "open_url", {"url": "evil.net:8080/x"}, None, _gc(), "risky"),
+        ("open_url host:port no scheme", "open_url", {"url": "evil.net:8080/x"}, None, _gc(), "blocked"),
+        ("open_url localhost:port", "open_url", {"url": "localhost:3000"}, None, _gc(task_domains={"localhost"}), "blocked"),
         ("open_url userinfo trick", "open_url", {"url": "https://example.com@evil.net/"}, None, _gc(), "risky"),
         ("open_url control-char javascript", "open_url", {"url": "\x01javascript:alert(1)"}, None, _gc(), "blocked"),
         ("open_url tab-split javascript", "open_url", {"url": "java\tscript:alert(1)"}, None, _gc(), "blocked"),
@@ -701,6 +723,67 @@ def gate_table():
         ("javascript url", "open_url", {"url": "javascript:alert(1)"}, None, _gc(), "blocked"),
     ]
     rows += [
+        # any `name:` prefix is a scheme, even one that looks like a port
+        ("js scheme digit path", "open_url", {"url": "javascript:1/alert(1)"}, None, _gc(), "blocked"),
+        ("js scheme zero path", "open_url", {"url": "javascript:0/alert(document.cookie)//"}, None, _gc(), "blocked"),
+        ("js upper hash", "open_url", {"url": "JAVASCRIPT:1#x"}, None, _gc(), "blocked"),
+        ("data digit", "open_url", {"url": "data:1/x"}, None, _gc(), "blocked"),
+        ("vbscript digit", "open_url", {"url": "vbscript:1/x"}, None, _gc(), "blocked"),
+        ("about blank", "open_url", {"url": "about:blank"}, None, _gc(), "blocked"),
+        # hosts the browser (UTS 46) keeps apart from their IDNA2003 look-alike never vouch
+        ("sharp s lookalike", "open_url", {"url": "https://wordpreß.com/x"}, None, _gc(task_domains={"wordpress.com"}, domain=None), "risky"),
+        ("capital sharp s lookalike", "open_url", {"url": "https://wordpreẞ.com/x"}, None, _gc(task_domains={"wordpress.com"}, domain=None), "risky"),
+        ("final sigma host", "open_url", {"url": "https://exampleς.com/"}, None, _gc(), "risky"),
+        ("zwj in host", "open_url", {"url": "https://exam‍ple.com/"}, None, _gc(), "risky"),
+        ("zwnj in host", "open_url", {"url": "https://exam‌ple.com/"}, None, _gc(), "risky"),
+        ("real wordpress", "open_url", {"url": "https://wordpress.com/x"}, None, _gc(task_domains={"wordpress.com"}, domain=None), "safe"),
+        # search engines: the plain search page only
+        ("bing search", "open_url", {"url": "https://bing.com/search?q=x"}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ("ddg html", "open_url", {"url": "https://duckduckgo.com/html/?q=x"}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ("ddg bare path with q", "open_url", {"url": "https://www.duckduckgo.com?q=x"}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ("schemeless search with // later", "open_url", {"url": "google.com/search?q=a//b"}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ("schemeless task url with //", "open_url", {"url": "example.com/a//b"}, None, _gc(), "safe"),
+        ("google apps script", "open_url", {"url": "https://script.google.com/macros/s/X/exec?d=SECRET"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("google forms", "open_url", {"url": "https://docs.google.com/forms/d/e/X/formResponse?entry.1=SECRET"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("google sites", "open_url", {"url": "https://sites.google.com/view/x"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("ddg redirector", "open_url", {"url": "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fevil.net"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("google redirector", "open_url", {"url": "https://www.google.com/url?q=https://evil.net"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("bing redirector", "open_url", {"url": "https://www.bing.com/ck/a?u=x"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("google home", "open_url", {"url": "https://www.google.com/"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("ddg no query", "open_url", {"url": "https://duckduckgo.com/"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("ddg empty query", "open_url", {"url": "https://duckduckgo.com/?q="}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("ddg htmlx", "open_url", {"url": "https://duckduckgo.com/htmlx"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("google dot segments", "open_url", {"url": "https://google.com/search/../url?q=evil"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("google userinfo", "open_url", {"url": "https://google.com@evil.net/search?q=x"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("html.duckduckgo subdomain", "open_url", {"url": "https://html.duckduckgo.com/html/?q=x"}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ("linked google subdomain", "open_url", {"url": "https://docs.google.com/x"}, None, _gc(link_domains={"google.com"}), "safe"),
+        # multi-word risky words with a hyphen
+        ("Sign-up", "click", {"ref": "e1"}, _gf(name="Sign-up"), _gc(), "risky"),
+        ("Check-out", "click", {"ref": "e1"}, _gf(name="Check-out"), _gc(), "risky"),
+        ("Sign - up", "click", {"ref": "e1"}, _gf(name="Sign - up"), _gc(), "risky"),
+        ("Place-order", "click", {"ref": "e1"}, _gf(name="Place-order"), _gc(), "risky"),
+        # literal space key and C0 controls
+        ("hotkey shift+space char", "hotkey", {"keys": ["shift", " "]}, None, _ac(), "risky"),
+        ("hotkey cmd+space char", "hotkey", {"keys": "cmd+ "}, None, _ac(), "risky"),
+        ("hotkey lone space char", "hotkey", {"keys": [" "]}, None, _ac(), "risky"),
+        ("hotkey nbsp", "hotkey", {"keys": [" "]}, None, _ac(), "risky"),
+        ("hotkey NSEnter", "hotkey", {"keys": ["\x03"]}, None, _ac(), "risky"),
+        ("hotkey DEL char", "hotkey", {"keys": ["\x7f"]}, None, _ac(), "risky"),
+        ("hotkey BS char", "hotkey", {"keys": ["cmd", "\x08"]}, None, _ac(), "risky"),
+        ("hotkey spaced plus", "hotkey", {"keys": "cmd + b"}, None, _ac(), "safe"),
+        ("hotkey tab", "hotkey", {"keys": ["cmd", "tab"]}, None, _ac(), "safe"),
+        ("type_app NSEnter text", "type_app", {"ref": "e1", "text": "a\x03"}, _gf("textfield", "Title"), _ac(), "risky"),
+        ("type_app DEL text", "type_app", {"ref": "e1", "text": "a\x7f"}, _gf("textfield", "Title"), _ac(), "risky"),
+        ("type_app BS text", "type_app", {"ref": "e1", "text": "a\x08"}, _gf("textfield", "Title"), _ac(), "risky"),
+        ("type_app tab text", "type_app", {"ref": "e1", "text": "a\tb"}, _gf("textfield", "Title"), _ac(), "safe"),
+        ("type web ctrl text", "type", {"ref": "e1", "text": "a\x03"}, _gf("textbox", "Message"), _gc(), "risky"),
+        # search fields
+        ("AXSearchField role", "type_app", {"ref": "e1", "text": "cats", "submit": True}, _gf("searchfield", ""), _ac(), "safe"),
+        ("SearchField role case", "type", {"ref": "e1", "text": "cats", "submit": True}, _gf("SearchField", ""), _gc(), "safe"),
+        ("Bing search label", "type", {"ref": "e1", "text": "cats", "submit": True}, _gf("combobox", "Enter your search here - Search suggestions will show as you type"), _gc(), "safe"),
+        ("Researching label", "type", {"ref": "e1", "text": "cats", "submit": True}, _gf("textbox", "Researching notes"), _gc(), "risky"),
+        # the name heuristic holds even when the DOM says type=text
+        ("password named, dom text", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Password", input_type="password"), _gc(), "blocked"),
         # hotkeys: every spelling of Enter / Delete
         ("hotkey string keys return", "hotkey", {"keys": "return"}, None, _ac(), "risky"),
         ("hotkey combo string", "hotkey", {"keys": ["cmd+return"]}, None, _ac(), "risky"),
@@ -847,6 +930,7 @@ def approval_titles():
     assert T("open_url", None, _gc(), {"url": "https://\u0435xample.com/"}).startswith("Open **xn--xample-2of.com** ("), T("open_url", None, _gc(), {"url": "https://\u0435xample.com/"})
     assert T("open_url", None, _gc(), {"url": "https://www.example.com\t/x"}).startswith("Open **example.com** (")
     assert T("open_url", None, _gc(), {"url": "https://"}).startswith("Open **an address with no host**")
+    assert T("open_url", None, _gc(), {"url": "https://wordpre\u00df.com/x"}).startswith("Open **wordpre\u00df.com** (")
     assert T("hotkey", None, _ac(), {"keys": "cmd+return"}) == "Press **\u2318+Return** in Notes"
     assert T("hotkey", None, _ac(), {"keys": 5}) == "Press **?** in Notes"
     assert T("menu", None, _ac(), {"path": "File > Delete Note"}) == "Use menu **File \u203a Delete Note** in Notes"

@@ -23,7 +23,7 @@ import time
 import unicodedata
 import uuid
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -1961,7 +1961,9 @@ def browser_view(state, dom=None, budget=6000):
         a = dom_of.get(id(r)) or {}
         role, name = r["role"], _clip(r.get("name"), 100)
         editable = _sem_class(role) == "text" or "type" in (r.get("actions") or ()) and role not in ("button", "link", "checkbox", "radio", "menuitem", "tab", "switch")
-        itype = a.get("type") or ("password" if editable and _PASSWORD_RE.search(name) else None)
+        itype = a.get("type")
+        if editable and itype != "password" and _PASSWORD_RE.search(name):      # a "show password" toggle turns type=password into text
+            itype = "password"
         ac = a.get("autocomplete")
         if editable and not _sensitive_ac(ac):               # the label is the fallback unless the DOM already says it is sensitive
             ac = _guess_autocomplete(name) or ac
@@ -2059,9 +2061,9 @@ def fold_history(lines, budget=3000):
 # the inflections people see on buttons ("Sends", "Deleting...", "Payment"); \s* / \s+ inside the multi-word ones.
 RISKY_WORDS = re.compile(
     r"\b(?:send(?:s|ing)?|sent|submit(?:s|ted|ting)?|buy(?:s|ing)?|pay(?:s|ing|ment|ments|ed)?|order(?:s|ed|ing)?|"
-    r"check\s*out|confirm(?:s|ed|ing|ation)?|delet(?:e|es|ed|ing|ion)|remov(?:e|es|ed|ing|al)|post(?:s|ed|ing)?|"
-    r"publish(?:es|ed|ing)?|sign\s*up|(?:un)?subscri(?:be|bes|bed|bing|ption|ptions)|book(?:s|ed|ing)?|transfer(?:s|red|ring)?|"
-    r"place\s+order|purchas(?:e|es|ed|ing)|donat(?:e|es|ed|ing|ion|ions)|trash(?:ed|ing)?|repl(?:y|ies|ied|ying)|"
+    r"check[\s-]*out|confirm(?:s|ed|ing|ation)?|delet(?:e|es|ed|ing|ion)|remov(?:e|es|ed|ing|al)|post(?:s|ed|ing)?|"
+    r"publish(?:es|ed|ing)?|sign[\s-]*up|(?:un)?subscri(?:be|bes|bed|bing|ption|ptions)|book(?:s|ed|ing)?|transfer(?:s|red|ring)?|"
+    r"place[\s-]*order|purchas(?:e|es|ed|ing)|donat(?:e|es|ed|ing|ion|ions)|trash(?:ed|ing)?|repl(?:y|ies|ied|ying)|"
     r"shar(?:e|es|ed|ing)|authori[sz](?:e|es|ed|ing|ation)|approv(?:e|es|ed|ing|al)|accept(?:s|ed|ing)?|grant(?:s|ed|ing)?)\b", re.I)
 APP_TIERS_DEFAULT = {
     **{n: "read" for n in (
@@ -2073,13 +2075,14 @@ APP_TIERS_DEFAULT = {
         "Shortcuts", "Script Editor", "Automator")},
     **{n: "ask" for n in (
         "Mail", "Messages", "WhatsApp", "Slack", "Calendar", "Finder",
-        "Telegram", "Discord", "Signal", "Microsoft Teams", "Skype", "LINE", "WeChat", "Zoom", "zoom.us")},
+        "Telegram", "Discord", "Signal", "Microsoft Teams", "Skype", "LINE", "WeChat", "Zoom", "zoom.us", "Outlook", "Microsoft Outlook")},
 }
 READ_ONLY_NAME = re.compile(r"bank|banking|finance|wallet|password|crypto|invest|broker|trading|pay\b", re.I)
-SEARCH_DOMAINS = frozenset(("duckduckgo.com", "google.com", "bing.com"))     # open_url may always go to these
+SEARCH_DOMAINS = frozenset(("duckduckgo.com", "google.com", "bing.com"))     # open_url may go to a search on exactly these hosts (_search_ok)
 _TIER_NAMES = ("read", "ask", "allowed")
-_SEARCH_FIELD_RE = re.compile(r"^\s*(search|find)\b", re.I)
-_NEWLINE_RE = re.compile("[\r\n  \x0b\x0c\x85]")
+_SEARCH_FIELD_RE = re.compile(r"^\s*(?:search|find)\b|\bsearch\b", re.I)
+_SEARCH_ROLES = frozenset(("searchbox", "searchfield"))
+_CTRL_RE = re.compile("[\\x00-\\x08\\x0a-\\x1f\\x7f\\u2028\\u2029\\x85]")      # C0 controls but tab (Enter, NSEnter \\x03, Backspace, ...) and line separators
 _ENTER_KEYS = frozenset(("↩", "⏎", "⌅", "↵", "space", "spacebar", "␣", "kpenter", "newline", "linefeed", "lf", "cr"))
 _DELETE_KEYS = frozenset(("del", "⌫", "⌦", "kpdelete"))
 _APP_ACTING = frozenset(("click_app", "type_app", "menu", "hotkey"))
@@ -2104,20 +2107,25 @@ def _tier_key(name):
     return k[:-4] if k.endswith(".app") else k
 
 
+def _default_tier(k):
+    """Longest default whose name equals k or is a whole-word prefix of it ("Microsoft Teams (work or school)", "Telegram Desktop")."""
+    best = None
+    for n, t in APP_TIERS_DEFAULT.items():
+        d = _tier_key(n)
+        if (k == d or k.startswith(d) and not k[len(d)].isalnum()) and (best is None or len(d) > best[0]):
+            best = (len(d), t)
+    return best[1] if best else None
+
+
 def app_tier(app_name, overrides):
-    """"read" (look only), "ask" (every action needs approval) or "allowed": the user's overrides first, then the
-    defaults, then a name that sounds like money or secrets (read), else allowed."""
+    """"read" (look only), "ask" (every action needs approval) or "allowed": the user's overrides (exact name) first, then the
+    defaults (name or whole-word prefix), then a name that sounds like money or secrets (read), else allowed."""
     k = _tier_key(app_name)
-    for table in (overrides or {}, APP_TIERS_DEFAULT):
-        for n, t in table.items():
-            if _tier_key(n) == k and t in _TIER_NAMES:
-                return t
-    base = k.rstrip("0123456789 ")                                  # iTerm2 -> iterm
-    if base != k:
-        for n, t in APP_TIERS_DEFAULT.items():
-            if _tier_key(n) == base:
-                return t
-    return "read" if READ_ONLY_NAME.search(_norm_label(app_name)) else "allowed"
+    for n, t in (overrides or {}).items():
+        if _tier_key(n) == k and t in _TIER_NAMES:
+            return t
+    t = _default_tier(k) or (_default_tier(k.rstrip("0123456789 ")) if k.rstrip("0123456789 ") != k else None)   # iTerm2 -> iterm
+    return t or ("read" if READ_ONLY_NAME.search(_norm_label(app_name)) else "allowed")
 
 
 def _norm_url(u):
@@ -2126,21 +2134,44 @@ def _norm_url(u):
 
 
 def _url_scheme(u):
-    m = re.match(r"^([a-z][a-z0-9+.-]*):(?!\d+(?:[/?#]|$))", u, re.I)   # `example.com:8080/x` is a host and a port, not a scheme
+    """Any `name:` prefix of a normalised URL is a scheme (so `javascript:1/x` and `data:1/x` are); http/https are the only ones
+    let through, so a schemeless `host:port` fails safe."""
+    m = re.match(r"^([a-z][a-z0-9+.-]*):", u, re.I)
     return m.group(1).lower() if m else ""
 
 
+def _split_url(s):
+    return urlsplit(s if re.match(r"^(?:[a-z][a-z0-9+.-]*:)?//", s, re.I) else "//" + s)
+
+
 def _host(s):
-    """Lowercase ASCII (IDNA) host of a URL or bare host, without www., port or trailing dot; "" if there is none."""
+    """Lowercase ASCII (IDNA) host of a URL or bare host, without www., port or trailing dot; "" if there is none.
+    A host with ß, ς, ZWNJ or ZWJ is returned as typed: Python's IDNA2003 would map ß to ss where browsers (UTS 46) keep it, so
+    it must not be compared as its ASCII look-alike."""
     s = _norm_url(s)
-    if not s or "\\" in s:                                          # browsers read \ as /, urlsplit does not: https://evil.net\@example.com
+    if not s or "\\" in s:                                         # browsers read \ as /, urlsplit does not: https://evil.net\@example.com
         return ""
     try:
-        h = urlsplit(s if "//" in s else "//" + s).hostname or ""
-        h = h.lower().rstrip(".").encode("idna").decode("ascii")
+        h = (_split_url(s).hostname or "").lower().rstrip(".")
+        if not any(c in h for c in "ßς\u200c\u200d"):
+            h = h.encode("idna").decode("ascii")
     except (ValueError, UnicodeError):
         return ""
     return h[4:] if h.startswith("www.") else h
+
+
+def _search_ok(url, host):
+    """A plain web search on exactly google.com, bing.com or duckduckgo.com (www. allowed); not their subdomains, redirectors
+    (/url, /l/, /ck/a) or form/script hosts, which can carry data out."""
+    if host not in SEARCH_DOMAINS:
+        return False
+    try:
+        parts = _split_url(url)
+    except ValueError:
+        return False
+    if host == "duckduckgo.com":
+        return (parts.path in ("", "/") and bool(parse_qs(parts.query).get("q"))) or parts.path == "/html" or parts.path.startswith("/html/")
+    return parts.path == "/search"
 
 
 def _domain_in(host, domains):
@@ -2164,8 +2195,10 @@ def _key_class(keys):
         return "invalid"
     toks, cls = [], "plain"
     for k in keys:
-        if _NEWLINE_RE.search(k):
+        if _CTRL_RE.search(k):
             return "enter"
+        if any(part and not part.strip(" ") for part in unicodedata.normalize("NFKC", k).split("+")):
+            return "enter"                                          # a literal space key, `shift+ `
         toks += [t for t in re.split(r"[+\s]+|(?<=\w)-(?=\w)", k) if t]
     if not toks:
         return "invalid"
@@ -2201,8 +2234,8 @@ def gate(tool, args, facts, ctx):
            task_domains    set of hosts the task is about
            link_domains    set of hosts of links seen on the page (from the DOM; facts["href"] is always None for the browser)
            url_from_page   not used: the model writes every URL, so where it came from cannot be known
-    open_url is safe only within task_domains | link_domains | {domain} | SEARCH_DOMAINS (a subdomain counts as its parent;
-    a domain with no dot never counts); anything else is risky. Typing that presses Enter (submit=True, or a newline in
+    open_url is safe only within task_domains | link_domains | {domain} (a subdomain counts as its parent; a domain with no dot
+    never counts) or for a plain search on SEARCH_DOMAINS (_search_ok); anything else is risky, any scheme but http(s) is blocked. Typing that presses Enter (submit=True, or a newline in
     the text) is risky unless the target is a search field."""
     args = args if isinstance(args, dict) else {}
     ctx = ctx if isinstance(ctx, dict) else {}
@@ -2222,7 +2255,7 @@ def gate(tool, args, facts, ctx):
         if not host:
             return "risky", "the address has no usable host"
         if (_domain_in(host, ctx.get("task_domains")) or _domain_in(host, ctx.get("link_domains"))
-                or _domain_in(host, [ctx.get("domain")]) or _domain_in(host, SEARCH_DOMAINS)):
+                or _domain_in(host, [ctx.get("domain")]) or _search_ok(url, host)):
             return "safe", f"{host} is part of the task, the page or a search engine"
         return "risky", f"{host} is not part of the task"
     if tool in _TYPING or tool == "click" or tool in _APP_ACTING:
@@ -2263,8 +2296,8 @@ def _gate_acting(tool, args, facts, ctx):
         if in_app and RISKY_WORDS.search(name):
             return "risky", f"the field {name!r} sounds irreversible"
         text = args.get("text")
-        if args.get("submit") or (isinstance(text, str) and _NEWLINE_RE.search(text)):
-            if facts.get("role") == "searchbox" or _SEARCH_FIELD_RE.search(name):
+        if args.get("submit") or (isinstance(text, str) and _CTRL_RE.search(text)):
+            if (facts.get("role") or "").lower() in _SEARCH_ROLES or _SEARCH_FIELD_RE.search(name):
                 return "safe", "a search"
             return "risky", "typing would also press Enter"
         return "safe", "ordinary typing"
