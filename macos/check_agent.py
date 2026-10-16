@@ -432,7 +432,8 @@ def refs_are_short_and_stable():
     n = app.app_view(_fx("window_state_notes"))
     assert list(n["refs"]) == [f"e{i}" for i in range(1, len(n["refs"]) + 1)]
     e1 = n["refs"]["e1"]["ref"]
-    assert set(e1) == {"element_index", "window_id", "pid"} and e1["window_id"] == 480 and e1["pid"] == 12282
+    assert set(e1) == {"element_index", "window_id", "pid", "element_token", "snapshot_id"} and e1["window_id"] == 480 and e1["pid"] == 12282
+    assert e1["snapshot_id"] == "s00000001" and e1["element_token"] == "s00000001:%d" % e1["element_index"]
 
 
 @check
@@ -1428,13 +1429,18 @@ def execute_never_raises():
 @check
 def agent_tools_schema():
     names = [t["function"]["name"] for t in app.AGENT_TOOLS]
-    assert names == ["open_url", "read_page", "click", "type", "scroll", "back", "note", "ask_user", "done"], names
+    assert names == ["open_url", "read_page", "click", "type", "scroll", "back", "list_apps", "open_app", "read_app", "click_app", "type_app",
+                     "menu", "hotkey", "note", "ask_user", "done"], names
     by = {t["function"]["name"]: t["function"] for t in app.AGENT_TOOLS}
     assert all(t["type"] == "function" and t["function"]["description"] and t["function"]["parameters"]["type"] == "object" for t in app.AGENT_TOOLS)
     assert by["click"]["parameters"]["required"] == ["ref"] and by["type"]["parameters"]["required"] == ["ref", "text"]
     assert by["type"]["parameters"]["properties"]["submit"]["type"] == "boolean"
     assert by["scroll"]["parameters"]["properties"]["direction"]["enum"] == ["up", "down"] and by["read_page"]["parameters"].get("required", []) == []
     assert by["open_url"]["parameters"]["required"] == ["url"] and by["done"]["parameters"]["required"] == ["answer"]
+    assert by["list_apps"]["parameters"]["properties"] == {} and by["open_app"]["parameters"]["required"] == ["name"] and by["read_app"]["parameters"]["required"] == ["name"]
+    assert by["click_app"]["parameters"]["required"] == ["ref"] and by["type_app"]["parameters"]["required"] == ["ref", "text"]
+    assert by["menu"]["parameters"]["required"] == ["app", "path"] and by["menu"]["parameters"]["properties"]["path"] == {"type": "array", "items": {"type": "string"}, "description": by["menu"]["parameters"]["properties"]["path"]["description"]}
+    assert by["hotkey"]["parameters"]["required"] == ["keys"] and by["hotkey"]["parameters"]["properties"]["keys"]["type"] == "array"
     assert by["back"]["parameters"]["properties"] == {} and by["note"]["parameters"]["required"] == ["text"] and by["ask_user"]["parameters"]["required"] == ["question"]
 
 
@@ -1540,7 +1546,7 @@ def messages_keep_only_newest_view():
     assert "Task: find x" in t2 and "- price is 5" in t2 and "2. click e1 -> ok" in t2 and "Current view" in t2 and "<<<VIEW" in t2 and t2.rstrip().endswith("VIEW>>>")
     assert "Notes so far:\nnone" in t1 and "1. open_url https://a.com -> ok" in t1
     t0 = _text_of(app.agent_messages("t", [], [], None)[1])
-    assert "Nothing is open yet. Start with open_url." in t0 and "<<<VIEW" not in t0 and "Steps so far:\nnone" in t0
+    assert "Nothing is open yet. Start with open_url or open_app." in t0 and "<<<VIEW" not in t0 and "Steps so far:\nnone" in t0
 
 
 @check
@@ -1561,13 +1567,9 @@ def view_is_delimited_and_cannot_close_itself():
     t = _text_of(app.agent_messages("t", [], [], v)[1])
     assert t.count("VIEW>>>") == 1 and t.count("<<<VIEW") == 1 and t.rstrip().endswith("VIEW>>>")
     # the empty-view hint names only tools that exist
-    app.AGENT_TOOLS.append(app._tool_schema("open_app", "x", {"name": {"type": "string"}}, ["name"]))
-    try:
-        assert "Start with open_url or open_app." in _text_of(app.agent_messages("t", [], [], None)[1])
-    finally:
-        app.AGENT_TOOLS.pop()
+    assert "Start with open_url or open_app." in _text_of(app.agent_messages("t", [], [], None)[1])
     saved = list(app.AGENT_TOOLS)
-    app.AGENT_TOOLS[:] = [t for t in saved if t["function"]["name"] != "open_url"]
+    app.AGENT_TOOLS[:] = [t for t in saved if t["function"]["name"] not in ("open_url", "open_app")]
     try:
         t0 = _text_of(app.agent_messages("t", [], [], None)[1])
         assert "open_url" not in t0.split("Current view")[1] and "open_app" not in t0.split("Current view")[1]
@@ -2549,6 +2551,420 @@ def cua_status_is_cached_and_grant_runs_once():
     finally:
         app.CUA_DRIVER = real_drv
 
+
+
+# ---- Mac apps
+
+NOTES = _fx("window_state_notes")
+APP_LIST = {"apps": [
+    {"name": "Notes", "bundle_id": "com.apple.Notes", "pid": 12282, "running": True, "active": True, "launch_path": "/System/Applications/Notes.app"},
+    {"name": "Mail", "bundle_id": "com.apple.mail", "pid": 777, "running": True, "active": False, "launch_path": "/System/Applications/Mail.app"},
+    {"name": "System Settings", "bundle_id": "com.apple.systempreferences", "pid": 555, "running": True, "active": False, "launch_path": "x"},
+    {"name": "Calculator", "bundle_id": "com.apple.calculator", "pid": 0, "running": False, "active": False, "launch_path": "/System/Applications/Calculator.app"},
+    {"name": "Safari", "bundle_id": "com.apple.Safari", "pid": 0, "running": False, "active": False, "launch_path": "y"},
+    {"name": "System Information", "bundle_id": "com.apple.SystemProfiler", "pid": 0, "running": False, "active": False, "launch_path": "z"}]}
+APP_PIDS = {12282: "Notes", 777: "Mail", 555: "System Settings"}
+
+
+def _awin(wid, w, h, on=True, pid=12282):
+    return {"pid": pid, "window_id": wid, "is_on_screen": on, "title": f"w{wid}", "bounds": {"x": 0, "y": 0, "width": w, "height": h}}
+
+
+class AppState:
+    """What CuaDriver does with a Mac app's tree: every get_window_state is a new snapshot, and a token from an older one is refused."""
+
+    def __init__(self, label_of=None):
+        self.n, self.label_of = 0, label_of or {}
+
+    def state(self, args):
+        self.n += 1
+        if args.get("include_accessibility_tree") is False:
+            return _tr({"snapshot_id": f"s{self.n:08d}", "screenshot_width": 1280}, image=b"SHOT%d" % self.n)
+        if args["pid"] not in APP_PIDS:
+            return _tr({"status": "error"}, ok=False, text="no such window")
+        d = json.loads(json.dumps(NOTES))
+        d.update(pid=args["pid"], window_id=args["window_id"], app_name=APP_PIDS[args["pid"]], snapshot_id=f"s{self.n:08d}")
+        for e in d["elements"]:
+            e["element_token"] = f"s{self.n:08d}:{e['element_index']}"
+            if e["element_index"] in self.label_of:
+                e["label"] = self.label_of[e["element_index"]]
+        d["elements"].append({"element_index": 900, "element_token": f"s{self.n:08d}:900", "role": "AXPopUpButton", "label": "Sort By",
+                              "actions": ["AXPress"], "frame": {"x": 120.0, "y": 190.0, "w": 80.0, "h": 20.0}, "parent_index": 0, "depth": 1})
+        return _tr(d, image=PNG)
+
+    def acts(self, name):
+        def act(args):
+            tok = args.get("element_token") or ""
+            if tok and not tok.startswith(f"s{self.n:08d}:"):
+                return _tr({"status": "refused", "refusal": {"code": "snapshot_stale", "message": "stale snapshot " + tok}}, ok=False)
+            return _tr({"status": "ok"})
+        return act
+
+
+def app_client(label_of=None, **over):
+    st = AppState(label_of)
+    script = {"list_apps": _tr(APP_LIST),
+              "launch_app": lambda a: _tr({"pid": next(x["pid"] for x in APP_LIST["apps"] if x["bundle_id"] == a["bundle_id"]) or 4242}, text="Launched"),
+              "list_windows": lambda a: _tr({"windows": [_awin(481, 300, 200, pid=a["pid"]), _awin(480, 1533, 680, pid=a["pid"]), _awin(482, 2000, 900, on=False, pid=a["pid"])]}),
+              "get_window_state": st.state, "bring_to_front": _tr({"status": "ok"}), "invoke_menu": _tr({"status": "ok"}),
+              "hotkey": _tr({"status": "ok"}), "end_session": _tr({"status": "ok"})}
+    for t in ("click", "type_text", "set_value", "press_key"):
+        script[t] = st.acts(t)
+    script.update(over)
+    c = FakeClient(script)
+    c.st = st
+    return c, app.Adapter(c, "ls-abc123")
+
+
+def tca(tool, **args):
+    """tc() for tools that take a `name` argument."""
+    return {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": tool, "arguments": json.dumps(args)}}], "finish_reason": "tool_calls"}
+
+
+def _aref(v, index):
+    return next(k for k, r in v["refs"].items() if r["ref"]["element_index"] == index)
+
+
+def _opened(name="Notes", **kw):
+    c, a = app_client(**kw)
+    app._agent_sleep = lambda s: SLEPT.append(s)
+    SLEPT.clear()
+    assert not a.execute("open_app", {"name": name}).startswith("Error")
+    return c, a, a.observe()
+
+
+@check
+def open_app_binds_window():
+    c, a = app_client()
+    app._agent_sleep = lambda s: SLEPT.append(s)
+    SLEPT.clear()
+    out = a.execute("open_app", {"name": "notes"})                                 # any case
+    assert out.startswith("Opened Notes") and not out.startswith("Error"), out
+    assert c.names() == ["list_apps", "launch_app", "list_windows"], c.names()
+    assert c.of("launch_app")[0] == {"bundle_id": "com.apple.Notes", "session": "ls-abc123"}
+    assert c.of("list_windows")[0] == {"pid": 12282, "session": "ls-abc123"}
+    assert (a.surface, a.app, a.app_pid, a.app_window) == ("app", "Notes", 12282, 480)       # the largest window that is on screen
+    v = a.observe()
+    assert c.of("get_window_state")[-1] == {"pid": 12282, "window_id": 480, "max_elements": 400, "session": "ls-abc123"}
+    assert v["text"].startswith("App: Notes") and all(r["ref"]["element_token"] for r in v["refs"].values())
+    # a unique prefix opens it; a prefix of two apps does not; a name of nothing does not
+    assert a.execute("open_app", {"name": "Calc"}).startswith("Opened Calculator") and a.app_pid == 4242
+    assert a.execute("open_app", {"name": "Sys"}).startswith("Error: 'Sys' matches several apps (System Information, System Settings)")
+    assert a.execute("open_app", {"name": "Nope"}).startswith("Error: no app named 'Nope'")
+    assert a.execute("open_app", {"name": "com.apple.mail"}).startswith("Opened Mail") and a.app == "Mail" and a.app_pid == 777
+    # the window shows up late: polled like the browser's, 0.5 s apart
+    seq = [_tr({"windows": []}), _tr({"windows": [_awin(480, 900, 700)]})]
+    c2, a2 = app_client(list_windows=seq)
+    SLEPT.clear()
+    assert a2.execute("open_app", {"name": "Notes"}).startswith("Opened") and SLEPT == [0.5] and len(c2.of("list_windows")) == 2, SLEPT
+    c3, a3 = app_client(list_windows=_tr({"windows": [_awin(480, 900, 700, on=False)]}))
+    SLEPT.clear()
+    out = a3.execute("open_app", {"name": "Notes"})
+    assert out == "Error: Notes has no window on screen" and len(c3.of("list_windows")) == app.AGENT_BIND_TRIES and a3.surface == "browser", out
+    # launch_app that does not say its pid: found in list_apps again; one that fails is an Error line
+    c4, a4 = app_client(launch_app=_tr({"status": "ok"}, text="Launched Calculator"), list_windows=_tr({"windows": [_awin(9, 300, 400, pid=4242)]}))
+    c4.script["list_apps"] = [_tr(APP_LIST), _tr({"apps": [{"name": "Calculator", "bundle_id": "com.apple.calculator", "pid": 4242, "running": True}]})]
+    assert a4.execute("open_app", {"name": "Calculator"}).startswith("Opened Calculator") and a4.app_pid == 4242
+    c5, a5 = app_client(launch_app=_tr({"status": "refused"}, text="cannot launch", ok=False))
+    assert a5.execute("open_app", {"name": "Notes"}).startswith("Error: cannot launch")
+    assert a.execute("open_app", {"name": ""}) == "Error: an app name is needed"
+
+
+@check
+def list_apps_and_read_app():
+    c, a = app_client()
+    out = a.execute("list_apps", {})
+    assert out.startswith("Running: Notes (active), Mail, System Settings") and "Calculator" in out.split("Installed, not running:")[1], out
+    # the text form CuaDriver prints when there is no structured content
+    txt = "Apps:\n- Notes (pid 12282) [com.apple.Notes]\n- Microsoft Teams (work or school) (pid 31) [com.microsoft.teams2]\n- Calculator [com.apple.calculator]\n- Pages (not running)\n"
+    got = app._parse_apps({"text": txt, "data": None})
+    assert [(x["name"], x["pid"], x["running"], x["bundle_id"]) for x in got] == [
+        ("Notes", 12282, True, "com.apple.Notes"), ("Microsoft Teams (work or school)", 31, True, "com.microsoft.teams2"),
+        ("Calculator", 0, False, "com.apple.calculator"), ("Pages", 0, False, None)], got
+    c2, a2 = app_client(list_apps=_tr(None, text=txt))
+    assert a2.execute("open_app", {"name": "Notes"}).startswith("Opened Notes")
+    # read_app: a running app is switched to (no launch); one that is not running says so
+    assert a.execute("read_app", {"name": "mail"}).startswith("Looking at Mail") and a.app == "Mail" and a.app_pid == 777 and "launch_app" not in c.names()
+    assert a.execute("read_app", {"name": "Calculator"}) == "Error: Calculator is not running; open_app first" and a.app == "Mail"
+    assert a.observe()["text"].startswith("App: Mail")
+    assert c.of("get_window_state")[-1]["pid"] == 777
+
+
+@check
+def click_app_uses_element_token():
+    c, a, v = _opened()
+    e = _aref(v, 150)
+    assert a.facts("click_app", {"ref": e}) == v["refs"][e]["facts"] and a.facts("click", {"ref": e}) is None and a.facts("type_app", {"ref": "e999"}) is None
+    tok = v["refs"][e]["ref"]["element_token"]
+    assert tok == "s00000001:150"
+    out = a.execute("click_app", {"ref": e})
+    assert not out.startswith("Error") and out.startswith("Clicked") and "read the app" in out, out
+    assert c.of("click") == [{"element_token": tok, "session": "ls-abc123"}], c.of("click")      # the token carries snapshot and window
+    assert a.execute("click_app", {"ref": "e999"}) == "Error: e999 is not in the app view; use a ref from the newest view"
+    assert len(c.of("click")) == 1
+    c.script["click"] = _tr({"status": "refused", "refusal": {"code": "x", "message": "the button is disabled"}}, ok=False)
+    assert a.execute("click_app", {"ref": e}) == "Error: the button is disabled"
+
+
+@check
+def type_app_newline_presses_return():
+    c, a, v = _opened()
+    e = _aref(v, 150)
+    tok = v["refs"][e]["ref"]["element_token"]
+    out = a.execute("type_app", {"ref": e, "text": "Line one\nLine two\n"})
+    assert out.startswith("Typed into") and "Return" in out, out
+    calls = [(n, x) for n, x in c.calls if n in ("type_text", "press_key", "set_value")]
+    assert calls == [("type_text", {"text": "Line one", "element_token": tok, "session": "ls-abc123"}),
+                     ("press_key", {"key": "return", "pid": 12282, "element_token": tok, "session": "ls-abc123"}),
+                     ("type_text", {"text": "Line two", "element_token": tok, "session": "ls-abc123"}),
+                     ("press_key", {"key": "return", "pid": 12282, "element_token": tok, "session": "ls-abc123"})], calls
+    c.calls.clear()
+    a.execute("type_app", {"ref": e, "text": "Plain"})
+    assert c.names() == ["type_text"] and c.calls[0][1]["text"] == "Plain"
+    # a popup is set, not typed into
+    c.calls.clear()
+    pop = _aref(v, 900)
+    a.execute("type_app", {"ref": pop, "text": "Date"})
+    assert c.calls == [("set_value", {"pid": 12282, "value": "Date", "element_token": "s00000001:900", "session": "ls-abc123"})], c.calls
+    assert a.execute("type_app", {"ref": e, "text": ""}) == "Error: text is needed"
+    assert a.execute("type_app", {"ref": e, "text": "x\n" * 200}).startswith("Error: the text has more than")
+
+
+@check
+def menu_maps_to_invoke_menu():
+    c, a, v = _opened()
+    out = a.execute("menu", {"app": "Notes", "path": ["File", "New Note"]})
+    assert out.startswith("Chose File > New Note"), out
+    assert c.of("invoke_menu") == [{"pid": 12282, "window_id": 480, "path": ["File", "New Note"], "session": "ls-abc123"}]
+    a.execute("menu", {"app": "notes", "path": "Edit › Select All"})                   # one string, either arrow
+    assert c.of("invoke_menu")[-1]["path"] == ["Edit", "Select All"]
+    # the card said "in Notes": a menu for another app never runs
+    out = a.execute("menu", {"app": "Mail", "path": ["File", "New Message"]})
+    assert out.startswith("Error: the menu belongs to Mail, but Notes is the open app") and len(c.of("invoke_menu")) == 2
+    assert a.execute("menu", {"app": "Notes", "path": []}).startswith("Error: path must be a list")
+    c.script["invoke_menu"] = _tr({"status": "refused", "refusal": {"message": "menu item not found: New Notez"}}, ok=False)
+    assert a.execute("menu", {"app": "Notes", "path": ["File", "New Notez"]}) == "Error: menu item not found: New Notez"
+    assert len(c.of("get_window_state")) == 1                                          # a menu is not retried through a re-read
+    # hotkey: the open app's pid; a lone key is a key press
+    c.calls.clear()
+    assert a.execute("hotkey", {"keys": ["cmd", "n"]}).startswith("Pressed cmd+n")
+    a.execute("hotkey", {"keys": ["Cmd+Shift+4"]})
+    a.execute("hotkey", {"keys": ["Return"]})
+    assert c.calls == [("hotkey", {"keys": ["cmd", "n"], "pid": 12282, "window_id": 480, "session": "ls-abc123"}),
+                       ("hotkey", {"keys": ["cmd", "shift", "4"], "pid": 12282, "window_id": 480, "session": "ls-abc123"}),
+                       ("press_key", {"key": "return", "pid": 12282, "session": "ls-abc123"})], c.calls
+    assert a.execute("hotkey", {"keys": []}).startswith("Error: keys must be a list")
+
+
+@check
+def app_screenshot_from_window_state():
+    c, a, v = _opened()
+    n = len(c.of("get_window_state"))
+    assert a.screenshot() == PNG and len(c.of("get_window_state")) == n               # the read's own picture: no new snapshot to spoil the refs
+    a.execute("click_app", {"ref": _aref(v, 150)})
+    img = a.screenshot()
+    assert img and img.startswith(b"SHOT"), img                                       # something acted: a picture of the window as it is now
+    assert c.of("get_window_state")[-1] == {"pid": 12282, "window_id": 480, "include_accessibility_tree": False, "max_dimension": 1280, "session": "ls-abc123"}
+    c.script["get_window_state"] = _tr({"status": "error"}, ok=False, text="gone")
+    assert a.screenshot() is None                                                      # optional: never raises
+
+
+def mixed_client():
+    """One CuaDriver for both: pid 47601 is the isolated browser, the others are Mac apps."""
+    c, _ = app_client()
+    w, app_wins = web_client().script, c.script["list_windows"]
+    c.script.update({k: v for k, v in w.items() if k not in ("list_windows", "bring_to_front", "end_session")})
+    c.script["list_windows"] = lambda a: GOOD_WIN if a["pid"] == 47601 else app_wins(a)
+    app._agent_sleep = lambda s: SLEPT.append(s)
+    return c, app.Adapter(c, "ls-abc123")
+
+
+@check
+def surface_switches_between_browser_and_app():
+    c, a = mixed_client()
+    SLEPT.clear()
+    assert a.execute("open_url", {"url": "https://github.com/login"}).startswith("Opened") and a.surface == "browser" and a.app is None
+    bv = a.observe()
+    assert a.execute("click_app", {"ref": "e1"}) == "Error: no Mac app is open; use open_app first"
+    assert a.execute("menu", {"app": "Notes", "path": ["File"]}).startswith("Error: no Mac app is open")
+    assert a.execute("hotkey", {"keys": ["cmd", "n"]}).startswith("Error: no Mac app is open")
+    assert a.facts("click_app", {"ref": "e1"}) is None
+    # into the app: the browser's refs are gone, and a browser tool cannot be aimed at an app's refs
+    assert a.execute("open_app", {"name": "Notes"}).startswith("Opened Notes") and a.surface == "app" and a.app == "Notes" and a.view is None
+    v = a.observe()
+    assert v["text"].startswith("App: Notes") and a.facts("click", {"ref": "e1"}) is None and a.facts("click_app", {"ref": "e1"})
+    n_clicks = len(c.of("browser_click"))
+    for tool, args in (("click", {"ref": "e1"}), ("type", {"ref": "e1", "text": "x"}), ("scroll", {"direction": "down"}), ("back", {})):
+        out = a.execute(tool, args)
+        assert out.startswith(f"Error: {tool} is for the browser and a Mac app is open"), out
+    assert len(c.of("browser_click")) == n_clicks and not c.of("browser_type") and not c.of("browser_pointer")
+    # read_page and open_url go back to the browser
+    assert not a.execute("read_page", {}).startswith("Error") and a.surface == "browser" and a.app is None and a.app_pid is None
+    assert a.observe()["text"].startswith("Page:") and a.execute("click_app", {"ref": "e1"}).startswith("Error: no Mac app is open")
+    a.execute("open_app", {"name": "Notes"})
+    assert a.surface == "app"
+    assert a.execute("open_url", {"url": "https://github.com/x"}).startswith("Opened") and a.surface == "browser" and a.app is None
+    # with no browser open yet, read_page cannot leave the app
+    c2, a2, _ = _opened()
+    assert a2.execute("read_page", {}) == "Error: no page is open; use open_url first" and a2.surface == "app" and a2.app == "Notes"
+    # take over brings the app's own window forward; resume re-picks the window and re-reads
+    a2.take_over()
+    assert c2.of("bring_to_front") == [{"pid": 12282, "window_id": 480, "session": "ls-abc123"}]
+    a2.resume()
+    assert a2.view is None
+    n = len(c2.of("list_windows"))
+    assert a2.observe()["text"].startswith("App: Notes") and len(c2.of("list_windows")) == n + 1
+
+
+@check
+def app_stale_snapshot_rebinds_or_errors():
+    c, a, v = _opened()
+    e = _aref(v, 150)
+    c.st.n += 1                                                                        # the app's tree moved on: our token is for an older snapshot
+    out = a.execute("click_app", {"ref": e})
+    assert out.startswith("Clicked"), out
+    assert c.names()[-3:] == ["click", "get_window_state", "click"], c.names()          # the tree is read again, the window is still the same
+    first, second = c.of("click")
+    assert first["element_token"] == "s00000001:150" and second["element_token"] == f"s{c.st.n:08d}:150" and first != second
+    # the control behind the ref is another one after the re-read: nothing is clicked
+    c2, a2, v2 = _opened()
+    e2 = _aref(v2, 150)
+    c2.st.n += 1
+    c2.st.label_of = {150: "Delete Note"}
+    # the fake now names element 150 differently
+    out = a2.execute("click_app", {"ref": e2})
+    assert out == "Error: the app changed and its refs were renumbered; use the newest view" and len(c2.of("click")) == 1, (out, c2.names())
+    # refused twice: one retry only, then the CuaDriver line
+    c3, a3, v3 = _opened()
+    c3.script["click"] = _tr({"status": "refused", "refusal": {"code": "snapshot_stale", "message": "stale snapshot"}}, ok=False)
+    out = a3.execute("click_app", {"ref": _aref(v3, 150)})
+    assert out == "Error: stale snapshot" and len(c3.of("click")) == 2, (out, c3.names())
+    # the window was closed and another opened: the main window is picked again before the read
+    c4, a4, v4 = _opened()
+
+    def state(args):
+        if args["window_id"] == 480:
+            return _tr({"status": "refused", "refusal": {"message": "window not found: 480"}}, ok=False)
+        return c4.st.state(args)
+    c4.script["get_window_state"] = state
+    c4.script["list_windows"] = _tr({"windows": [_awin(900, 1200, 700)]})
+    v5 = a4.observe()
+    assert a4.app_window == 900 and v5["text"].startswith("App: Notes") and c4.of("get_window_state")[-1]["window_id"] == 900
+    # the app quit: observe raises McpError for the loop to turn into a line, execute never does
+    c4.script["list_windows"] = _tr({"windows": []})
+    c4.script["get_window_state"] = _tr({"status": "error"}, ok=False, text="no such window")
+    app._agent_sleep = lambda s: None
+    try:
+        a4.observe()
+        raise AssertionError("observe should raise")
+    except app.McpError as ex:
+        assert "no window on screen" in str(ex)
+    c4.script["click"] = app.McpError("The computer-control helper stopped responding.")
+    c4.script["list_windows"] = _tr({"windows": [_awin(900, 1200, 700)]})
+    c4.script["get_window_state"] = c4.st.state
+    v6 = a4.observe()
+    assert a4.execute("click_app", {"ref": _aref(v6, 150)}).startswith("Error: The computer-control helper")
+
+
+def _app_run(model, c, tiers=None, **kw):
+    return Env(model=model, client=c, **({"tiers": tiers} if tiers else {}), **kw)
+
+
+@check
+def read_only_app_blocks_click():
+    c, a, v = _opened("System Settings")
+    f = a.facts("click_app", {"ref": _aref(v, 150)})
+    ctx = {"surface": a.surface, "app": a.app, "tier": app.app_tier(a.app, {}), "domain": None, "task_domains": set(), "link_domains": set()}
+    assert ctx["tier"] == "read" and app.gate("click_app", {"ref": "e1"}, f, ctx) == ("blocked", "System Settings is read-only for the agent")
+    c2 = app_client()[0]
+    ref = _aref(app.app_view({**NOTES, "snapshot_id": "s00000001"}), 150)
+    model = Model(tca("open_app", name="System Settings"), tc("click_app", ref=ref), tc("done", answer="Could not."))
+    with _app_run(model, c2) as e:
+        e.start("Change a setting")
+        e.finish()
+        step = e.ev("step")[1]
+        assert step["tool"] == "click_app" and step["decision"] == "blocked" and step["result"] == "Blocked: System Settings is read-only for the agent", step
+        assert not e.ev("approval") and not c2.of("click") and e.end()["status"] == "done"
+        # the user can raise a tier: Settings overrides win
+    c3 = app_client()[0]
+    model = Model(tca("open_app", name="System Settings"), tc("click_app", ref=ref), tc("done", answer="ok"))
+    with _app_run(model, c3, tiers={"System Settings": "allowed"}) as e:
+        e.start("Change a setting")
+        e.finish()
+        assert e.ev("step")[1]["decision"] == "safe" and len(c3.of("click")) == 1
+
+
+@check
+def ask_app_pauses_on_type():
+    c = app_client()[0]
+    ref = _aref(app.app_view({**NOTES, "snapshot_id": "s00000001"}), 150)
+    model = Model(tca("open_app", name="Mail"), tc("type_app", ref=ref, text="Hello"), tc("done", answer="Typed."))
+    with _app_run(model, c) as e:
+        e.start("Write hello in Mail")
+        e.status("waiting")
+        ap = e.ev("approval")[-1]
+        assert ap["n"] == 2 and ap["tool"] == "type_app" and ap["title"] == "Type into **Text 54** in Mail" and "Mail" in ap["reason"], ap
+        assert ap["shot"] == "2-ask.png" and (app.AGENT_RUNS / e.rid / "2-ask.png").read_bytes() == PNG and ap["box"]
+        assert not c.of("type_text")                                                    # nothing happens before the user answers
+        assert c.calls[-1][0] == "get_window_state" and c.calls[-1][1].get("max_elements") == 400    # the card used the read's own picture: no new snapshot after it
+        assert e.post("reply", decision="allow").status_code == 200
+        e.finish()
+        assert len(c.of("type_text")) == 1 and c.of("type_text")[0]["text"] == "Hello", c.calls       # the token was still good after the wait
+        names = c.names()
+        assert names.index("type_text") < len(names) - 1 and names[names.index("type_text") + 1] == "get_window_state"      # the after-shot comes last
+        s = e.ev("step")[1]
+        assert s["decision"] == "allowed" and not s["result"].startswith("Error"), s
+    # deny: nothing typed
+    c2 = app_client()[0]
+    with _app_run(Model(tca("open_app", name="Mail"), tc("type_app", ref=ref, text="Hello"), tc("done", answer="No.")), c2) as e:
+        e.start("Write hello in Mail")
+        e.status("waiting")
+        e.post("reply", decision="deny")
+        e.finish()
+        assert not c2.of("type_text") and e.ev("step")[1]["decision"] == "denied"
+
+
+@check
+def allowed_app_send_label_pauses():
+    c = app_client(label_of={145: "Send"})[0]
+    ref = _aref(app.app_view({**NOTES, "elements": [{**x, "label": "Send"} if x["element_index"] == 145 else x for x in NOTES["elements"]]}), 145)
+    ok_ref = _aref(app.app_view(NOTES), 150)
+    model = Model(tca("open_app", name="Notes"), tc("click_app", ref=ref), tc("done", answer="Sent."))
+    with _app_run(model, c) as e:
+        e.start("Send the note")
+        e.status("waiting")
+        ap = e.ev("approval")[-1]
+        assert ap["tool"] == "click_app" and ap["title"] == "Click **Send** in Notes" and "submits" in ap["reason"], ap
+        assert not c.of("click")
+        e.post("reply", decision="deny")
+        e.finish()
+        assert not c.of("click")
+    # Notes is allowed: an ordinary label, an ordinary menu item and a plain shortcut run without asking
+    c2 = app_client()[0]
+    model = Model(tca("open_app", name="Notes"), tc("click_app", ref=ok_ref), tc("hotkey", keys=["cmd", "n"]), tc("done", answer="ok"))
+    with _app_run(model, c2) as e:
+        e.start("Look at Notes")
+        e.finish()
+        assert not e.ev("approval") and len(c2.of("click")) == 1 and len(c2.of("hotkey")) == 1
+
+
+@check
+def notes_scripted_run():
+    c = app_client()[0]
+    ta = _aref(app.app_view({**NOTES, "snapshot_id": "s00000001"}), 150)
+    model = Model(tca("open_app", name="Notes"), tc("menu", app="Notes", path=["File", "New Note"]),
+                  tc("type_app", ref=ta, text="Buy milk and eggs"), tc("done", answer="Made a note."))
+    with _app_run(model, c) as e:
+        e.start("Make a note in Notes that says Buy milk and eggs")
+        e.finish()
+        assert not e.ev("approval") and e.end()["status"] == "done"
+        assert [s["tool"] for s in e.ev("step")] == ["open_app", "menu", "type_app", "done"] and all(s["decision"] in ("safe", "allowed") for s in e.ev("step"))
+        assert c.of("invoke_menu")[0]["path"] == ["File", "New Note"] and c.of("type_text")[0]["text"] == "Buy milk and eggs"
+        assert c.names().index("invoke_menu") < c.names().index("type_text")
+        assert "App: Notes" in model.text(1) and "[e" in model.text(1)                 # the model was shown the app's view
+        assert any(n == "get_window_state" and a.get("max_elements") == 400 for n, a in c.calls)
+        assert c.names()[-1] == "end_session"
+        assert 'menu "File › New Note" in Notes' in model.text(3) and "type_app" in model.text(3)       # the history names the menu path
 
 
 if __name__ == "__main__":
