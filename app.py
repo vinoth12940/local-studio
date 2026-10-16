@@ -66,7 +66,7 @@ SEARCH_REQS = ROOT / "search-requirements.txt"
 SEARCH_DEPS_OK = DATA / "search-deps.ok"                     # written by setup.sh --search
 SEARCH_DEFAULTS = {"enabled": False, "folders": [], "removed": [], "paused": False, "on_battery": False}
 # Local Agent: drives the Mac through CuaDriver (MCP over a unix socket in standard mode, no manifest).
-AGENT_DIR = DATA / "agent"
+AGENT_DIR = (DATA / "agent").absolute()                      # LaunchServices starts CuaDriver elsewhere: never relative
 AGENT_RUNS = AGENT_DIR / "runs"
 AGENT_SOCK = AGENT_DIR / "cua.sock"                          # absolute; a unix socket path must stay under 104 bytes
 CUA_DRIVER = shutil.which("cua-driver") or str(BIN / "cua-driver")

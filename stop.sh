@@ -2,6 +2,7 @@
 # Stops the engines and the UI and frees their memory.
 CODE="${0:A:h}"
 STATE="${LOCAL_STUDIO_HOME:-$CODE}"
+STATE="${STATE:a}"          # absolute, as the agent daemon's socket path is
 for name in llm vlm gguf search ui; do
   if [[ -f "$STATE/logs/$name.pid" ]]; then
     kill $(cat "$STATE/logs/$name.pid") 2>/dev/null && echo "stopped $name"

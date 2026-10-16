@@ -92,6 +92,24 @@ def agent_settings_defaults():
 
 
 @check
+def agent_paths_are_absolute_for_a_relative_home():
+    """CuaDriver is launched through LaunchServices, which does not keep the working directory: a relative
+    LOCAL_STUDIO_HOME must still give an absolute socket path, daemon command line and stop pattern."""
+    import subprocess as sp
+    work = (TMP / "relative-home-cwd")
+    work.mkdir()
+    code = ("import os, sys; os.environ['LOCAL_STUDIO_HOME'] = 'rel/state'; sys.path.insert(0, sys.argv[1]); import app; "
+            "print(app.AGENT_SOCK); print(app.AGENT_SOCK.is_absolute(), app.AGENT_RUNS.is_absolute()); "
+            "print(app.agent_daemon_pattern())")
+    r = sp.run([sys.executable, "-c", code, str(Path(__file__).resolve().parent.parent)], capture_output=True, text=True, cwd=str(work))
+    sock, flags, pattern = r.stdout.splitlines()[-3:] if r.returncode == 0 else (r.stderr, "", "")
+    assert flags == "True True", (r.stderr, sock, flags)
+    expect = Path(os.path.realpath(work)) / "rel/state/data/agent/cua.sock"
+    assert Path(sock) == expect, (sock, expect)
+    assert re.escape(str(expect)) in pattern, pattern
+
+
+@check
 def chat_and_engine_routes_respect_agent_lock():
     c = TestClient(app.app, base_url="http://127.0.0.1:7860")
     app.agent_lock.acquire(); app.agent_engine.update(mode="text", model_id="qwen3.8-27b")
