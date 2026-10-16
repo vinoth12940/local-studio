@@ -1,0 +1,75 @@
+{
+ "manifest_tool": {
+  "content": [
+   {
+    "text": "Permission denied: tool 'kill_app' is outside the capability manifest",
+    "type": "text"
+   }
+  ],
+  "isError": true,
+  "structuredContent": {
+   "code": "tool_invocation_failed",
+   "exit_code": 1
+  }
+ },
+ "manifest_resource": {
+  "content": [
+   {
+    "text": "protected resource is outside the capability manifest: desktop pid 12282 window 480 is outside the capability manifest",
+    "type": "text"
+   }
+  ],
+  "isError": true,
+  "structuredContent": {
+   "refusal": {
+    "code": "bounded_resource_outside_manifest",
+    "message": "protected resource is outside the capability manifest: desktop pid 12282 window 480 is outside the capability manifest"
+   },
+   "status": "refused"
+  }
+ },
+ "origin_outside_manifest": {
+  "content": [
+   {
+    "text": "navigated tab-fba03ffa-1d25-453a-9530-6b81bd5110c7 to https://httpbin.org/forms/post",
+    "type": "text"
+   }
+  ],
+  "structuredContent": {
+   "refs_invalidated": true,
+   "status": "ok",
+   "tab_id": "tab-fba03ffa-1d25-453a-9530-6b81bd5110c7",
+   "target_id": "bt-20968cb4-439f-4f50-befd-4cbf93196941",
+   "url": "https://httpbin.org/forms/post"
+  }
+ },
+ "click_trust_unavailable": {
+  "content": [
+   {
+    "text": "refused (browser_input_trust_unavailable): Chromium's trusted CDP Input route activates its standalone browser window on macOS; use input_route=\"dom_event\" with a ref for a synthetic full-background click",
+    "type": "text"
+   }
+  ],
+  "structuredContent": {
+   "effect": "refused",
+   "escalation": {
+    "reason": "route_unavailable",
+    "target": "page"
+   },
+   "route": "trusted_input"
+  }
+ },
+ "session_ended": {
+  "content": [
+   {
+    "text": "session 'ls-probe' has ended; tool call 'browser_prepare' was rejected. Call start_session with this id to revive it before issuing further actions, or use a new session id.",
+    "type": "text"
+   }
+  ],
+  "isError": true,
+  "structuredContent": {
+   "code": "tool_invocation_failed",
+   "exit_code": 1
+  }
+ }
+}

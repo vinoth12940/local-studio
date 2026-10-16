@@ -4,7 +4,7 @@
 
 **Goal:** An Agent view in Local Studio where a local chat model carries out a task on the Mac (web and Mac apps) through CuaDriver, pausing for the user's approval on risky actions.
 
-**Architecture:** All server code goes in a new `# ---------------------------------------------------------------- agent` section of `app.py`: a hand-written MCP client for `cua-driver mcp`, lifecycle for Local Studio's own CuaDriver daemon (bounded mode, own socket), a tool adapter that gives the model ~16 simple tools, a fact-based approval gate, and an agent loop running in a thread that records events which the UI reads over SSE. `index.html` gets an Agent view and a Settings card.
+**Architecture:** All server code goes in a new `# ---------------------------------------------------------------- agent` section of `app.py`: a hand-written MCP client for `cua-driver mcp`, lifecycle for Local Studio's own CuaDriver daemon (standard mode, no manifest, own socket; the MCP client enforces a CuaDriver tool allowlist), a tool adapter that gives the model ~16 simple tools, a fact-based approval gate, and an agent loop running in a thread that records events which the UI reads over SSE. `index.html` gets an Agent view and a Settings card.
 
 **Tech Stack:** Python 3.12 / FastAPI (existing), httpx, subprocess + JSON-RPC 2.0 over stdio (no `mcp` package), CuaDriver ≥ 0.28.2, vanilla JS.
 
@@ -15,14 +15,16 @@
 - No new Python dependency: `start.sh` and `APP_DEPS` in `setup.sh` stay unchanged.
 - No new runtime file: the `macos/build.sh` copy list stays unchanged; only `check_agent.py` is added to its checks.
 - Minimum CuaDriver: `0.28.2`. Binary: `shutil.which("cua-driver") or ~/.local/bin/cua-driver`.
-- Daemon: `serve --socket <STATE>/data/agent/cua.sock --permission-mode bounded --capability-manifest <STATE>/data/agent/manifest.json --approve-capability-manifest`. The socket path is absolute and must be under 104 bytes. Stop pattern (`app.py` and `stop.sh`, kept in sync): `cua-driver serve --socket <re.escape(socket path)>`, with no `^` anchor.
+- Daemon (amended after Task 0): `open -n -g -a CuaDriver --args serve --socket <STATE>/data/agent/cua.sock --permission-mode standard`, no capability manifest. The socket path is absolute and must be under 104 bytes. Stop pattern (`app.py` and `stop.sh`, kept in sync): `cua-driver serve --socket <re.escape(socket path)>`, with no `^` anchor.
+- `McpClient.call` refuses (raises `McpError`, sends nothing) any tool name outside `AGENT_CUA_TOOLS`, the spec's "Included" list.
+- CuaDriver facts from the probe (spec Amendments): one MCP connection and one session label (`ls-<run id>`) per run, since the browser closes when the session ends; `browser_click` always passes `input_route: "dom_event"`; retry a `semantic_v2` read once after 0.5 s on `browser_route_unavailable`; password/submit facts come from `dom_refs_v1`.
 - Never reuse, signal or stop a CuaDriver daemon Local Studio did not start (Hermes uses one). Never run `cua-driver telemetry disable`, `permissions grant` or `update` except from the user's click.
 - One run at a time (`agent_lock`). Defaults: 40 steps, 15 minutes, daemon idle stop after 10 minutes.
 - Context budget (estimate tokens as `len(text) / 3.2`, as `/api/chat` does): view ≤ 6000, history ≤ 3000, reply `max_tokens` 2048.
 - Vision fallback: a view with fewer than 5 interactive elements or under 200 characters of text is sparse. MLX runs switch `text` → `vision` at most once per run; GGUF never switches.
 - Repeats: the same tool and arguments failing 3 times in a row triggers the "try another way" message; a 4th ends the run.
 - All `/api/agent*` routes go through `LocalOnly`.
-- User data lives under `STATE/data/agent/` (`runs/<id>.json`, `runs/<id>/<n>.jpg`, `manifest.json`, `cua.sock`), never under `ROOT`.
+- User data lives under `STATE/data/agent/` (`runs/<id>.json`, `runs/<id>/<n>.jpg`, `cua.sock`), never under `ROOT`.
 - Copy: approval title format `Click **<label>** on <domain>` / `Type into **<label>** in <app>`. Chat refusal while a run is active: `The agent is running a task. Stop it or wait for it to finish.`
 - Version 1.4.0: `APP_VERSION`, the README badge and the DMG file name.
 - Checks run as `uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_agent.py [name ...]`, the same deps as `check_app.py`.
@@ -69,7 +71,7 @@ If the probe contradicts the spec (for example, a second daemon is impossible), 
 - Modify: `macos/build.sh` (run `check_agent.py` after `check_app.py`, same `uv run` line)
 
 **Interfaces:**
-- Produces: `AGENT_DIR = DATA / "agent"`, `AGENT_RUNS = AGENT_DIR / "runs"`, `AGENT_SOCK = AGENT_DIR / "cua.sock"`, `AGENT_MANIFEST = AGENT_DIR / "manifest.json"`, `CUA_DRIVER: str`, `CUA_MIN = (0, 28, 2)`, `AGENT_DEFAULTS = {"enabled": False, "max_steps": 40, "max_minutes": 15, "tiers": {}}` (`tiers` holds the user's overrides, app name → `"read"|"ask"|"allowed"`), `load_settings()["agent"]`, `agent_lock = threading.Lock()`, `agent_engine: dict` (`{"mode": str|None, "model_id": str|None}`, set by the loop while it runs), `AGENT_BUSY_MSG` (the chat-refusal copy).
+- Produces: `AGENT_DIR = DATA / "agent"`, `AGENT_RUNS = AGENT_DIR / "runs"`, `AGENT_SOCK = AGENT_DIR / "cua.sock"`, `CUA_DRIVER: str`, `CUA_MIN = (0, 28, 2)`, `AGENT_DEFAULTS = {"enabled": False, "max_steps": 40, "max_minutes": 15, "tiers": {}}` (`tiers` holds the user's overrides, app name → `"read"|"ask"|"allowed"`), `load_settings()["agent"]`, `agent_lock = threading.Lock()`, `agent_engine: dict` (`{"mode": str|None, "model_id": str|None}`, set by the loop while it runs), `AGENT_BUSY_MSG` (the chat-refusal copy).
 
 - [ ] **Step 1: Write failing checks** in `check_agent.py`:
 
@@ -117,19 +119,19 @@ def agent_routes_are_local_only():
   - `class McpClient(argv: list[str])` with `.start() -> None` (spawn, `initialize`, `notifications/initialized`), `.call(name: str, args: dict, timeout: float = 30) -> ToolResult`, `.close() -> None`, `.alive -> bool`. Requests are serialized with a lock. One automatic restart if the process has exited.
   - `ToolResult = dict` with keys `ok: bool`, `text: str` (joined text content), `data: dict | None` (`structuredContent`, or JSON parsed from the text), `image: bytes | None` (first image content, base64-decoded). `isError` → `ok=False`.
   - `cua_status() -> dict`: `{"installed": bool, "version": str|None, "ok_version": bool, "telemetry": bool|None}` (from `cua-driver --help` first line and `telemetry status`)
-  - `agent_daemon_pattern() -> str`, `_agent_daemon_running() -> bool`, `start_agent_daemon() -> None` (writes `AGENT_MANIFEST` from `AGENT_MANIFEST_TOOLS`, then launches with the option Task 0 chose), `stop_agent_daemon() -> None`
+  - `agent_daemon_pattern() -> str`, `_agent_daemon_running() -> bool`, `start_agent_daemon() -> None` (runs `open -n -g -a CuaDriver --args serve --socket <AGENT_SOCK> --permission-mode standard`, then waits up to 10 s for the socket file), `stop_agent_daemon() -> None`
   - `agent_client() -> McpClient`: singleton that starts the daemon if needed, argv `[CUA_DRIVER, "mcp", "--socket", str(AGENT_SOCK)]`
-  - `AGENT_MANIFEST_TOOLS: tuple[str, ...]`: exactly the spec's "Included" list
+  - `AGENT_CUA_TOOLS: frozenset[str]`: exactly the spec's "Included" list; `McpClient.call` raises `McpError("<name> is not allowed")` for anything else without writing to the process
   - `agent_touch()` / idle reaper thread: stops the daemon 600 s after the last call when no run is active
 
-- [ ] **Step 1: Write failing checks**: `mcp_roundtrip` (fake server: `call("echo", {"a":1})` → `ok`, `data == {"a":1}`); `mcp_error_and_image` (`isError` → `ok False`; image content → bytes); `mcp_restarts_once` (fake exits after the first call; the second call succeeds; a third failure raises `McpError`); `mcp_timeout` (fake never answers → `McpError` within the timeout); `daemon_pattern_is_ours_only`:
+- [ ] **Step 1: Write failing checks**: `mcp_roundtrip` (fake server: `call("echo", {"a":1})` → `ok`, `data == {"a":1}`); `mcp_error_and_image` (`isError` → `ok False`; image content → bytes); `mcp_restarts_once` (fake exits after the first call; the second call succeeds; a third failure raises `McpError`); `mcp_timeout` (fake never answers → `McpError` within the timeout); `mcp_allowlist` (`call("kill_app", {})` raises `McpError` and the fake server receives nothing); `daemon_pattern_is_ours_only`:
 
 ```python
 pat = app.agent_daemon_pattern()
-assert re.search(pat, f"/Applications/CuaDriver.app/Contents/MacOS/cua-driver serve --socket {app.AGENT_SOCK} --permission-mode bounded")
+assert re.search(pat, f"/Applications/CuaDriver.app/Contents/MacOS/cua-driver serve --socket {app.AGENT_SOCK} --permission-mode standard")
+assert not re.search(pat, "/Applications/CuaDriver.app/Contents/MacOS/cua-driver serve")      # Hermes's daemon, default socket
 assert not re.search(pat, "cua-driver serve --socket /Users/x/Library/Caches/cua-driver/cua-driver.sock")
-assert set(json.loads(app.AGENT_MANIFEST.read_text())["tools"]) == set(app.AGENT_MANIFEST_TOOLS)  # after start_agent_daemon() with subprocess stubbed; key per Task 0 syntax
-assert "kill_app" not in app.AGENT_MANIFEST_TOOLS and "clipboard_read" not in app.AGENT_MANIFEST_TOOLS
+assert {"kill_app", "clipboard_read", "clipboard_write", "set_config", "get_desktop_state", "browser_set_input_files"}.isdisjoint(app.AGENT_CUA_TOOLS)
 ```
 
 - [ ] **Step 2: Run, expect FAIL.**
@@ -139,7 +141,7 @@ assert "kill_app" not in app.AGENT_MANIFEST_TOOLS and "clipboard_read" not in ap
 pkill -f "cua-driver serve --socket $STATE/data/agent/cua.sock" 2>/dev/null
 ```
 
-plus the Chromium pattern recorded in Task 0, if the browser doesn't exit with the daemon.
+(Task 0 showed the isolated Chromium exits with the daemon, so no browser pattern is needed.)
 - [ ] **Step 4: Run checks, expect PASS.**
 - [ ] **Step 5: Commit** `app.py: MCP client and Local Studio's own CuaDriver daemon`.
 
@@ -154,7 +156,7 @@ Pure functions, written against the Task 0 fixtures.
 **Interfaces:**
 - Produces:
   - `est_tokens(s: str) -> int`
-  - `browser_view(state: dict, budget: int = 6000) -> View`
+  - `browser_view(state: dict, dom: dict | None = None, budget: int = 6000) -> View`: `state` is a `semantic_v2` result (use its `refs`, `page`, and `outline` for text), `dom` an optional `dom_refs_v1` result whose `input` / `button` labels (`type=password`, `type=submit`, `autocomplete=…`, `name=`, `id=`, `aria-label=`) are joined to semantic refs by case-insensitive match of the semantic `name` against the DOM `aria-label`, `name`, `id` or `value`, and by role order among same-role elements when no name matches
   - `app_view(state: dict, budget: int = 6000) -> View`
   - `View = dict`: `text: str` (lines like `[e14] button "Add to cart"`, plus page title/URL or app/window header), `refs: dict[str, dict]` (`e14` → `{"ref": <CuaDriver ref or element_index/window_id>, "facts": Facts}`), `interactive: int`, `sparse: bool`
   - `Facts = dict`: `role`, `name`, `input_type`, `autocomplete`, `in_form: bool`, `is_submit: bool`, `href`, `box: [x, y, w, h] | None` (in screenshot pixels, for the approval outline)
@@ -164,7 +166,7 @@ Pure functions, written against the Task 0 fixtures.
   - `views_fit_budget`: both fixtures, and the browser fixture repeated 20×, give `est_tokens(v["text"]) <= 6000`.
   - `views_keep_interactive_first`: when trimming, every interactive element in the first screenful survives and only static text is dropped.
   - `refs_are_short_and_stable`: ids are `e1…eN` in document order, and the same state gives the same ids.
-  - `facts_from_fixture`: a password field gives `input_type == "password"`, and the search form's button gives `is_submit`.
+  - `facts_from_fixture`: with `browser_semantic_login.json` + `browser_domrefs_login.json`, the ref named "Password" gets `input_type == "password"` and the "Sign in" button gets `is_submit`; with `browser_semantic_form.json` alone, "Submit order" gets `is_submit` from its label and every fact defaults safely when `dom` is None. Browser facts have `box: None`; app facts take `box` from the element `frame` converted with `window_bounds` and `screenshot_scale` (`window_state_notes.json`).
   - `sparse_detection`: a canvas-only stub `{elements: [one canvas]}` gives `sparse is True`.
   - `unicode_labels`: "Café — 東京" survives intact.
   - `fold_history_budget`: 200 lines → `est_tokens("\n".join(out)) <= 3000` and `out[0].startswith("Earlier:")`.
@@ -219,8 +221,9 @@ Pure functions, written against the Task 0 fixtures.
   - The adapter keeps its own URL history for `back()` and `link_domains` for the gate. Every CuaDriver call passes `session=f"ls-{run_id}"`.
 
 - [ ] **Step 1: Write failing checks**:
-  - `first_open_url_prepares_and_binds`: the call order is `browser_prepare` (`allow_launch`, `isolated_named` `local-studio`) → `get_browser_state` bind → `browser_navigate`.
-  - `click_maps_short_ref`: `click("e3")` calls `browser_click` with the fixture's ref for `e3`.
+  - `first_open_url_prepares_and_binds`: the call order is `browser_prepare` (`allow_launch`, `isolated_named` `local-studio`) → `list_windows {pid}` (retried until an on-screen window taller than 300 px) → `get_browser_state {pid, window_id}` → `browser_navigate {target_id, tab_id}`, all with `session` `ls-<run id>`.
+  - `click_maps_short_ref`: `click("e3")` calls `browser_click` with the fixture's ref for `e3` and `input_route: "dom_event"`.
+  - `read_page_retries_route_unavailable`: a first `browser_route_unavailable` refusal is retried once; `read_page` also fetches `dom_refs_v1` for facts.
   - `unknown_ref_is_error_text`.
   - `back_uses_history`.
   - `stale_binding_rebinds`: a `browser_navigate` returning a stale-target error leads to one re-bind and a retry, returning success. A second failure returns `"Error: …"`.
@@ -309,7 +312,7 @@ Pure functions, written against the Task 0 fixtures.
 - Consumes: `app_view` (Task 3), `gate` / `app_tier` (Task 4), `Adapter` (Task 5)
 - Produces:
   - `AGENT_TOOLS` additions: `list_apps()`, `open_app(name)`, `read_app(name)`, `click_app(ref)`, `type_app(ref, text)`, `menu(app, path: list[str])`, `hotkey(keys: list[str])`
-  - Adapter mappings: `list_apps` → name and running state; `open_app` → `launch_app` + bind the main window via `list_windows`; `read_app` → `get_window_state`; `click_app` → `click` with element_index + window_id; `type_app` → `type_text` (or `set_value`); `menu` → `invoke_menu`; `hotkey` → `hotkey` / `press_key`
+  - Adapter mappings: `list_apps` → name and running state; `open_app` → `launch_app` + bind the main window via `list_windows`; `read_app` → `get_window_state` with `max_elements: 400`; `click_app` → `click` with element_index + window_id; `type_app` → `type_text` (or `set_value`); `menu` → `invoke_menu`; `hotkey` → `hotkey` / `press_key`
   - The screenshot for apps comes from `zoom` on the bound window. Take over for apps pauses the run; Resume re-reads.
 
 - [ ] **Step 1: Write failing checks**:

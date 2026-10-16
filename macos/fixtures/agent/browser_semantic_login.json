@@ -1,0 +1,713 @@
+{
+ "content_refs": [
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Sign in to GitHub · GitHub",
+   "ref": "p9:5",
+   "role": "rootwebarea",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:6",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:7",
+   "role": "banner",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:8",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:9",
+   "role": "main",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:10",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:11",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Sign in to GitHub",
+   "ref": "p9:12",
+   "role": "heading",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:13",
+   "role": "form",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:14",
+   "role": "labeltext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Username or email address",
+   "ref": "p9:15",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:16",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:17",
+   "role": "labeltext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Password",
+   "ref": "p9:18",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:19",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "or",
+   "ref": "p9:20",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:21",
+   "role": "form",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:22",
+   "role": "image",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:35",
+   "role": "form",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:36",
+   "role": "image",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:37",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "New to GitHub?",
+   "ref": "p9:38",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:39",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:40",
+   "role": "contentinfo",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:41",
+   "role": "list",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:42",
+   "role": "listitem",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:43",
+   "role": "listitem",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:44",
+   "role": "listitem",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:45",
+   "role": "listitem",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:46",
+   "role": "listitem",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:47",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:48",
+   "role": "listitem",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:49",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:50",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:51",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:54",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "no_layout"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:55",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "no_layout"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:56",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "no_layout"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:57",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "no_layout"
+  }
+ ],
+ "mode": "snapshot",
+ "oopif": {
+  "frames": 0,
+  "status": "attached"
+ },
+ "outline": "  - generic [editable=\"plaintext\"]\n      - generic [editable=\"plaintext\"]\n- generic\n- generic\n- generic\n  - banner\n- generic\n- main\n- generic\n- generic\n- heading \"Sign in to GitHub\"\n- generic\n- form\n- labeltext\n  - statictext \"Username or email address\"\n- textbox \"Username or email address\" [editable=\"plaintext\",focusable=true,focused=true,required=true]\n  - generic\n    - labeltext\n      - statictext \"Password\"\n    - textbox \"Password\" [editable=\"plaintext\",focusable=true,required=true]\n    - link \"Forgot password?\" [focusable=true]\n- button \"Sign in\" [focusable=true]\n- generic\n- statictext \"or\"\n- form\n  - button \"Continue with Google\" [focusable=true]\n- image\n- statictext \"Continue with Google\"\n- form\n  - button \"Continue with Apple\" [focusable=true]\n- image\n- statictext \"Continue with Apple\"\n- paragraph\n  - statictext \"New to GitHub?\"\n  - link \"Create an account\" [focusable=true]\n- paragraph\n  - button \"Sign in with a passkey\" [focusable=true]\n- statictext \"Sign in with a passkey\"\n- contentinfo\n  - list\n    - listitem\n      - link \"Terms\" [focusable=true]\n    - listitem\n      - link \"Privacy\" [focusable=true]\n    - listitem\n      - link \"Docs\" [focusable=true]\n    - listitem\n      - link \"Contact GitHub Support\" [focusable=true]\n    - listitem\n      - generic\n        - button \"Manage cookies\" [focusable=true]\n    - listitem\n      - generic\n        - button \"Do not share my personal information\" [focusable=true]\n- generic\n- generic\n- generic",
+ "page": {
+  "title": "about:blank",
+  "url": "https://github.com/login"
+ },
+ "refs": [
+  {
+   "actions": [
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Username or email address",
+   "ref": "p9:0",
+   "role": "textbox",
+   "states": {
+    "editable": "plaintext",
+    "focusable": true,
+    "focused": true,
+    "required": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Password",
+   "ref": "p9:1",
+   "role": "textbox",
+   "states": {
+    "editable": "plaintext",
+    "focusable": true,
+    "required": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Sign in",
+   "ref": "p9:2",
+   "role": "button",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Continue with Google",
+   "ref": "p9:3",
+   "role": "button",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Continue with Google",
+   "ref": "p9:4",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Forgot password?",
+   "ref": "p9:23",
+   "role": "link",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Continue with Apple",
+   "ref": "p9:24",
+   "role": "button",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Continue with Apple",
+   "ref": "p9:25",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Create an account",
+   "ref": "p9:26",
+   "role": "link",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Sign in with a passkey",
+   "ref": "p9:27",
+   "role": "button",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Sign in with a passkey",
+   "ref": "p9:28",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Terms",
+   "ref": "p9:29",
+   "role": "link",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Privacy",
+   "ref": "p9:30",
+   "role": "link",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Docs",
+   "ref": "p9:31",
+   "role": "link",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Contact GitHub Support",
+   "ref": "p9:32",
+   "role": "link",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Manage cookies",
+   "ref": "p9:33",
+   "role": "button",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Do not share my personal information",
+   "ref": "p9:34",
+   "role": "button",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "type"
+   ],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:52",
+   "role": "generic",
+   "states": {
+    "editable": "plaintext"
+   },
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [
+    "type"
+   ],
+   "frame": "main",
+   "name": null,
+   "ref": "p9:53",
+   "role": "generic",
+   "states": {
+    "editable": "plaintext"
+   },
+   "value": null,
+   "visibility": "unknown"
+  }
+ ],
+ "snapshot": {
+  "complete": true,
+  "continuation": null,
+  "format": "semantic_v2",
+  "id": "p9",
+  "node_budget": 300,
+  "omitted": {
+   "budget": 0,
+   "css_hidden": 10,
+   "no_layout": 4,
+   "offscreen": 0,
+   "page_occluded": 1,
+   "unknown": 2,
+   "unprovable_frame": 0
+  },
+  "scope": "viewport",
+  "selected_nodes": 58,
+  "total_nodes": 58
+ },
+ "status": "ok",
+ "tab_id": "tab-51285d19-1af2-4d9a-a542-89ebc34b48e2",
+ "target_id": "bt-de3ea213-a836-4ae3-92bb-40c0047a9139"
+}

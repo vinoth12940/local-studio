@@ -1,0 +1,11 @@
+{
+ "delivery": {
+  "mode": "background"
+ },
+ "effect": "unverifiable",
+ "escalation": {
+  "reason": "effect_unconfirmed",
+  "target": "page"
+ },
+ "route": "dom"
+}

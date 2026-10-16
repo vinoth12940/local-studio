@@ -1,6 +1,6 @@
 # Local Agent: design
 
-Date: 2026-10-16. Status: design approved in chat, spec awaiting review. Target release: Local Studio 1.4.0.
+Date: 2026-10-16. Status: approved; amended after the CuaDriver probe (see Amendments). Target release: Local Studio 1.4.0.
 
 ## Goal
 
@@ -23,6 +23,7 @@ risky action stops at the approval gate, and nothing the agent reads can change 
 | Sign-in / stuck | "Take over": bring the agent's browser (or app) forward, the user acts, then Resume. The agent never types passwords. |
 | Page understanding | Text first (accessibility / DOM refs). A screenshot goes to the model only when the text view is empty and the model reads images. |
 | Hands | CuaDriver (`com.trycua.driver`), used as an MCP server. Local Studio is the MCP client; no new MCP server is written. |
+| Safety fence (after the probe) | One CuaDriver daemon in `standard` mode with no capability manifest. Local Studio's MCP client refuses any CuaDriver tool outside a fixed allowlist, and the approval gate decides every action. |
 | Acceptance tasks | Research and summarize; look up a fact; fill a form and stop before submit; multi-step on a site (add to cart). Plus one Mac-app task. |
 
 ## What CuaDriver provides (read from `cua-driver` 0.28.2 on this Mac, 16 Oct 2026)
@@ -64,7 +65,7 @@ index.html ──SSE──▶ app.py  # ---- agent
  (Agent view)        ├─ agent loop + approval gate + tool adapter
                      ├─▶ chat engine (8080/8081/8082), OpenAI tool calls
                      └─▶ cua-driver mcp --socket <STATE>/data/agent/cua.sock (stdio JSON-RPC)
-                              └─▶ Local Studio's own daemon (bounded + manifest)
+                              └─▶ Local Studio's own daemon (standard mode, no manifest)
                                     ├─ isolated Chromium, profile "local-studio"
                                     └─ Mac apps via Accessibility
 ```
@@ -93,14 +94,13 @@ If the process exits, the next call restarts it once.
 ### Our daemon
 
 Started on first agent use with
-`serve --socket <STATE>/data/agent/cua.sock --permission-mode bounded --capability-manifest <STATE>/data/agent/manifest.json --approve-capability-manifest`.
+`open -n -g -a CuaDriver --args serve --socket <STATE>/data/agent/cua.sock --permission-mode standard`.
 The paths are absolute because option A below launches through `open -a`, which does not keep
 the working directory. The Mac app's `STATE` contains spaces, so the stop pattern is
 `cua-driver serve --socket <re.escape(socket path)>` with no `^` anchor (the `[^ ]*` prefix that
 forced `search.py` onto relative names is not used). The socket path must stay under 104 bytes.
 A development server with its own `STATE` therefore gets its own socket and pattern automatically.
-`app.py` writes `manifest.json` from a constant in code before each start. Another daemon (for
-example Hermes's) is never reused, signalled or stopped. `stop_agent_daemon` and `stop.sh` use
+Another daemon (for example Hermes's) is never reused, signalled or stopped. `stop_agent_daemon` and `stop.sh` use
 the same pattern; keep the two in sync, as with search.
 
 **Permission identity (decided by the probe).** macOS grants Accessibility and Screen Recording
@@ -119,7 +119,7 @@ The daemon stops after 10 idle minutes and when Local Studio stops. In developme
 `STATE` (port 7861) gives the dev server its own socket, daemon and stop pattern, away from the
 running app.
 
-### Capability manifest (the CuaDriver tools the adapter may call)
+### CuaDriver tool allowlist (enforced by Local Studio's MCP client)
 
 Included: `start_session`, `end_session`, `get_session`, `check_permissions`, `health_report`,
 `browser_prepare`, `get_browser_state`, `browser_navigate`, `browser_click`, `browser_type`,
@@ -127,14 +127,15 @@ Included: `start_session`, `end_session`, `get_session`, `check_permissions`, `h
 `launch_app`, `get_window_state`, `click`, `double_click`, `type_text`, `set_value`,
 `press_key`, `hotkey`, `scroll`, `invoke_menu`, `zoom`, `bring_to_front`.
 
-Excluded, so neither the model nor an adapter bug can reach them: `kill_app`, `clipboard_read`,
+Excluded: `kill_app`, `clipboard_read`,
 `clipboard_write`, `set_config`, `start_recording`, `stop_recording`, `replay_trajectory`,
 `browser_set_input_files`, `get_desktop_state` (full-display capture), `set_window_frame`,
 `move_cursor`, `drag`, `mouse_*`, `escalate_session`, `page`, `check_for_update`,
 `install_ffmpeg`.
 
-The exact resource syntax of the manifest is taken from CuaDriver's documentation during the
-probe; this list is the content.
+`McpClient.call` refuses any name outside the included list before anything is sent, so neither
+the model nor an adapter bug can reach the excluded tools. (The probe showed a CuaDriver
+capability manifest cannot express open-web browsing; see Amendments.)
 
 ## Tool adapter (what the model sees)
 
@@ -236,7 +237,7 @@ manifest).
 
 **Approval card:** the exact target ("Click **Place order** on amazon.com") with a screenshot
 outlining it; Allow once, Deny (the model is told and continues), Stop run. No "always allow" in
-v1. The `bounded` daemon is a second fence behind the adapter. CuaDriver's agent cursor stays on
+v1. The MCP client's tool allowlist is a second fence behind the adapter. CuaDriver's agent cursor stays on
 so app actions are visible. Every action, gate decision and user answer is in the run log.
 
 ## Interface
@@ -286,7 +287,7 @@ so app actions are visible. Every action, gate decision and user answer is in th
 - `macos/check_app.py`: `/api/agent/*` rejects foreign `Host` / `Origin`; a fake MCP client and
   fake engine drive a scripted three-step run that pauses at an approval and resumes.
 - Live probe (Delivery step 0, with the user's OK): dev server on port 7861 with its own `STATE`;
-  start our daemon beside Hermes's; isolated-profile launch in `bounded` mode; record snapshot
+  start our daemon beside Hermes's; isolated-profile launch; record snapshot
   sizes and per-step latency with Qwen3.8 27B. Results go in Amendments.
 - Acceptance runs: the four example tasks plus "Make a new note in Notes titled Groceries with
   milk and eggs". A task passes when it finishes correctly within the step limit with every risky
@@ -316,6 +317,28 @@ Version 1.4.0: `APP_VERSION`, the README badge and DMG file name change together
 | Local models pick wrong refs or loop. | Short refs, one newest view, repeat detection, step limit, `ask_user`. |
 | CuaDriver is third-party and changes fast (0.28.x). | Minimum version check; adapter isolates its API; fixtures in `check_agent.py`. |
 | Telemetry leaves the Mac by default. | Shown in Settings with a one-click Turn off; never changed without the user. |
-| A second daemon may conflict with Hermes's or with macOS permission attribution. | Verified in the probe before any build work; fall back to the shared daemon only with the user's agreement. |
+| A second daemon may conflict with Hermes's or with macOS permission attribution. | Verified in the probe: both run side by side, and LaunchServices start gets CuaDriver's own grants. |
+| No CuaDriver-level fence (standard mode, no manifest). | Allowlist in the MCP client, tested by `check_agent.py`; the approval gate; CuaDriver's own hard invariants still apply (no attaching to the user's real browser profile without a grant). |
 | Prompt injection from pages or app content. | Gate decides from facts, not model claims; blocked fields; bounded manifest; no "always allow". |
 | Acting in real Mac apps touches real data. | Tiers default to Read-only / Ask for sensitive apps; visible agent cursor; full run log. |
+
+## Amendments (16 Oct 2026, after the CuaDriver probe)
+
+Probe on this Mac with CuaDriver 0.28.2 (0.36.0 is available upstream and was not tested), a
+probe daemon on a socket under `build/agent-probe/`, and the user's running app left alone.
+
+| Question | Result |
+|---|---|
+| Permission identity | Option A works: started with `open -n -g -a CuaDriver --args serve …`, the daemon runs as `com.trycua.driver`; Accessibility and Screen Recording were granted by the user during the probe. Option B is not needed. |
+| Second daemon beside Hermes's | Works; the existing daemon on the default socket was never touched. |
+| Bounded mode and the manifest | Manifest is YAML v3 (`version: 3`, `expires_after` ≤ 24h, `idle_timeout`, `allow.tools`, `resources.{desktop,apps,browser}`). Apps must be listed by exact `bundle_id` (`*` parses but matches nothing). Browsing needs `resources.browser.origins` listing exact origins (no wildcards, `about:blank` included), and an origin list forbids `click`, `double_click`, `scroll`, `type_text`, `press_key`, `hotkey`, `set_value` and `get_window_state` in the same daemon. Any manifest, even in `standard` mode, denies unlisted origins. **Decision (user, 16 Oct): one `standard` daemon, no manifest, Local Studio's allowlist as the fence.** |
+| Isolated browser | `browser_prepare {allow_launch, profile: {mode: isolated_named, name: local-studio}}` launches Google Chrome with the profile at `~/Library/Application Support/CuaDriver/BrowserProfiles/local-studio` (Reset browser profile deletes this folder while no run is active). Its window is real and on screen (not headless) but never foregrounded. It closes when the MCP session ends, and sessions end when the MCP connection closes, so one connection is kept per run; a fresh session label per run. |
+| Binding | `list_windows {pid}` (retry until an on-screen window taller than 300 px appears, ~0.5 s), then `get_browser_state {pid, window_id}` → `target_id`, `tabs[0].tab_id`. |
+| Actions | `browser_navigate` 0.1–0.8 s. `browser_type` works in the background (~1.5 s). `browser_click` must pass `input_route: "dom_event"` (the default trusted route is refused because it would foreground the window); its effect is unverified, so the loop always re-reads the page. |
+| Views | `semantic_v2` is viewport-scoped with a 300-node budget and a continuation: refs carry `role`, `name`, `actions`, `states`, `value`, `visibility`; `outline` is compact (8.8k chars for a long Wikipedia article). It can fail once right after navigation (`browser_route_unavailable`); retry after 0.5 s. Element bounds are not included, so browser approvals show no outline. `dom_refs_v1` shows HTML attributes (`type=password`, `type=submit`, `autocomplete`, `name`, `id`); password and submit facts come from joining it to the semantic refs. |
+| Password fields | CuaDriver typed into a password field without objecting, so blocking is Local Studio's gate alone. |
+| Mac apps | `launch_app {bundle_id}` opens in the background and lists window ids; `get_window_state {pid, window_id}` returns `elements` with `frame` (screen points), `element_index`, `actions`, `label`, `role`; Notes gave 329 elements (~18k tokens as markdown), so `max_elements`/`max_depth` and the view trimmer are required. |
+| Model step | LFM2.5-24B-A2B (the engine the user's app had loaded): 2,652 prompt tokens, 61 output tokens, 4.0 s, native `tool_calls`. Qwen3.8 27B was not measured, to avoid switching the user's engine. |
+
+Fixtures from these runs are in `macos/fixtures/agent/` (public pages only; the Notes tree has all
+note text replaced).

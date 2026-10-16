@@ -1,0 +1,8 @@
+{
+ "delivery": {
+  "delivered_count": 9,
+  "mode": "background"
+ },
+ "effect": "unverifiable",
+ "route": "trusted_input"
+}

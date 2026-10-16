@@ -1,0 +1,742 @@
+{
+ "content_refs": [
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:10",
+   "role": "rootwebarea",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:11",
+   "role": "form",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:12",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:13",
+   "role": "labeltext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Customer name:",
+   "ref": "p5:14",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:15",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:16",
+   "role": "labeltext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Telephone:",
+   "ref": "p5:17",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:18",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:19",
+   "role": "labeltext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "E-mail address:",
+   "ref": "p5:20",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Pizza Size",
+   "ref": "p5:21",
+   "role": "group",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:22",
+   "role": "legend",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Pizza Size",
+   "ref": "p5:23",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:24",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:25",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:26",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Pizza Toppings",
+   "ref": "p5:27",
+   "role": "group",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:28",
+   "role": "legend",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Pizza Toppings",
+   "ref": "p5:29",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:30",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:31",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:32",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:33",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:37",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:38",
+   "role": "labeltext",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Preferred delivery time:",
+   "ref": "p5:39",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:40",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:41",
+   "role": "labeltext",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "Delivery instructions:",
+   "ref": "p5:42",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:43",
+   "role": "paragraph",
+   "states": {},
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:52",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:53",
+   "role": "generic",
+   "states": {},
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": ":",
+   "ref": "p5:54",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "--",
+   "ref": "p5:55",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "--",
+   "ref": "p5:56",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [],
+   "frame": "main",
+   "name": "--",
+   "ref": "p5:57",
+   "role": "statictext",
+   "states": {},
+   "value": null,
+   "visibility": "unknown"
+  }
+ ],
+ "mode": "snapshot",
+ "oopif": {
+  "frames": 0,
+  "status": "attached"
+ },
+ "outline": "- form\n  - paragraph\n    - labeltext\n      - statictext \"Customer name:\"\n      - textbox \"Customer name:\" [editable=\"plaintext\",focusable=true,required=false]\n  - paragraph\n    - labeltext\n      - statictext \"Telephone:\"\n      - textbox \"Telephone:\" [editable=\"plaintext\",focusable=true,required=false]\n  - paragraph\n    - labeltext\n      - statictext \"E-mail address:\"\n      - textbox \"E-mail address:\" [editable=\"plaintext\",focusable=true,required=false]\n  - group \"Pizza Size\"\n    - legend\n      - statictext \"Pizza Size\"\n    - paragraph\n- radio \"Small\" [checked=\"false\",focusable=true]\n    - paragraph\n- radio \"Medium\" [checked=\"false\",focusable=true]\n    - paragraph\n- radio \"Large\" [checked=\"false\",focusable=true]\n  - group \"Pizza Toppings\"\n    - legend\n      - statictext \"Pizza Toppings\"\n    - paragraph\n- checkbox \"Bacon\" [checked=\"false\",focusable=true]\n    - paragraph\n- checkbox \"Extra Cheese\" [checked=\"false\",focusable=true]\n    - paragraph\n- checkbox \"Onion\" [checked=\"false\",focusable=true]\n    - paragraph\n- checkbox \"Mushroom\" [checked=\"false\",focusable=true]\n  - paragraph\n    - labeltext\n      - statictext \"Preferred delivery time:\"\n      - inputtime \"Preferred delivery time:\" [focusable=true]\n  - paragraph\n    - labeltext\n      - statictext \"Delivery instructions:\"\n      - textbox \"Delivery instructions:\" [editable=\"plaintext\",focusable=true,required=false]\n  - paragraph\n        - generic [editable=\"plaintext\"]\n    - button \"Submit order\" [focusable=true]\n        - generic [editable=\"plaintext\"]\n        - generic [editable=\"plaintext\"]\n- generic\n- button \"Show time picker Show time picker\" [focusable=true]\n        - generic [editable=\"plaintext\"]\n  - generic\n    - spinbutton \"Hours Hours\": 0 [focusable=true,required=false]\n    - statictext \":\"\n    - spinbutton \"Minutes Minutes\": 0 [focusable=true,required=false]\n    - spinbutton \"AM/PM AM/PM\": 0 [focusable=true,required=false]\n      - statictext \"--\"\n      - statictext \"--\"\n      - statictext \"--\"",
+ "page": {
+  "title": "about:blank",
+  "url": "https://httpbin.org/forms/post"
+ },
+ "refs": [
+  {
+   "actions": [
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Customer name:",
+   "ref": "p5:0",
+   "role": "textbox",
+   "states": {
+    "editable": "plaintext",
+    "focusable": true,
+    "required": false
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Telephone:",
+   "ref": "p5:1",
+   "role": "textbox",
+   "states": {
+    "editable": "plaintext",
+    "focusable": true,
+    "required": false
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "E-mail address:",
+   "ref": "p5:2",
+   "role": "textbox",
+   "states": {
+    "editable": "plaintext",
+    "focusable": true,
+    "required": false
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Small",
+   "ref": "p5:3",
+   "role": "radio",
+   "states": {
+    "checked": "false",
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Medium",
+   "ref": "p5:4",
+   "role": "radio",
+   "states": {
+    "checked": "false",
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Large",
+   "ref": "p5:5",
+   "role": "radio",
+   "states": {
+    "checked": "false",
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Bacon",
+   "ref": "p5:6",
+   "role": "checkbox",
+   "states": {
+    "checked": "false",
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Extra Cheese",
+   "ref": "p5:7",
+   "role": "checkbox",
+   "states": {
+    "checked": "false",
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Onion",
+   "ref": "p5:8",
+   "role": "checkbox",
+   "states": {
+    "checked": "false",
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Mushroom",
+   "ref": "p5:9",
+   "role": "checkbox",
+   "states": {
+    "checked": "false",
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "in_viewport"
+  },
+  {
+   "actions": [
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Preferred delivery time:",
+   "ref": "p5:34",
+   "role": "inputtime",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "type",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Delivery instructions:",
+   "ref": "p5:35",
+   "role": "textbox",
+   "states": {
+    "editable": "plaintext",
+    "focusable": true,
+    "required": false
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "click",
+    "pointer"
+   ],
+   "frame": "main",
+   "name": "Submit order",
+   "ref": "p5:36",
+   "role": "button",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "near_viewport"
+  },
+  {
+   "actions": [
+    "type"
+   ],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:44",
+   "role": "generic",
+   "states": {
+    "editable": "plaintext"
+   },
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [
+    "type"
+   ],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:45",
+   "role": "generic",
+   "states": {
+    "editable": "plaintext"
+   },
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [
+    "type"
+   ],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:46",
+   "role": "generic",
+   "states": {
+    "editable": "plaintext"
+   },
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "frame": "main",
+   "name": "Show time picker Show time picker",
+   "ref": "p5:47",
+   "role": "button",
+   "states": {
+    "focusable": true
+   },
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [
+    "type"
+   ],
+   "frame": "main",
+   "name": null,
+   "ref": "p5:48",
+   "role": "generic",
+   "states": {
+    "editable": "plaintext"
+   },
+   "value": null,
+   "visibility": "unknown"
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "frame": "main",
+   "name": "Hours Hours",
+   "ref": "p5:49",
+   "role": "spinbutton",
+   "states": {
+    "focusable": true,
+    "required": false
+   },
+   "value": "0",
+   "visibility": "unknown"
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "frame": "main",
+   "name": "Minutes Minutes",
+   "ref": "p5:50",
+   "role": "spinbutton",
+   "states": {
+    "focusable": true,
+    "required": false
+   },
+   "value": "0",
+   "visibility": "unknown"
+  },
+  {
+   "actions": [
+    "click"
+   ],
+   "frame": "main",
+   "name": "AM/PM AM/PM",
+   "ref": "p5:51",
+   "role": "spinbutton",
+   "states": {
+    "focusable": true,
+    "required": false
+   },
+   "value": "0",
+   "visibility": "unknown"
+  }
+ ],
+ "snapshot": {
+  "complete": true,
+  "continuation": null,
+  "format": "semantic_v2",
+  "id": "p5",
+  "node_budget": 300,
+  "omitted": {
+   "budget": 0,
+   "css_hidden": 0,
+   "no_layout": 0,
+   "offscreen": 0,
+   "page_occluded": 0,
+   "unknown": 14,
+   "unprovable_frame": 0
+  },
+  "scope": "viewport",
+  "selected_nodes": 58,
+  "total_nodes": 58
+ },
+ "status": "ok",
+ "tab_id": "tab-3dc2804d-7bb3-46e1-a397-196c95765129",
+ "target_id": "bt-e218e5fb-b0ec-4c01-9b09-fa02f5ea80b2"
+}

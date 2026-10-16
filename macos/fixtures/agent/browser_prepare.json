@@ -1,0 +1,29 @@
+{
+ "action": "launched_isolated_browser",
+ "attachment": null,
+ "endpoint_ownership": {
+  "detail": "driver-owned profile port file plus live loopback socket owner",
+  "method": "spawned_by_driver",
+  "owner_pid": 47601
+ },
+ "message": "Launched a separate driver-owned isolated Chromium process; no existing browser process was modified or terminated.",
+ "prepared": true,
+ "prepared_pid": 47601,
+ "side_effects": {
+  "changed_preferences": false,
+  "closed_setup_page": false,
+  "copied_profile_data": false,
+  "created_profile": false,
+  "displayed_consent_prompt": false,
+  "enabled_remote_debugging": false,
+  "focused_setup_address_field": false,
+  "foregrounded_window": false,
+  "injected_global_input": false,
+  "launched_browser": true,
+  "opened_setup_page": false,
+  "restarted_browser": false,
+  "reused_driver_profile": true,
+  "used_bounded_pixel_fallback": false
+ },
+ "status": "ok"
+}

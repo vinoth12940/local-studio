@@ -1,0 +1,987 @@
+{
+ "mode": "snapshot",
+ "oopif": {
+  "frames": 0,
+  "status": "attached"
+ },
+ "refs": [
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com",
+   "node": "link",
+   "ref": "p8:0"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://avatars.githubusercontent.com",
+   "node": "link",
+   "ref": "p8:1"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github-cloud.s3.amazonaws.com",
+   "node": "link",
+   "ref": "p8:2"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://user-images.githubusercontent.com/",
+   "node": "link",
+   "ref": "p8:3"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com",
+   "node": "link",
+   "ref": "p8:4"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://avatars.githubusercontent.com",
+   "node": "link",
+   "ref": "p8:5"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/react-e27d1b3e03961e68.js",
+   "node": "link",
+   "ref": "p8:6"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/react-compiler-runtime-4610bd6d3de9c049.js",
+   "node": "link",
+   "ref": "p8:7"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/scheduler-58b860b049ca307c.js",
+   "node": "link",
+   "ref": "p8:8"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/react-dom-e5fd46a22d5c4058.js",
+   "node": "link",
+   "ref": "p8:9"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/react-dom-client-1b4a3ee065998cea.js",
+   "node": "link",
+   "ref": "p8:10"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/react-is-e0b593954b4706d8.js",
+   "node": "link",
+   "ref": "p8:11"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/react-jsx-runtime-4915cb0f5b3aff04.js",
+   "node": "link",
+   "ref": "p8:12"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/react-reconciler-8e99e505c4429605.js",
+   "node": "link",
+   "ref": "p8:13"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/light-3a3d2c708970e4e8.css",
+   "node": "link",
+   "ref": "p8:14"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/light_high_contrast-9c7b506bdc5ea73f.css",
+   "node": "link",
+   "ref": "p8:15"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/dark-c9dacb4ec19616db.css",
+   "node": "link",
+   "ref": "p8:16"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/dark_high_contrast-5ef38214a3eabc7d.css",
+   "node": "link",
+   "ref": "p8:17"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/primer-primitives-02e066689466a8cd.css",
+   "node": "link",
+   "ref": "p8:18"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/primer-38ae573fa780d76a.css",
+   "node": "link",
+   "ref": "p8:19"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/global-58d1122073b19732.css",
+   "node": "link",
+   "ref": "p8:20"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/github-0b4a3ee3d18dc2f0.css",
+   "node": "link",
+   "ref": "p8:21"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/wp-runtime-c1f320e335e7a7f8.js",
+   "node": "link",
+   "ref": "p8:22"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/app-foundation-799625033ee8341e.js",
+   "node": "link",
+   "ref": "p8:23"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/app-runtime-3c481615dcdea758.js",
+   "node": "link",
+   "ref": "p8:24"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/fetch-utilities-b6ff1e30dc731d8d.js",
+   "node": "link",
+   "ref": "p8:25"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/ser-1ce9ba53965ee000.js",
+   "node": "link",
+   "ref": "p8:26"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/tp-e043b09789480cb5.js",
+   "node": "link",
+   "ref": "p8:27"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/app-runtime.9fa70928ffe4455b.module.css",
+   "node": "link",
+   "ref": "p8:28"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/catalyst-5bc36fa5a846f5a0.js",
+   "node": "link",
+   "ref": "p8:29"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/selector-observer-7ae05416e4a383ae.js",
+   "node": "link",
+   "ref": "p8:30"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/relative-time-element-b2d8b7dede692c9f.js",
+   "node": "link",
+   "ref": "p8:31"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/by-473024a3f6cb3892.js",
+   "node": "link",
+   "ref": "p8:32"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/ja9-b94de714266ba389.js",
+   "node": "link",
+   "ref": "p8:33"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/3h2-5f8899065b81d778.js",
+   "node": "link",
+   "ref": "p8:34"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/t2-19741658de225445.js",
+   "node": "link",
+   "ref": "p8:35"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/z8-5c899bb34cf0fc51.js",
+   "node": "link",
+   "ref": "p8:36"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/hj-ece3bec966e8a2b6.js",
+   "node": "link",
+   "ref": "p8:37"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/wc-33edcf25ba11d33f.js",
+   "node": "link",
+   "ref": "p8:38"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/runtime-helpers-b7e0a61126a143c7.js",
+   "node": "link",
+   "ref": "p8:39"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/aria-live-e0f60f15396869e3.js",
+   "node": "link",
+   "ref": "p8:40"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/hotkey-a82e6cb07443fd1c.js",
+   "node": "link",
+   "ref": "p8:41"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/react-core-00ddc5bd2dc16c59.js",
+   "node": "link",
+   "ref": "p8:42"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/a96-f44dcca0945fa24d.js",
+   "node": "link",
+   "ref": "p8:43"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/ur-b820e79826e6a550.js",
+   "node": "link",
+   "ref": "p8:44"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/4t-f1181f796eb9ea15.js",
+   "node": "link",
+   "ref": "p8:45"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/pb-d77644db2d006abd.js",
+   "node": "link",
+   "ref": "p8:46"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/6n-b72a71e2477d5d76.js",
+   "node": "link",
+   "ref": "p8:47"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/z-b2cf9f86cb4bed3b.js",
+   "node": "link",
+   "ref": "p8:48"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/9k-707f3c96c4acaae5.js",
+   "node": "link",
+   "ref": "p8:49"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/0r-4c4af04176d5b5a2.js",
+   "node": "link",
+   "ref": "p8:50"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/sic-2f0df03b44c730aa.js",
+   "node": "link",
+   "ref": "p8:51"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/re-ee6f895ca11c0cbe.js",
+   "node": "link",
+   "ref": "p8:52"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/eon-36af335a1906af16.js",
+   "node": "link",
+   "ref": "p8:53"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/yga-dd50cf95593467fe.js",
+   "node": "link",
+   "ref": "p8:54"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/react-core.1999e095e926ec12.module.css",
+   "node": "link",
+   "ref": "p8:55"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/8pa-cf55852a67f0ec7d.js",
+   "node": "link",
+   "ref": "p8:56"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/a3-535693ca876f3978.js",
+   "node": "link",
+   "ref": "p8:57"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/d0k-4b09f3c6dd6ac94b.js",
+   "node": "link",
+   "ref": "p8:58"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/qk-98282f4ca4a2049a.js",
+   "node": "link",
+   "ref": "p8:59"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/",
+   "node": "link",
+   "ref": "p8:60"
+  },
+  {
+   "frame": "main",
+   "label": "type=application/opensearchdescription+xml href=/opensearch.xml",
+   "node": "link",
+   "ref": "p8:61"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.com/fluidicon.png",
+   "node": "link",
+   "ref": "p8:62"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/github-0b4a3ee3d18dc2f0.css",
+   "node": "link",
+   "ref": "p8:63"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.com/login",
+   "node": "link",
+   "ref": "p8:64"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/pinned-octocat-093da3e6fa40.svg",
+   "node": "link",
+   "ref": "p8:65"
+  },
+  {
+   "frame": "main",
+   "label": "type=image/png href=https://github.githubassets.com/favicons/favicon.png",
+   "node": "link",
+   "ref": "p8:66"
+  },
+  {
+   "frame": "main",
+   "label": "type=image/svg+xml href=https://github.githubassets.com/favicons/favicon.svg",
+   "node": "link",
+   "ref": "p8:67"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/apple-touch-icon-92bd46d04241.png",
+   "node": "link",
+   "ref": "p8:68"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/apple-touch-icon-180x180-a80b8e11abe2.png",
+   "node": "link",
+   "ref": "p8:69"
+  },
+  {
+   "frame": "main",
+   "label": "href=/manifest.json",
+   "node": "link",
+   "ref": "p8:70"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/u2l.754edfc1a1629f43.module.css",
+   "node": "link",
+   "ref": "p8:71"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/1rv.eee676bc464d01e5.module.css",
+   "node": "link",
+   "ref": "p8:72"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/ha8.0151bcf9a3c3b903.module.css",
+   "node": "link",
+   "ref": "p8:73"
+  },
+  {
+   "frame": "main",
+   "label": "href=#start-of-content",
+   "node": "a",
+   "ref": "p8:74"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/qmp-308230626a2aedb0.js",
+   "node": "link",
+   "ref": "p8:75"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/t7l-699ca510ac327acf.js",
+   "node": "link",
+   "ref": "p8:76"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/qxm-8629d688b2483e64.js",
+   "node": "link",
+   "ref": "p8:77"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/u9-6c90f83135585e72.js",
+   "node": "link",
+   "ref": "p8:78"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/gj-a0e6872c9a40ac73.js",
+   "node": "link",
+   "ref": "p8:79"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/keyboard-shortcuts-dialog-433ea0ae87adeffe.js",
+   "node": "link",
+   "ref": "p8:80"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/primer-react-css.e1e97d75b76f92e7.module.css",
+   "node": "link",
+   "ref": "p8:81"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/keyboard-shortcuts-dialog.c20a5e2d617a2fd5.module.css",
+   "node": "link",
+   "ref": "p8:82"
+  },
+  {
+   "frame": "main",
+   "label": "role=banner",
+   "node": "div",
+   "ref": "p8:83"
+  },
+  {
+   "frame": "main",
+   "label": "href=",
+   "node": "a",
+   "ref": "p8:84"
+  },
+  {
+   "frame": "main",
+   "label": "href=",
+   "node": "a",
+   "ref": "p8:85"
+  },
+  {
+   "frame": "main",
+   "label": "href=",
+   "node": "a",
+   "ref": "p8:86"
+  },
+  {
+   "frame": "main",
+   "label": "id=icon-button-4e73fb3e-bdbc-49d5-af50-13d8e67060b9 type=button",
+   "node": "button",
+   "ref": "p8:87"
+  },
+  {
+   "frame": "main",
+   "label": "id=tooltip-acd6b9f9-ca0a-4b21-b015-3a285bd1c51b role=tooltip",
+   "node": "tool-tip",
+   "ref": "p8:88"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/primer-react-9fe72b5f4aca3743.js",
+   "node": "link",
+   "ref": "p8:89"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/op-76db8804e205b5d5.js",
+   "node": "link",
+   "ref": "p8:90"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/nc-2485e88d8a01d9c2.js",
+   "node": "link",
+   "ref": "p8:91"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/hi-1f029929971544e3.js",
+   "node": "link",
+   "ref": "p8:92"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/660-d1891742b04e8466.js",
+   "node": "link",
+   "ref": "p8:93"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/sessions-auth-header-371985380212ebf5.js",
+   "node": "link",
+   "ref": "p8:94"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/primer-react-css.e1e97d75b76f92e7.module.css",
+   "node": "link",
+   "ref": "p8:95"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://github.githubassets.com/assets/sessions-auth-header.cac0d60f5a8f48f5.module.css",
+   "node": "link",
+   "ref": "p8:96"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=Dismiss this message type=button",
+   "node": "button",
+   "ref": "p8:97"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=Dismiss role=img",
+   "node": "svg",
+   "ref": "p8:98"
+  },
+  {
+   "frame": "main",
+   "label": "name=authenticity_token type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:99"
+  },
+  {
+   "frame": "main",
+   "label": "name=add_account id=add_account type=hidden",
+   "node": "input",
+   "ref": "p8:100"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "label",
+   "ref": "p8:101"
+  },
+  {
+   "frame": "main",
+   "label": "name=login id=login_field type=text",
+   "node": "input",
+   "ref": "p8:102"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "label",
+   "ref": "p8:103"
+  },
+  {
+   "frame": "main",
+   "label": "name=password id=password type=password",
+   "node": "input",
+   "ref": "p8:104"
+  },
+  {
+   "frame": "main",
+   "label": "id=forgot-password href=/password_reset",
+   "node": "a",
+   "ref": "p8:105"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn-conditional type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:106"
+  },
+  {
+   "frame": "main",
+   "label": "name=javascript-support type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:107"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn-support type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:108"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn-iuvpaa-support type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:109"
+  },
+  {
+   "frame": "main",
+   "label": "name=return_to id=return_to type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:110"
+  },
+  {
+   "frame": "main",
+   "label": "name=allow_signup id=allow_signup type=hidden",
+   "node": "input",
+   "ref": "p8:111"
+  },
+  {
+   "frame": "main",
+   "label": "name=client_id id=client_id type=hidden",
+   "node": "input",
+   "ref": "p8:112"
+  },
+  {
+   "frame": "main",
+   "label": "name=integration id=integration type=hidden",
+   "node": "input",
+   "ref": "p8:113"
+  },
+  {
+   "frame": "main",
+   "label": "name=required_field_445b type=text",
+   "node": "input",
+   "ref": "p8:114"
+  },
+  {
+   "frame": "main",
+   "label": "name=timestamp type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:115"
+  },
+  {
+   "frame": "main",
+   "label": "name=timestamp_secret type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:116"
+  },
+  {
+   "frame": "main",
+   "label": "name=commit type=submit value=Sign in",
+   "node": "input",
+   "ref": "p8:117"
+  },
+  {
+   "frame": "main",
+   "label": "name=authenticity_token type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:118"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn_response type=hidden",
+   "node": "input",
+   "ref": "p8:119"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn-conditional type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:120"
+  },
+  {
+   "frame": "main",
+   "label": "name=javascript-support type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:121"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn-support type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:122"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn-iuvpaa-support type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:123"
+  },
+  {
+   "frame": "main",
+   "label": "name=return_to id=return_to type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:124"
+  },
+  {
+   "frame": "main",
+   "label": "name=allow_signup id=allow_signup type=hidden",
+   "node": "input",
+   "ref": "p8:125"
+  },
+  {
+   "frame": "main",
+   "label": "name=client_id id=client_id type=hidden",
+   "node": "input",
+   "ref": "p8:126"
+  },
+  {
+   "frame": "main",
+   "label": "name=integration id=integration type=hidden",
+   "node": "input",
+   "ref": "p8:127"
+  },
+  {
+   "frame": "main",
+   "label": "name=required_field_b38a type=text",
+   "node": "input",
+   "ref": "p8:128"
+  },
+  {
+   "frame": "main",
+   "label": "name=timestamp type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:129"
+  },
+  {
+   "frame": "main",
+   "label": "name=timestamp_secret type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:130"
+  },
+  {
+   "frame": "main",
+   "label": "name=authenticity_token type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:131"
+  },
+  {
+   "frame": "main",
+   "label": "role=alert",
+   "node": "span",
+   "ref": "p8:132"
+  },
+  {
+   "frame": "main",
+   "label": "type=button",
+   "node": "button",
+   "ref": "p8:133"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn_response type=hidden",
+   "node": "input",
+   "ref": "p8:134"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn-conditional type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:135"
+  },
+  {
+   "frame": "main",
+   "label": "name=javascript-support type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:136"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn-support type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:137"
+  },
+  {
+   "frame": "main",
+   "label": "name=webauthn-iuvpaa-support type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:138"
+  },
+  {
+   "frame": "main",
+   "label": "name=return_to id=return_to type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:139"
+  },
+  {
+   "frame": "main",
+   "label": "name=allow_signup id=allow_signup type=hidden",
+   "node": "input",
+   "ref": "p8:140"
+  },
+  {
+   "frame": "main",
+   "label": "name=client_id id=client_id type=hidden",
+   "node": "input",
+   "ref": "p8:141"
+  },
+  {
+   "frame": "main",
+   "label": "name=integration id=integration type=hidden",
+   "node": "input",
+   "ref": "p8:142"
+  },
+  {
+   "frame": "main",
+   "label": "name=required_field_4199 type=text",
+   "node": "input",
+   "ref": "p8:143"
+  },
+  {
+   "frame": "main",
+   "label": "name=timestamp type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:144"
+  },
+  {
+   "frame": "main",
+   "label": "name=timestamp_secret type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:145"
+  },
+  {
+   "frame": "main",
+   "label": "name=return_to type=hidden value=",
+   "node": "input",
+   "ref": "p8:146"
+  },
+  {
+   "frame": "main",
+   "label": "name=disable_signup type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:147"
+  },
+  {
+   "frame": "main",
+   "label": "type=submit",
+   "node": "button",
+   "ref": "p8:148"
+  },
+  {
+   "frame": "main",
+   "label": "name=return_to type=hidden value=",
+   "node": "input",
+   "ref": "p8:149"
+  },
+  {
+   "frame": "main",
+   "label": "name=disable_signup type=hidden value=REDACTED",
+   "node": "input",
+   "ref": "p8:150"
+  },
+  {
+   "frame": "main",
+   "label": "type=submit",
+   "node": "button",
+   "ref": "p8:151"
+  },
+  {
+   "frame": "main",
+   "label": "href=/signup?source=login",
+   "node": "a",
+   "ref": "p8:152"
+  },
+  {
+   "frame": "main",
+   "label": "type=button",
+   "node": "button",
+   "ref": "p8:153"
+  },
+  {
+   "frame": "main",
+   "label": "role=contentinfo",
+   "node": "div",
+   "ref": "p8:154"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://docs.github.com/site-policy/github-terms/github-terms-of-service",
+   "node": "a",
+   "ref": "p8:155"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://docs.github.com/site-policy/privacy-policies/github-privacy-statement",
+   "node": "a",
+   "ref": "p8:156"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://docs.github.com",
+   "node": "a",
+   "ref": "p8:157"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://support.github.com",
+   "node": "a",
+   "ref": "p8:158"
+  },
+  {
+   "frame": "main",
+   "label": "type=button",
+   "node": "button",
+   "ref": "p8:159"
+  },
+  {
+   "frame": "main",
+   "label": "type=button",
+   "node": "button",
+   "ref": "p8:160"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=Dismiss error type=button",
+   "node": "button",
+   "ref": "p8:161"
+  }
+ ],
+ "snapshot_id": "p8",
+ "status": "ok",
+ "tab_id": "tab-51285d19-1af2-4d9a-a542-89ebc34b48e2",
+ "target_id": "bt-de3ea213-a836-4ae3-92bb-40c0047a9139",
+ "truncated": false,
+ "url": "https://github.com/login"
+}
