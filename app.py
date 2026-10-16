@@ -2871,6 +2871,8 @@ AGENT_HEARTBEAT_S = 15                                       # SSE comment while
 AGENT_ACTIVE = ("running", "waiting", "paused")
 AGENT_REPEAT_HINT = "That isn't working; try another way or ask_user."
 AGENT_REPROMPT = "Reply with exactly one tool call."
+AGENT_TOOK_OVER = "Not done: the user took over the browser, so the page may have changed. Look at it again before acting."
+AGENT_CUA_CACHE_S = 10                                       # cua_status() runs cua-driver twice; the Agent view asks often
 AGENT_KEEP_RUNS = 20                                         # finished runs kept in memory (all of them stay on disk)
 _AGENT_LOST = ("stopped responding", "couldn't start", "didn't open its socket", "timed out after")   # McpClient's words for a daemon that is gone
 _AGENT_RID = re.compile(r"^[a-f0-9]{12}$")
@@ -2963,11 +2965,27 @@ def _task_domains(task):
     return out
 
 
-def _agent_redact(args, facts):
-    """args with the typed text hidden when the target may be a password, code or card field."""
-    if isinstance(args, dict) and "text" in args and facts and (_sensitive_field(facts) or facts.get("sensitive_unknown")):
+def _agent_redact(tool, args, facts):
+    """args with the typed text hidden when the target may be a password, code or card field, or is not known at all."""
+    if (tool in ("type", "type_app") and isinstance(args, dict) and "text" in args
+            and (not facts or _sensitive_field(facts) or facts.get("sensitive_unknown"))):
         return {**args, "text": "•••"}
     return args
+
+
+def _agent_scrub(text, secret, drop_if_short=False):
+    """text with every occurrence of `secret` replaced by •••. A secret under 4 characters can't be found reliably: then the
+    text is dropped (drop_if_short) or left as it is."""
+    if not text or secret is None:
+        return text
+    parts = {p for p in (str(secret), str(secret).strip()) if p}
+    if not parts:
+        return text
+    if min(map(len, parts)) < 4:
+        return "" if drop_if_short else text
+    for p in sorted(parts, key=len, reverse=True):
+        text = text.replace(p, "•••")
+    return text
 
 
 def _agent_summary(tool, args, facts):
@@ -3037,15 +3055,13 @@ class _AgentLoop:
         """Take over: hand the browser to the user and wait for Resume (or Stop)."""
         run = self.run
         with run.cond:
-            run.takeover = False
+            run.takeover, run.status = False, "paused"       # from here a second Take over is a no-op
         try:
             self.mcp(self.ad.take_over)
         except _AgentEnd:
             raise
         except Exception as e:                               # the user can still find the window themselves
             run.emit({"type": "note", "text": f"Couldn't bring the browser to the front: {_clip(e, 200)}"})
-        with run.cond:
-            run.status = "paused"
         run.emit({"type": "note", "text": "Paused while you take over. Press Resume when you're done."})
         run.save()
         with run.cond:
@@ -3057,12 +3073,15 @@ class _AgentLoop:
         self.ad.resume()
         run.emit({"type": "note", "text": "Resumed."})
 
-    def wait(self, kind, n):
-        """Wait for the user's answer to an approval ("allow" | "deny", or "takeover" when they took over instead) or a question."""
+    def wait(self, kind, n, event):
+        """Show `event` (the approval card or the question) and wait for the user's answer: "allow" | "deny" (or "takeover" when
+        they took over instead) for an approval, the text for a question. `pending` is set first, so an answer that arrives the
+        moment the event is seen is accepted, and it carries `n`, so an answer meant for another step is refused."""
         run, t = self.run, _agent_now()
         try:
             with run.cond:
                 run.pending, run.reply, run.status = {"kind": kind, "n": n}, None, "waiting"
+            run.emit(event)
             run.save()
             while True:
                 with run.cond:
@@ -3141,6 +3160,7 @@ class _AgentLoop:
         call = extract_tool_call(msg, self.names)
         if call is None:                                     # once more, saying what is wanted (and a fresh dict: never echo finish_reason)
             hint = ("Your reply was cut off before the tool call. " if msg.get("finish_reason") == "length" else "") + AGENT_REPROMPT
+            self.check_stop()
             msg = _agent_model(self.mode, self.m, msgs + [{"role": "assistant", "content": content or "(no tool call)"},
                                                           {"role": "user", "content": hint}], AGENT_TOOLS)
             t2 = split_thought(msg)[0]
@@ -3157,11 +3177,14 @@ class _AgentLoop:
             self.last, self.repeats = None, 0
         if self.repeats == 3:
             result += " " + AGENT_REPEAT_HINT
-        shown = _agent_redact(args, facts)
-        summary = _agent_summary(tool, shown, facts)
+        shown = _agent_redact(tool, args, facts)
+        secret = args.get("text") if shown is not args else None          # the model's own reasoning may repeat what it typed
+        summary = _agent_scrub(_agent_summary(tool, shown, facts), secret)
+        result = _agent_scrub(result, secret)
+        thought = _agent_scrub(thought or "", secret, drop_if_short=True)
         self.history.append(f"{n}. {summary} → {_agent_short(tool, result)}")
         self.run.emit({"type": "step", "n": n, "tool": tool, "args": shown, "summary": summary, "result": result[:2000],
-                       "decision": decision, "shot": shot, "thought": (thought or "")[:4000]})
+                       "decision": decision, "shot": None if secret is not None else shot, "thought": thought[:4000]})
         self.run.save()
         if self.repeats >= 4:
             raise _AgentEnd("failed", "stuck", "Stopped: the agent kept repeating the same action that wasn't working.")
@@ -3177,6 +3200,8 @@ class _AgentLoop:
         if call is None:
             return self.record(n, None, {}, None, "Error: the reply had no tool call. " + AGENT_REPROMPT, "error", thought)
         name, args = call
+        if run.takeover:                                     # Take over pressed while the model was thinking: hands off the page
+            return self.record(n, name, args if isinstance(args, dict) else {"args": args}, None, AGENT_TOOK_OVER, "skipped", thought)
         err = validate_call(name, args)
         if err:
             return self.record(n, name, args if isinstance(args, dict) else {"args": args}, None, "Error: " + err, "error", thought)
@@ -3185,8 +3210,7 @@ class _AgentLoop:
                 run.notes.append(_clip(args["text"], 300))
             return self.record(n, name, args, None, "Noted.", "safe", thought)
         if name == "ask_user":
-            run.emit({"type": "question", "n": n, "text": _clip(args["question"], 500)})
-            answer = self.wait("question", n)
+            answer = self.wait("question", n, {"type": "question", "n": n, "text": _clip(args["question"], 500)})
             return self.record(n, name, args, None, f"The user answered: {_clip(answer, 1000)}", "safe", thought)
         if name == "done":
             run.answer = str(args["answer"])
@@ -3204,20 +3228,28 @@ class _AgentLoop:
         decision, reason = gate(name, args, facts, ctx)
         if decision == "blocked":
             return self.record(n, name, args, facts, f"Blocked: {reason}", "blocked", thought)
+        hidden = _agent_redact(name, args, facts) is not args          # typing into a sensitive field: no screenshots of it
         if decision == "risky":
-            run.emit({"type": "approval", "n": n, "title": approval_title(name, facts, ctx, args), "shot": run.shot(f"{n}-ask", ad.screenshot()),
-                      "box": (facts or {}).get("box"), "tool": name, "args": _agent_redact(args, facts), "reason": reason})
-            answer = self.wait("approval", n)
+            card = {"type": "approval", "n": n, "title": approval_title(name, facts, ctx, args),
+                    "shot": None if hidden else run.shot(f"{n}-ask", ad.screenshot()),
+                    "box": (facts or {}).get("box"), "tool": name, "args": _agent_redact(name, args, facts), "reason": reason}
+            try:
+                answer = self.wait("approval", n, card)
+            except _AgentEnd as e:
+                if e.status == "stopped":
+                    self.record(n, name, args, facts, "Not done: the task was stopped.", "stopped", thought)
+                raise
             if answer == "deny":
                 return self.record(n, name, args, facts, "The user denied this action.", "denied", thought)
             if answer != "allow":
-                return self.record(n, name, args, facts, "Not done: the user took over the browser, so the page may have changed. "
-                                                         "Look at it again before acting.", "skipped", thought)
+                return self.record(n, name, args, facts, AGENT_TOOK_OVER, "skipped", thought)
             decision = "allowed"
         self.check_stop()
+        if run.takeover:                                     # the user has the window now; don't act in it
+            return self.record(n, name, args, facts, AGENT_TOOK_OVER, "skipped", thought)
         result = ad.execute(name, args)
         self.reuse = name == "read_page" and not result.startswith("Error")
-        self.record(n, name, args, facts, result, decision, thought, run.shot(str(n), ad.screenshot()))
+        self.record(n, name, args, facts, result, decision, thought, None if hidden else run.shot(str(n), ad.screenshot()))
 
     def loop(self):
         while True:
@@ -3322,13 +3354,33 @@ def _cua_quiet(cmd, timeout):
         subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired):
         pass
+    finally:
+        _cua_cache.clear()                                   # the permissions may have changed
+
+
+_cua_cache: dict = {}                                        # {"t": monotonic time, "v": cua_status()}; clear() forgets it
+_cua_grant = None                                            # the running `cua-driver permissions grant` thread
+_cua_grant_lock = threading.Lock()
+
+
+def cua_status_cached(refresh=False):
+    """cua_status(), remembered for AGENT_CUA_CACHE_S (it runs cua-driver twice)."""
+    hit = _cua_cache.get("v")
+    if refresh or hit is None or time.monotonic() - _cua_cache.get("t", 0) >= AGENT_CUA_CACHE_S:
+        hit = cua_status()
+        _cua_cache.update(t=time.monotonic(), v=hit)
+    return dict(hit)
+
+
+def _agent_sse(e):
+    return f"id: {e.get('i')}\n" + _sse(e)
 
 
 @app.get("/api/agent/status")
 def agent_status():
     run = _agent_current
     s = load_settings()["agent"]
-    return {"enabled": s["enabled"], "cua": cua_status(), "running": run.id if run is not None and agent_lock.locked() else None,
+    return {"enabled": s["enabled"], "cua": cua_status_cached(), "running": run.id if run is not None and agent_lock.locked() else None,
             "settings": s, "tier_defaults": APP_TIERS_DEFAULT}
 
 
@@ -3368,9 +3420,14 @@ def agent_settings(body: dict = Body(...)):
 @app.post("/api/agent/permissions")
 def agent_permissions():
     """Only from the user's click in Settings: CuaDriver asks macOS for Accessibility and Screen Recording."""
+    global _cua_grant
     if not Path(CUA_DRIVER).exists():
         raise HTTPException(409, "Install CuaDriver first.")
-    threading.Thread(target=_cua_quiet, args=([CUA_DRIVER, "permissions", "grant"], 600), daemon=True).start()
+    with _cua_grant_lock:                                    # one at a time: a second click while macOS is asking does nothing new
+        if _cua_grant is not None and _cua_grant.is_alive():
+            raise HTTPException(409, "Already asking macOS for permissions.")
+        _cua_grant = threading.Thread(target=_cua_quiet, args=([CUA_DRIVER, "permissions", "grant"], 600), daemon=True)
+        _cua_grant.start()
     return {"status": "started"}
 
 
@@ -3382,6 +3439,8 @@ def agent_telemetry_disable():
         r = subprocess.run([CUA_DRIVER, "telemetry", "disable"], capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise HTTPException(500, f"cua-driver failed: {_clip(e, 200)}")
+    finally:
+        _cua_cache.clear()
     if r.returncode != 0:
         raise HTTPException(500, _clip(r.stderr or r.stdout or "cua-driver failed", 200))
     return {"telemetry": False}
@@ -3397,7 +3456,7 @@ def agent_run(body: dict = Body(...)):
         raise HTTPException(409, "Describe the task first.")
     if not load_settings()["agent"]["enabled"]:
         raise HTTPException(409, "Turn on Agent in Settings first.")
-    cua = cua_status()
+    cua = cua_status_cached(refresh=True)                    # a run is started rarely: always look (and refresh the cache)
     if not cua["installed"]:
         raise HTTPException(409, "Install CuaDriver first (Settings → Agent).")
     if not cua["ok_version"]:
@@ -3428,7 +3487,8 @@ def agent_run(body: dict = Body(...)):
 
 @app.get("/api/agent/runs/{rid}/events")
 async def agent_events(rid: str, after: int = 0):
-    """SSE: the run's events with i >= after, then live ones until `end`. Finished runs replay from memory or disk."""
+    """SSE: the run's events with i >= after (inclusive: a client reconnects with its last i + 1 and drops any i it already has),
+    then live ones until `end`. Each event carries `id: <i>`. Finished runs replay from memory or disk."""
     after = max(0, after)
     run = _agent_runs.get(rid) if _AGENT_RID.match(rid) else None
     headers = {"Cache-Control": "no-cache"}
@@ -3441,7 +3501,7 @@ async def agent_events(rid: str, after: int = 0):
         async def stored():
             for e in evs:
                 if e.get("i", 0) >= after:
-                    yield _sse(e)
+                    yield _agent_sse(e)
         return StreamingResponse(stored(), media_type="text/event-stream", headers=headers)
 
     async def live():
@@ -3451,7 +3511,7 @@ async def agent_events(rid: str, after: int = 0):
                 evs = run.events[i:]
                 ended = bool(run.events) and run.events[-1]["type"] == "end"
             for e in evs:
-                yield _sse(e)
+                yield _agent_sse(e)
             if evs:
                 i, beat = evs[-1]["i"] + 1, time.monotonic()
             if ended:
@@ -3465,14 +3525,21 @@ async def agent_events(rid: str, after: int = 0):
 
 @app.post("/api/agent/runs/{rid}/reply")
 def agent_reply(rid: str, body: dict = Body(...)):
+    """An answer to the approval or question of step `n` (the body must name it): {n, decision: allow|deny|stop} or {n, text}."""
     run = _agent_active(rid)
-    d, text = body.get("decision"), body.get("text")
+    d, text, n = body.get("decision"), body.get("text"), body.get("n")
     with run.cond:
         p = run.pending
-        if d == "stop" and p:
+        if not p:
+            raise HTTPException(409, "Nothing is waiting for an answer.")
+        if type(n) is not int or n != p["n"]:                # a stale or duplicated answer never lands on another step
+            raise HTTPException(409, "That answer is for another step.")
+        if d == "stop":
             run.stop = True
-        elif not p or run.status == "paused" or run.reply is not None:
-            raise HTTPException(409, "Nothing is waiting for an answer." if not p else "Resume the task first.")
+        elif run.status == "paused" or run.takeover:
+            raise HTTPException(409, "Resume the task first.")
+        elif run.reply is not None:
+            raise HTTPException(409, "Already answered.")
         elif p["kind"] == "approval" and d in ("allow", "deny"):
             run.reply = d
         elif p["kind"] == "question" and isinstance(text, str) and text.strip():
@@ -3486,7 +3553,9 @@ def agent_reply(rid: str, body: dict = Body(...)):
 @app.post("/api/agent/runs/{rid}/stop")
 def agent_stop(rid: str):
     run = _agent_active(rid)
-    with run.cond:
+    with run.cond:                                           # under cond: the run cannot reach `end` in between, so the note comes before it
+        if not run.stop and run.status in AGENT_ACTIVE:
+            run.emit({"type": "note", "text": "Stopping after the current step…"})
         run.stop = True
         run.cond.notify_all()
     return {"ok": True}
@@ -3496,10 +3565,9 @@ def agent_stop(rid: str):
 def agent_takeover(rid: str):
     run = _agent_active(rid)
     with run.cond:
-        if run.status == "paused":
-            raise HTTPException(409, "You already have the browser.")
-        run.takeover = True
-        run.cond.notify_all()
+        if run.status != "paused" and not run.takeover:     # a second press while pausing or paused does nothing (no re-pause after Resume)
+            run.takeover = True
+            run.cond.notify_all()
     return {"ok": True}
 
 
@@ -3551,7 +3619,7 @@ def agent_run_delete(rid: str):
     if not _AGENT_RID.match(rid):
         raise HTTPException(404)
     run = _agent_runs.get(rid)
-    if run is not None and run.status in AGENT_ACTIVE:
+    if run is not None and (run.status in AGENT_ACTIVE or (run.thread is not None and run.thread.is_alive())):
         raise HTTPException(409, "Stop the task first.")
     p = AGENT_RUNS / f"{rid}.json"
     if run is None and not p.exists():
