@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -2041,6 +2042,175 @@ def fold_history(lines, budget=3000):
     if older:
         out.insert(0, _clip("Earlier: " + "; ".join(_clip(l, 50) for l in older), head))
     return out
+
+
+# ---- approval gate: decides from facts about the target (never the model's own words) whether an action is safe, risky or blocked
+
+RISKY_WORDS = re.compile(r"\b(send|submit|buy|pay|order|checkout|check out|confirm|delete|remove|post|publish|sign up|subscribe|book|transfer|place order)\b", re.I)
+APP_TIERS_DEFAULT = {
+    **{n: "read" for n in ("Keychain Access", "System Settings", "Terminal", "iTerm", "Warp", "1Password", "Bitwarden", "Passwords")},
+    **{n: "ask" for n in ("Mail", "Messages", "WhatsApp", "Slack", "Calendar", "Finder")},
+}
+READ_ONLY_NAME = re.compile(r"bank|finance|wallet|password|crypto", re.I)
+_TIER_NAMES = ("read", "ask", "allowed")
+_SEARCH_RE = re.compile(r"search|find|query", re.I)
+_ENTER_DELETE_KEYS = frozenset(("return", "enter", "delete", "backspace", "forwarddelete", "del"))
+_APP_ACTING = frozenset(("click_app", "type_app", "menu", "hotkey"))
+_TYPING = frozenset(("type", "type_app"))
+_SAFE_TOOLS = frozenset(("read_page", "scroll", "back", "note", "ask_user", "done", "list_apps", "open_app", "read_app"))
+
+
+def _tier_key(name):
+    k = (name or "").strip().casefold()
+    return k[:-4] if k.endswith(".app") else k
+
+
+def app_tier(app_name, overrides):
+    """"read" (look only), "ask" (every action needs approval) or "allowed": the user's overrides first, then the
+    defaults, then a name that sounds like money or secrets (read), else allowed."""
+    k = _tier_key(app_name)
+    for table in (overrides or {}, APP_TIERS_DEFAULT):
+        for n, t in table.items():
+            if _tier_key(n) == k and t in _TIER_NAMES:
+                return t
+    base = k.rstrip("0123456789 ")                                  # iTerm2 -> iterm
+    if base != k:
+        for n, t in APP_TIERS_DEFAULT.items():
+            if _tier_key(n) == base:
+                return t
+    return "read" if READ_ONLY_NAME.search(app_name or "") else "allowed"
+
+
+def _host(s):
+    """Lowercase host of a URL or bare host, without www., port or trailing dot; "" if there is none."""
+    s = (s or "").strip()
+    if not s or "\\" in s:                                         # browsers read \ as /, urlsplit does not: https://evil.net\@example.com
+        return ""
+    try:
+        h = urlsplit(s if "//" in s else "//" + s).hostname or ""
+    except ValueError:
+        return ""
+    h = h.lower().rstrip(".")
+    return h[4:] if h.startswith("www.") else h
+
+
+def _domain_in(host, domains):
+    for d in domains or ():
+        d = _host(d)
+        if d and (host == d or host.endswith("." + d)):
+            return True
+    return False
+
+
+def _sensitive_field(facts):
+    ac = (facts.get("autocomplete") or "").strip().lower()
+    return (facts.get("input_type") or "").strip().lower() == "password" or ac in ("current-password", "new-password", "one-time-code") or ac.startswith("cc-")
+
+
+def gate(tool, args, facts, ctx):
+    """Decide `("safe" | "risky" | "blocked", reason)` for one action. Pure; reads only its arguments.
+
+    tool   model-facing tool name (open_url, click, type, ... see _SAFE_TOOLS and _APP_ACTING), plus the adapter's own
+           `download` (a download about to happen) and `dialog` (answering a page confirm/beforeunload dialog).
+    args   the tool's arguments (`url` for open_url, `submit` for type, `keys` for hotkey, `path` for menu).
+    facts  Facts of the target ref (None when there is none); a click/type without facts is risky.
+    ctx    surface         "browser" | "app"
+           app, tier       the app being acted on and its tier ("read" | "ask" | "allowed"); a missing tier counts as "ask"
+           domain          host of the current page
+           task_domains    set of hosts the task is about
+           link_domains    set of hosts of links seen on the page (from the DOM; facts["href"] is always None for the browser)
+           url_from_page   True when the URL being opened came from page content rather than the user
+    A subdomain of a task or link domain counts as that domain."""
+    args, ctx = args or {}, ctx or {}
+    if tool in _SAFE_TOOLS:
+        return "safe", "reading, scrolling and notes do not change anything"
+    if tool == "download":
+        return "risky", "a file is about to be downloaded"
+    if tool == "dialog":
+        return "risky", "the page is asking a question in a dialog"
+    if tool == "open_url":
+        url = str(args.get("url") or "").strip()
+        m = re.match(r"^([a-z][a-z0-9+.-]*):", url, re.I)
+        if m and m.group(1).lower() not in ("http", "https"):
+            return "blocked", f"only http and https addresses can be opened, not {m.group(1).lower()}:"
+        if not ctx.get("url_from_page"):
+            return "safe", "the address came from the user"
+        host = _host(url)
+        if not host:
+            return "risky", "the address from the page has no usable host"
+        if _domain_in(host, ctx.get("task_domains")) or _domain_in(host, ctx.get("link_domains")):
+            return "safe", f"{host} is part of the task or linked from the page"
+        return "risky", f"the page points to {host}, which the task does not involve"
+    if tool in _TYPING or tool == "click" or tool in _APP_ACTING:
+        return _gate_acting(tool, args, facts, ctx)
+    return "blocked", f"unknown tool {tool!r}"
+
+
+def _gate_acting(tool, args, facts, ctx):
+    app_tool = tool in _APP_ACTING
+    tier = (ctx.get("tier") or "ask") if app_tool else None
+    if tool in _TYPING and facts and _sensitive_field(facts):
+        return "blocked", "passwords, one-time codes and card details are never typed by the agent"
+    if tier == "read":
+        return "blocked", f"{ctx.get('app') or 'this app'} is read-only for the agent"
+    if tier == "ask":
+        return "risky", f"every action in {ctx.get('app') or 'this app'} needs approval"
+    if tool == "hotkey":
+        keys = {str(k).strip().lower() for k in args.get("keys") or ()}
+        return ("risky", "the keys include return or delete") if keys & _ENTER_DELETE_KEYS else ("safe", "an ordinary shortcut")
+    if tool == "menu":
+        hit = next((p for p in args.get("path") or () if RISKY_WORDS.search(str(p))), None)
+        return ("risky", f"the menu item {hit!r} sounds irreversible") if hit else ("safe", "an ordinary menu item")
+    if not facts:
+        return "risky", "the target could not be identified"
+    name = facts.get("name") or ""
+    if tool in _TYPING:
+        if facts.get("sensitive_unknown"):
+            return "risky", "this field may hold a password or code"
+        if tool == "type" and args.get("submit") and facts.get("in_form"):
+            if facts.get("role") == "searchbox" or _SEARCH_RE.search(name):
+                return "safe", "a search"
+            return "risky", "typing would also submit the form"
+        if app_tool and RISKY_WORDS.search(name):
+            return "risky", f"the field {name!r} sounds irreversible"
+        return "safe", "ordinary typing"
+    if facts.get("is_submit"):
+        return "risky", "this control submits a form"
+    if RISKY_WORDS.search(name):
+        return "risky", f"{name!r} sounds irreversible"
+    return "safe", "an ordinary control"
+
+
+_KEY_NAMES = {"cmd": "⌘", "command": "⌘", "shift": "⇧", "option": "⌥", "alt": "⌥", "opt": "⌥", "ctrl": "⌃", "control": "⌃"}
+
+
+def approval_title(tool, facts, ctx, args=None):
+    """One line for the approval card, in the user's terms. Labels come from the facts, not from the model."""
+    args, ctx = args or {}, ctx or {}
+    where_web = f"on {ctx.get('domain') or 'this page'}"
+    where_app = f"in {ctx.get('app') or 'the app'}"
+    label = lambda: _clip((facts or {}).get("name") or (facts or {}).get("role") or "control", 80)
+    if tool == "click":
+        return f"Click **{label()}** {where_web}"
+    if tool == "click_app":
+        return f"Click **{label()}** {where_app}"
+    if tool == "type":
+        return f"Type into **{label()}** {where_web}"
+    if tool == "type_app":
+        return f"Type into **{label()}** {where_app}"
+    if tool == "download":
+        name = (facts or {}).get("name") or args.get("name") or args.get("filename") or "a file"
+        return f"Download **{_clip(name, 80)}** {where_web}"
+    if tool == "dialog":
+        return f"Answer a page dialog {where_web}"
+    if tool == "open_url":
+        return f"Open **{_clip(args.get('url'), 80)}**"
+    if tool == "menu":
+        return f"Use menu **{_clip(' › '.join(str(p) for p in args.get('path') or ()), 80)}** {where_app}"
+    if tool == "hotkey":
+        keys = [_KEY_NAMES.get(str(k).lower(), str(k).capitalize() if len(str(k)) > 1 else str(k).upper()) for k in args.get("keys") or ()]
+        return f"Press **{_clip('+'.join(keys), 80)}** {where_app}"
+    return f"Run **{_clip(str(tool), 80)}**"
 
 
 # ---------------------------------------------------------------- versions & updates

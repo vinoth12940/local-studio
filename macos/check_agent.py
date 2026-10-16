@@ -543,6 +543,144 @@ def buttons_in_forms_default_to_submit():
     assert app.browser_view(st, d)["refs"]["e1"]["facts"]["is_submit"] is False
 
 
+def _gf(role="button", name="", **kw):
+    return app._facts(role, name, **kw)
+
+
+def _gc(**kw):
+    c = {"surface": "browser", "app": None, "tier": None, "domain": "example.com",
+         "task_domains": {"example.com"}, "link_domains": {"docs.other.org"}, "url_from_page": False}
+    c.update(kw)
+    return c
+
+
+def _ac(tier="allowed", app_name="Notes"):
+    return _gc(surface="app", app=app_name, tier=tier, domain=None)
+
+
+@check
+def app_tiers():
+    t = app.app_tier
+    assert t("Chase Bank", {}) == "read" and t("Crypto Wallet", {}) == "read" and t("MyFinance", {}) == "read"
+    assert t("Keychain Access", {}) == "read" and t("System Settings", {}) == "read" and t("iTerm2", {}) == "read"
+    assert t("1Password", {}) == "read" and t("Terminal.app", {}) == "read"
+    assert t("Mail", {}) == "ask" and t("Slack", {}) == "ask" and t("finder", {}) == "ask"
+    assert t("Notes", {}) == "allowed" and t("Safari", {}) == "allowed"
+    assert t("Mail", {"Mail": "allowed"}) == "allowed" and t("Notes", {"Notes": "ask"}) == "ask"
+    assert t("Chase Bank", {"Chase Bank": "allowed"}) == "allowed"
+    assert t("Mail", {"Mail": "bogus"}) == "ask"                       # a junk override is ignored
+    assert app.RISKY_WORDS.search("Place order") and not app.RISKY_WORDS.search("Bold")
+
+
+@check
+def gate_table():
+    G = app.gate
+    link = {"docs.other.org"}
+    rows = [
+        # (label, tool, args, facts, ctx, expected)
+        ("submit button", "click", {"ref": "e1"}, _gf(name="Go", is_submit=True), _gc(), "risky"),
+        ("risky link", "click", {"ref": "e1"}, _gf("link", "Place order"), _gc(), "risky"),
+        ("risky word button", "click", {"ref": "e1"}, _gf(name="Delete account"), _gc(), "risky"),
+        ("plain link", "click", {"ref": "e1"}, _gf("link", "Pricing"), _gc(), "safe"),
+        ("plain button", "click", {"ref": "e1"}, _gf(name="Next page"), _gc(), "safe"),
+        ("click without facts", "click", {"ref": "e9"}, None, _gc(), "risky"),
+        ("submit in a form", "type", {"ref": "e2", "text": "hi", "submit": True}, _gf("textbox", "Message", in_form=True), _gc(), "risky"),
+        ("submit outside a form", "type", {"ref": "e2", "text": "hi", "submit": True}, _gf("textbox", "Message"), _gc(), "safe"),
+        ("type no submit in a form", "type", {"ref": "e2", "text": "hi", "submit": False}, _gf("textbox", "Message", in_form=True), _gc(), "safe"),
+        ("search submit by role", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("searchbox", "", in_form=True), _gc(), "safe"),
+        ("search submit by name", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("textbox", "Search products", in_form=True), _gc(), "safe"),
+        ("find submit by name", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("textbox", "Find a store", in_form=True), _gc(), "safe"),
+        ("query submit by name", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("textbox", "Your QUERY", in_form=True), _gc(), "safe"),
+        ("search but sensitive_unknown", "type", {"ref": "e2", "text": "x", "submit": True}, _gf("searchbox", "Search", in_form=True, sensitive_unknown=True), _gc(), "risky"),
+        ("sensitive_unknown field", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Code", sensitive_unknown=True), _gc(), "risky"),
+        ("type without facts", "type", {"ref": "e9", "text": "x"}, None, _gc(), "risky"),
+        ("download", "download", {"name": "report.pdf"}, None, _gc(), "risky"),
+        ("dialog", "dialog", {"accept": True}, None, _gc(), "risky"),
+        ("open_url task domain", "open_url", {"url": "https://example.com/a"}, None, _gc(url_from_page=True), "safe"),
+        ("open_url task subdomain", "open_url", {"url": "https://shop.example.com/a"}, None, _gc(url_from_page=True), "safe"),
+        ("open_url www prefix", "open_url", {"url": "https://www.example.com/a"}, None, _gc(url_from_page=True, task_domains={"www.Example.com"}), "safe"),
+        ("open_url linked domain", "open_url", {"url": "https://docs.other.org/x"}, None, _gc(url_from_page=True), "safe"),
+        ("open_url new domain from page", "open_url", {"url": "https://evil.net/x"}, None, _gc(url_from_page=True), "risky"),
+        ("open_url lookalike domain", "open_url", {"url": "https://badexample.com/"}, None, _gc(url_from_page=True), "risky"),
+        ("open_url parent of task domain", "open_url", {"url": "https://com/"}, None, _gc(url_from_page=True), "risky"),
+        ("open_url new domain typed by user", "open_url", {"url": "https://evil.net/x"}, None, _gc(url_from_page=False), "safe"),
+        ("open_url no scheme", "open_url", {"url": "evil.net/x"}, None, _gc(url_from_page=True), "risky"),
+        ("open_url backslash trick", "open_url", {"url": "https://evil.net\\@example.com/"}, None, _gc(url_from_page=True), "risky"),
+        ("open_url junk from page", "open_url", {"url": "https://"}, None, _gc(url_from_page=True), "risky"),
+        ("read_page", "read_page", {}, None, _gc(), "safe"),
+        ("scroll", "scroll", {"direction": "down"}, None, _gc(), "safe"),
+        ("back", "back", {}, None, _gc(), "safe"),
+        ("note", "note", {"text": "x"}, None, _gc(), "safe"),
+        ("ask_user", "ask_user", {"question": "?"}, None, _gc(), "safe"),
+        ("done", "done", {"answer": "ok"}, None, _gc(), "safe"),
+        ("list_apps", "list_apps", {}, None, _gc(surface="app"), "safe"),
+        # blocked
+        ("type password", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Password", input_type="password"), _gc(), "blocked"),
+        ("type cc-number", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Card", autocomplete="cc-number"), _gc(), "blocked"),
+        ("type one-time-code", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Code", autocomplete="one-time-code"), _gc(), "blocked"),
+        ("type current-password", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Pw", autocomplete="current-password"), _gc(), "blocked"),
+        ("type new-password", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Pw", autocomplete="New-Password"), _gc(), "blocked"),
+        ("type_app secure field", "type_app", {"ref": "e2", "text": "x"}, _gf("textfield", "Secret", input_type="password"), _ac(), "blocked"),
+        ("type password with submit", "type", {"ref": "e2", "text": "x", "submit": True}, _gf("textbox", "Search", input_type="password", in_form=True), _gc(), "blocked"),
+        ("read tier click_app", "click_app", {"ref": "e1"}, _gf(name="OK"), _ac("read", "Terminal"), "blocked"),
+        ("read tier type_app", "type_app", {"ref": "e1", "text": "ls"}, _gf("textfield", "cmd"), _ac("read", "Terminal"), "blocked"),
+        ("read tier menu", "menu", {"app": "Terminal", "path": ["File", "New"]}, None, _ac("read", "Terminal"), "blocked"),
+        ("read tier hotkey", "hotkey", {"keys": ["cmd", "t"]}, None, _ac("read", "Terminal"), "blocked"),
+        # apps
+        ("read_app in read tier", "read_app", {"name": "Terminal"}, None, _ac("read", "Terminal"), "safe"),
+        ("open_app in read tier", "open_app", {"name": "Terminal"}, None, _ac("read", "Terminal"), "safe"),
+        ("click_app in ask tier", "click_app", {"ref": "e1"}, _gf(name="Bold"), _ac("ask", "Mail"), "risky"),
+        ("type_app in ask tier", "type_app", {"ref": "e1", "text": "x"}, _gf("textfield", "Body"), _ac("ask", "Mail"), "risky"),
+        ("menu in ask tier", "menu", {"app": "Mail", "path": ["View", "Zoom"]}, None, _ac("ask", "Mail"), "risky"),
+        ("hotkey in ask tier", "hotkey", {"keys": ["cmd", "b"]}, None, _ac("ask", "Mail"), "risky"),
+        ("read_app in ask tier", "read_app", {"name": "Mail"}, None, _ac("ask", "Mail"), "safe"),
+        ("click Send, allowed app", "click_app", {"ref": "e1"}, _gf(name="Send"), _ac(), "risky"),
+        ("click is_submit, allowed app", "click_app", {"ref": "e1"}, _gf(name="Go", is_submit=True), _ac(), "risky"),
+        ("click Bold, allowed app", "click_app", {"ref": "e1"}, _gf(name="Bold"), _ac(), "safe"),
+        ("type_app plain, allowed app", "type_app", {"ref": "e1", "text": "x"}, _gf("textfield", "Title"), _ac(), "safe"),
+        ("type_app risky name, allowed app", "type_app", {"ref": "e1", "text": "x"}, _gf("textfield", "Order notes"), _ac(), "risky"),
+        ("menu plain, allowed app", "menu", {"app": "Notes", "path": ["Format", "Bold"]}, None, _ac(), "safe"),
+        ("menu risky item, allowed app", "menu", {"app": "Notes", "path": ["File", "Delete Note"]}, None, _ac(), "risky"),
+        ("hotkey plain, allowed app", "hotkey", {"keys": ["cmd", "b"]}, None, _ac(), "safe"),
+        ("hotkey return, allowed app", "hotkey", {"keys": ["cmd", "Return"]}, None, _ac(), "risky"),
+        ("hotkey enter, allowed app", "hotkey", {"keys": ["enter"]}, None, _ac(), "risky"),
+        ("hotkey delete, allowed app", "hotkey", {"keys": ["cmd", "delete"]}, None, _ac(), "risky"),
+        ("hotkey backspace, allowed app", "hotkey", {"keys": ["Backspace"]}, None, _ac(), "risky"),
+        ("hotkey spoofed tier missing", "hotkey", {"keys": ["cmd", "b"]}, None, _gc(surface="app", tier=None), "risky"),
+        ("unknown tool", "kill_app", {}, None, _gc(), "blocked"),
+        ("javascript url", "open_url", {"url": "javascript:alert(1)"}, None, _gc(), "blocked"),
+    ]
+    bad = []
+    for label, tool, args, facts, ctx, want in rows:
+        got, reason = G(tool, args, facts, ctx)
+        if got != want or not reason:
+            bad.append(f"{label}: wanted {want}, got {got} ({reason!r})")
+    assert not bad, "\n".join(bad)
+    # the gate never mutates what it is given
+    c = _gc(url_from_page=True)
+    before = {k: set(v) if isinstance(v, set) else v for k, v in c.items()}
+    G("open_url", {"url": "https://shop.example.com"}, None, c)
+    assert c == before
+
+
+@check
+def approval_titles():
+    T = app.approval_title
+    assert T("click", _gf("link", "Place order"), _gc(domain="shop.example.com")) == "Click **Place order** on shop.example.com"
+    assert T("click", _gf("button", ""), _gc()) == "Click **button** on example.com"
+    assert T("type", _gf("textbox", "Message"), _gc()) == "Type into **Message** on example.com"
+    assert T("type_app", _gf("textfield", "Body"), _ac("ask", "Mail")) == "Type into **Body** in Mail"
+    assert T("click_app", _gf("button", "Send"), _ac("ask", "Mail")) == "Click **Send** in Mail"
+    assert T("download", _gf("link", "Report.pdf"), _gc()) == "Download **Report.pdf** on example.com"
+    assert T("open_url", None, _gc(), {"url": "https://evil.net/x"}) == "Open **https://evil.net/x**"
+    assert T("dialog", None, _gc()) == "Answer a page dialog on example.com"
+    assert T("menu", None, _ac("ask", "Mail"), {"path": ["File", "Delete Note"]}) == "Use menu **File \u203a Delete Note** in Mail"
+    assert T("hotkey", None, _ac("ask", "Mail"), {"keys": ["cmd", "return"]}) == "Press **\u2318+Return** in Mail"
+    long = T("click", _gf("button", "x" * 300), _gc())
+    assert long.startswith("Click **xxx") and "\u2026** on example.com" in long and len(long) < 120
+    assert "\n" not in T("click", _gf("button", "a\nb"), _gc())
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:
