@@ -713,6 +713,7 @@ dialog::backdrop { background: var(--overlay); }
               </div>
             </div>
             <div class="err" id="agErr" hidden></div>
+            <div style="margin-top:12px"><button class="btn sm" id="agBack" style="display:none">Back to the running task</button></div>
             <div class="starters agex" id="agChips"></div>
             <div class="aglog" id="agLog"></div>
           </div>
@@ -897,9 +898,36 @@ function confirmBox(title, body, yes = "Delete") {
   });
 }
 if (window.marked) marked.use({ renderer: { html(h) { return esc(typeof h === "string" ? h : h.text); } } });
+// Model and page text reaches this renderer (and saved chats re-render through it), so what it keeps is an allowlist:
+// links only to http(s), mailto and in-page anchors; images only from this app's own /api/ and /gallery/; no active elements.
+const CHAT_DROP = new Set("script style iframe object embed form base meta link svg math template noscript frame frameset applet".split(" "));
+function cleanChat(root) {
+  for (const el of [...root.querySelectorAll("*")]) {
+    const tag = el.localName;
+    if (CHAT_DROP.has(tag)) { el.remove(); continue; }
+    for (const a of [...el.attributes]) if (/^on/i.test(a.name) || ["style", "srcset", "formaction", "xlink:href"].includes(a.name.toLowerCase())) el.removeAttribute(a.name);
+    if (tag === "a") {
+      const href = (el.getAttribute("href") || "").trim();
+      if (!/^(https?:|mailto:|#)/i.test(href)) el.replaceWith(...el.childNodes);
+      else if (!href.startsWith("#")) { el.setAttribute("target", "_blank"); el.setAttribute("rel", "noopener noreferrer"); }
+    } else if (tag === "img" && !/^\/(api|gallery)\//.test((el.getAttribute("src") || "").trim())) {
+      const alt = el.getAttribute("alt"), sp = document.createElement("span");
+      sp.textContent = alt ? `[image: ${alt}]` : "[image]"; el.replaceWith(sp);
+    }
+  }
+}
+// The same rule on markdown text, so a stored chat does not carry a hostile link or image from the start.
+function safeMd(s) {
+  const first = (u) => u.trim().replace(/^<|>$/g, "").split(/\s+/)[0], url = "\\(((?:[^()]|\\([^()]*\\))*)\\)";   // one level of ( ) inside the address
+  return String(s || "")
+    .replace(new RegExp("!\\[([^\\]]*)\\]" + url, "g"), (m, alt, u) => /^\/(api|gallery)\//.test(first(u)) ? m : `[image: ${alt}]`)
+    .replace(new RegExp("(?<!!)\\[([^\\]]*)\\]" + url, "g"), (m, t, u) => /^(https?:|mailto:|#)/i.test(first(u)) ? m : t)
+    .replace(/^(\s{0,3}\[[^\]]+\]:\s*)(\S+)/gm, (m, a, u) => /^(https?:|mailto:|#)/i.test(u.replace(/^</, "")) ? m : a + "#");
+}
 function md(s) {
   const html = window.marked ? marked.parse(s || "") : esc(s).replace(/\n/g, "<br>");
-  const tmp = document.createElement("div"); tmp.innerHTML = html;
+  const t = document.createElement("template"); t.innerHTML = html; cleanChat(t.content);   // a template is inert: nothing loads or runs while it is cleaned
+  const tmp = document.createElement("div"); tmp.appendChild(t.content);
   tmp.querySelectorAll("pre > code").forEach((code) => {
     const lang = (code.className.match(/language-([\w+#-]+)/) || [])[1] || "code";
     const wrap = document.createElement("div"); wrap.className = "codeblock";
@@ -1863,11 +1891,11 @@ const AG_EXAMPLES = [
   ["Fill a form", "Open https://httpbin.org/forms/post, fill in the form with sample details, and stop before submitting it."],
   ["Add to cart", "Find a USB-C cable on Amazon and add it to my cart. Don't check out."],
 ];
-const AG_TIER = { read: "Read-only", ask: "Ask first", allowed: "Allowed" };
+const AG_TIER = { read: "Read-only", ask: "Ask first", allowed: "Allowed" }, AG_TIER_ORDER = ["read", "ask", "allowed"];
 const AG_STATUS = { done: "Finished", stopped: "Stopped", failed: "Failed", interrupted: "Interrupted", running: "Running", waiting: "Waiting for you", paused: "Paused" };
 const ag = { st: null, runs: [], rid: null, es: null, events: [], last: -1, live: false, pinned: false, replay: false, retries: 0, timer: 0,
   cards: {}, pending: null, paused: false, pausing: false, stopping: false, replyingN: null, engine: "", shot: null, shotShown: null,
-  where: "", urls: [], answer: "", task: "", status: "", reason: "", setSig: "", runsSig: "" };
+  where: "", urls: [], answer: "", task: "", status: "", reason: "", setSig: "", runsSig: "", lost: false, bgWait: false };
 
 // Pure helpers (also run under plain node by the author's checks).
 // An approval title is markdown the server has already escaped: **bold** and \x escapes are all that is honoured, the rest is text.
@@ -1928,7 +1956,11 @@ function agMd(s) {
 const agShotUrl = (n) => `/api/agent/runs/${ag.rid}/shots/${encodeURIComponent(n)}`;
 const agWhen = (t) => t ? new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
 const agNoteEl = (text) => { const d = document.createElement("div"); d.className = "agnote"; d.textContent = text; return d; };
-const agTierKey = (n) => { const k = String(n ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase(); return k.endsWith(".app") ? k.slice(0, -4) : k; };
+const agTierKey = (n) => {                       // like the server's _norm_label: no invisible or format characters, then whitespace, case
+  const bare = (x) => x.replace(/\p{Cf}/gu, "").replace(/\p{Cc}/gu, " ");
+  const k = bare(bare(String(n ?? "")).normalize("NFKC")).replace(/\s+/g, " ").trim().toLowerCase();
+  return k.endsWith(".app") ? k.slice(0, -4) : k;
+};
 
 // ---- status, navigation, attention
 async function loadAgent() {
@@ -1936,14 +1968,22 @@ async function loadAgent() {
   ag.st = st;
   $("navAgent").hidden = !st.enabled;
   agRenderSettings(); agRenderSetup(); agSync();
-  if (st.running && st.running !== ag.rid && !ag.live && !ag.pinned) agAttach(st.running);   // a task is in progress: follow it from its start
+  if (st.running && !ag.live && !ag.pinned && (st.running !== ag.rid || ag.lost)) agAttach(st.running);   // a task is in progress (or we lost it): follow it from its start
+  else if (ag.lost && ag.rid && !st.running) agOpenSaved(ag.rid);                                         // it ended while we were away: show it as saved
+  else if (st.running && ag.pinned && st.running !== ag.rid && !ag.live) agBgCheck(st.running);          // reading an old task while another waits for us
+  else if (ag.bgWait) { ag.bgWait = false; agSync(); }
+}
+async function agBgCheck(rid) {
+  let d; try { d = await api(`/api/agent/runs/${rid}`); } catch { return; }
+  const evs = Array.isArray(d.events) ? d.events : [], wait = !!agPendingOf(evs) && !agPausedOf(evs);
+  if (wait !== ag.bgWait) { ag.bgWait = wait; agSync(); }
 }
 function agOpen() {
   loadAgent(); loadAgentRuns(); loadLibrary();
   agSync();
 }
 setInterval(() => { if (view === "agent" || view === "manage") loadAgent(); }, 5000);
-function agAttn(on) { document.title = (on ? "⏸ " : "") + AG_TITLE; $("navAgent").classList.toggle("attn", on); }
+function agAttn(on) { document.title = on ? "⏸ Agent needs your OK" : AG_TITLE; $("navAgent").classList.toggle("attn", on); }
 
 // ---- the view
 function agRenderModels() {
@@ -1979,9 +2019,10 @@ function agSync() {
   for (const [n, el] of Object.entries(ag.cards)) {
     const active = !!ag.pending && String(ag.pending.n) === n;
     el.classList.toggle("done", !active);
-    el.querySelectorAll(".agact button, .agact input").forEach((x) => { x.disabled = ag.paused || ag.replyingN === ag.pending?.n; });
+    el.querySelectorAll(".agact button, .agact input").forEach((x) => { x.disabled = ag.replyingN === ag.pending?.n || (ag.paused && x.dataset.agreply !== "stop"); });   // Stop run stays available while paused
   }
-  agAttn(live && !!ag.pending && !ag.paused);
+  agAttn((live && !!ag.pending && !ag.paused) || ag.bgWait);
+  $("agBack").style.display = ag.pinned && !live && st?.running && st.running !== ag.rid ? "" : "none";
   // state line
   let txt = "Ready", dot = "";
   if (live) {
@@ -2020,14 +2061,15 @@ $("agTask").addEventListener("input", () => { agSize(); agSync(); });
 $("agTask").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); agStart(); } });
 $("agModel").onchange = () => { store.set("agModel", $("agModel").value); agSync(); };
 $("agRun").onclick = () => agStart();
+$("agBack").onclick = () => { if (ag.st?.running) { ag.pinned = false; agAttach(ag.st.running); } };
 $("agNew").onclick = () => { agClear(); ag.pinned = false; $("agTask").value = ""; agSize(); agSync(); $("agTask").focus(); };
 
 // ---- a run
-function agClose() { if (ag.es) { ag.es.onmessage = ag.es.onerror = null; ag.es.close(); ag.es = null; } clearTimeout(ag.timer); }
+function agClose() { if (ag.es) { ag.es.onmessage = ag.es.onerror = ag.es.onopen = null; ag.es.close(); ag.es = null; } clearTimeout(ag.timer); }
 function agClear() {
   agClose();
   Object.assign(ag, { rid: null, events: [], last: -1, live: false, retries: 0, cards: {}, pending: null, paused: false, pausing: false, stopping: false,
-    replyingN: null, engine: "", shot: null, where: "", urls: [], answer: "", task: "", status: "", reason: "" });
+    replyingN: null, engine: "", shot: null, where: "", urls: [], answer: "", task: "", status: "", reason: "", lost: false, bgWait: false });
   $("agLog").innerHTML = ""; agSetErr("");
 }
 async function agStart() {
@@ -2045,7 +2087,7 @@ async function agStart() {
 async function agAttach(rid) {
   agClear(); Object.assign(ag, { rid, live: true, pinned: false });
   agSync();
-  try { const d = await api(`/api/agent/runs/${rid}`); if (ag.rid === rid) { ag.task = d.task || ""; $("agTask").value = ag.task; agSize(); } } catch {}
+  try { const d = await api(`/api/agent/runs/${rid}`); if (ag.rid === rid) { ag.task = d.task || ""; if (!$("agTask").value.trim()) { $("agTask").value = ag.task; agSize(); } } } catch {}
   if (ag.rid === rid && ag.live) agConnect();
 }
 // One EventSource per (re)connect: the browser's own reconnect would replay from the original URL. `after` is inclusive.
@@ -2054,6 +2096,7 @@ function agConnect() {
   const rid = ag.rid; if (!rid || !ag.live) return;
   const es = new EventSource(`/api/agent/runs/${rid}/events?after=${ag.last + 1}`);
   ag.es = es;
+  es.onopen = () => { ag.retries = 0; };                          // the heartbeat is an SSE comment: an open stream is a healthy one
   es.onmessage = (m) => { let e; try { e = JSON.parse(m.data); } catch { return; } ag.retries = 0; agEvent(e); };
   es.onerror = () => {
     if (ag.es !== es) return;
@@ -2063,10 +2106,12 @@ function agConnect() {
     ag.timer = setTimeout(() => { if (ag.live && ag.rid === rid) agConnect(); }, Math.min(5000, 700 * ag.retries));
   };
 }
-function agLost() {
-  ag.live = false; ag.status = "interrupted";
-  $("agLog").append(agNoteEl("Lost connection to the task. Open it from Recent tasks to see where it got to."));
-  agSync(); loadAgentRuns();
+function agLost() {                                  // keep trying: the poll reattaches as soon as the task can be reached, or shows it as saved
+  ag.live = false; ag.lost = true; ag.status = "interrupted";
+  $("agLog").append(agNoteEl("Lost connection to the task. Trying to reconnect…"));
+  agSync();
+  const again = () => { if (!ag.lost) return; loadAgent(); ag.timer = setTimeout(again, 5000); };
+  ag.timer = setTimeout(again, 3000);
 }
 function agEvent(e) {
   if (!e || typeof e !== "object") return;
@@ -2101,7 +2146,7 @@ function agRender(e) {
   else if (e.type === "answer") agAnswerCard(e);
   else if (e.type === "error") { const d = document.createElement("div"); d.className = "err agerr"; d.textContent = e.message || "Something went wrong."; log.append(d); }
   else if (e.type === "end") {
-    Object.assign(ag, { status: e.status, reason: e.reason || "", live: false, stopping: false, pausing: false }); agClose();
+    Object.assign(ag, { status: e.status, reason: e.reason || "", live: false, lost: false, stopping: false, pausing: false }); agClose();
     if (e.status !== "done") { const d = document.createElement("div"); d.className = "agend"; d.textContent = (AG_STATUS[e.status] || e.status) + (e.reason ? ` · ${e.reason}` : ""); log.append(d); }
     if (!ag.replay) { loadAgentRuns(); loadAgent(); }
   }
@@ -2189,7 +2234,7 @@ async function agContinue() {
   if (streaming) return toast("Wait for the reply to finish");
   if (!ag.answer) return;
   const task = ag.task || $("agTask").value.trim();
-  current = { id: newId(), title: task.replace(/\s+/g, " ").slice(0, 48) || "Agent task", messages: [{ role: "user", content: task }, { role: "assistant", content: ag.answer }] };
+  current = { id: newId(), title: task.replace(/\s+/g, " ").slice(0, 48) || "Agent task", messages: [{ role: "user", content: task }, { role: "assistant", content: safeMd(ag.answer) }] };
   await saveChat(); showView("chat"); renderThread(); scrollBottom(true);
 }
 $("agStop").onclick = async () => {
@@ -2224,7 +2269,7 @@ $("agRecent").onclick = async (e) => {
   agOpenSaved(rid);
 };
 async function agOpenSaved(rid) {
-  if (ag.rid === rid) return;
+  if (ag.rid === rid && !ag.lost) return;
   if (ag.live) return toast("Stop the running task first to open another");
   let d; try { d = await api(`/api/agent/runs/${rid}`); } catch (e) { return toast(e.message); }
   if (ag.st?.running === rid) return agAttach(rid);
@@ -2273,7 +2318,6 @@ function agRenderTiers() {
   $("agTierList").innerHTML = (mine.length ? `<div class="agtierh">Your changes</div>` + mine.map(([n, t]) => `<div class="agtier"><span class="nm" title="${esc(n)}">${esc(n)}</span>${agTierSelect(n, t)}<button class="btn sm" data-agtierrm="${esc(n)}">${defByKey.has(agTierKey(n)) ? "Use default" : "Remove"}</button></div>`).join("") : "")
     + `<details id="agTierDefaults"${open ? " open" : ""}><summary>Built-in apps (${rest.length})</summary>${rest.map(([n, t]) => `<div class="agtier"><span class="nm" title="${esc(n)}">${esc(n)}</span>${agTierSelect(n, t)}</div>`).join("")}</details>`;
 }
-const AG_TIER_ORDER = ["read", "ask", "allowed"];
 async function agSave(patch) {
   try { await jpost("/api/agent/settings", patch, "PUT"); } catch (e) { toast(e.message); }
   ag.setSig = ""; loadAgent();
