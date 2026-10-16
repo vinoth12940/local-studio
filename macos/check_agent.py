@@ -2042,6 +2042,15 @@ def daemon_loss_ends_run():
         e.start()
         e.finish()
         assert e.end()["status"] == "done" and "could not be read" in e.model.text(0)
+    # refs from the page before an unreadable one are never judged or used (the stand-in view has none)
+    ad = FakeAdapter(fview(("e1", "button", "Next")), app.McpError("could not read the page's form fields: refused"))
+    with Env(ad, Model(tc("note", text="x"), tc("click", ref="e1"), tc("open_url", url="https://shop.example/x"), tc("done", answer="ok"))) as e:
+        e.start("Browse")
+        e.status("waiting")                                   # shop.example was only the old page's domain: open_url asks
+        e.post("reply", decision="deny")
+        e.finish()
+        s = e.ev("step")
+        assert ad.executed() == [] and s[1]["decision"] == "error" and "not in the current view" in s[1]["result"], s
     # one hiccup is retried silently
     ad = FakeAdapter(app.McpError("tools/call timed out after 30s"), fview(("e1", "button", "Next")))
     with Env(ad, Model(tc("done", answer="ok"))) as e:

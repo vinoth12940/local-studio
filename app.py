@@ -3106,7 +3106,7 @@ class _AgentLoop:
             raise
         except Exception as e:                               # this page can't be read; the model can go elsewhere
             return {"text": f"(The page could not be read: {_clip(e, 200)}. Try read_page, back or open_url.)", "refs": {},
-                    "interactive": 0, "sparse": False}
+                    "interactive": 0, "sparse": False, "unread": True}
 
     def sparse(self, view):
         """The screenshot to send with a view that has almost nothing in it, switching an MLX run to vision once."""
@@ -3126,12 +3126,13 @@ class _AgentLoop:
                            "decision": "info", "shot": None, "thought": ""})
         return None
 
-    def ctx(self):
+    def ctx(self, view):
         ad = self.ad
         surface, app_name = getattr(ad, "surface", "browser"), getattr(ad, "app", None)
+        fresh = not (view and view.get("unread"))           # after a failed read the adapter still holds the previous page: vouch for nothing from it
         return {"surface": surface, "app": app_name, "tier": app_tier(app_name, self.tiers) if surface == "app" else None,
-                "domain": getattr(ad, "domain", None), "task_domains": self.task_domains,
-                "link_domains": set(getattr(ad, "link_domains", None) or ())}
+                "domain": getattr(ad, "domain", None) if fresh else None, "task_domains": self.task_domains,
+                "link_domains": set(getattr(ad, "link_domains", None) or ()) if fresh else set()}
 
     def think(self, view, image):
         msgs = agent_messages(self.run.task, list(self.run.notes), fold_history(self.history), view, image)
@@ -3196,9 +3197,10 @@ class _AgentLoop:
             facts = ad.facts(name, args)
         except Exception:
             facts = None
-        if "ref" in args and facts is None:                  # not in the newest view: nothing to judge, nothing to do
+        if "ref" in args and (facts is None or str(args["ref"]).strip() not in ((view or {}).get("refs") or {})):
+            # not in the view the model was shown this step (the adapter may still hold an older page's refs): nothing to judge or do
             return self.record(n, name, args, None, f"Error: {_clip(args['ref'], 20)} is not in the current view; read_page to refresh", "error", thought)
-        ctx = self.ctx()
+        ctx = self.ctx(view)
         decision, reason = gate(name, args, facts, ctx)
         if decision == "blocked":
             return self.record(n, name, args, facts, f"Blocked: {reason}", "blocked", thought)
