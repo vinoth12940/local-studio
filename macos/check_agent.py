@@ -2562,6 +2562,7 @@ APP_LIST = {"apps": [
     {"name": "System Settings", "bundle_id": "com.apple.systempreferences", "pid": 555, "running": True, "active": False, "launch_path": "x"},
     {"name": "Calculator", "bundle_id": "com.apple.calculator", "pid": 0, "running": False, "active": False, "launch_path": "/System/Applications/Calculator.app"},
     {"name": "Safari", "bundle_id": "com.apple.Safari", "pid": 0, "running": False, "active": False, "launch_path": "y"},
+    {"name": "Terminal", "bundle_id": "com.apple.Terminal", "pid": 0, "running": False, "active": False, "launch_path": "t"},
     {"name": "System Information", "bundle_id": "com.apple.SystemProfiler", "pid": 0, "running": False, "active": False, "launch_path": "z"}]}
 APP_PIDS = {12282: "Notes", 777: "Mail", 555: "System Settings"}
 
@@ -2575,19 +2576,22 @@ class AppState:
 
     def __init__(self, label_of=None):
         self.n, self.label_of = 0, label_of or {}
+        self.names, self.bundles = dict(APP_PIDS), {}            # what each pid's windows say they belong to (a fake can lie)
 
     def state(self, args):
         self.n += 1
         if args.get("include_accessibility_tree") is False:
             return _tr({"snapshot_id": f"s{self.n:08d}", "screenshot_width": 1280}, image=b"SHOT%d" % self.n)
-        if args["pid"] not in APP_PIDS:
+        if args["pid"] not in self.names:
             return _tr({"status": "error"}, ok=False, text="no such window")
         d = json.loads(json.dumps(NOTES))
-        d.update(pid=args["pid"], window_id=args["window_id"], app_name=APP_PIDS[args["pid"]], snapshot_id=f"s{self.n:08d}")
+        d.update(pid=args["pid"], window_id=args["window_id"], app_name=self.names[args["pid"]], snapshot_id=f"s{self.n:08d}")
         for e in d["elements"]:
             e["element_token"] = f"s{self.n:08d}:{e['element_index']}"
             if e["element_index"] in self.label_of:
                 e["label"] = self.label_of[e["element_index"]]
+        if args["pid"] in self.bundles:
+            d["bundle_id"] = self.bundles[args["pid"]]
         d["elements"].append({"element_index": 900, "element_token": f"s{self.n:08d}:900", "role": "AXPopUpButton", "label": "Sort By",
                               "actions": ["AXPress"], "frame": {"x": 120.0, "y": 190.0, "w": 80.0, "h": 20.0}, "parent_index": 0, "depth": 1})
         return _tr(d, image=PNG)
@@ -2965,6 +2969,229 @@ def notes_scripted_run():
         assert any(n == "get_window_state" and a.get("max_elements") == 400 for n, a in c.calls)
         assert c.names()[-1] == "end_session"
         assert 'menu "File › New Note" in Notes' in model.text(3) and "type_app" in model.text(3)       # the history names the menu path
+
+
+# ---- Mac apps, review round 1
+
+def _lf(name, role="popupbutton"):
+    return app._facts(role, name)
+
+
+@check
+def settable_values_are_judged():
+    ctx = _ac()
+    G = lambda role, name, text: app.gate("type_app", {"ref": "e1", "text": text}, _lf(name, role), ctx)         # noqa: E731
+    d, why = G("popupbutton", "Action", "Delete All")
+    assert d == "risky" and "irreversible" in why, (d, why)
+    assert G("popupbutton", "Action", "Move to Trash")[0] == "risky" and G("combobox", "Recipient", "Send now")[0] == "risky"
+    assert G("popupbutton", "Action", "​De‍lete…")[0] == "risky"                                  # invisible characters do not hide it
+    assert G("popupbutton", "Sort By", "Date")[0] == "safe" and G("slider", "Volume", "50")[0] == "safe" and G("incrementor", "Size", "12")[0] == "safe"
+    assert G("textfield", "Title", "Delete the old files")[0] == "safe"                                         # ordinary typing is not a choice
+    assert app.gate("type_app", {"ref": "e1", "text": "Delete All"}, _lf("Action"), _ac("read"))[0] == "blocked"
+    assert app.gate("type_app", {"ref": "e1", "text": "Date"}, _lf("Sort By"), _ac("ask"))[0] == "risky"
+    T = app.approval_title
+    assert T("type_app", _lf("Action"), ctx, {"text": "Delete All"}) == "Choose **Delete All** in **Action** in Notes"
+    assert T("type_app", _lf("Title", "textfield"), ctx, {"text": "x"}) == "Type into **Title** in Notes"
+    # through a run: the pull-down choice waits for the user, and nothing is set before the answer
+    c = app_client()[0]
+    pop = _aref(app.app_view({**NOTES, "elements": NOTES["elements"] + [{"element_index": 900, "role": "AXPopUpButton", "label": "Sort By", "actions": ["AXPress"], "frame": {"x": 1, "y": 1, "w": 5, "h": 5}}]}), 900)
+    with _app_run(Model(tca("open_app", name="Notes"), tc("type_app", ref=pop, text="Delete…"), tc("done", answer="x")), c) as e:
+        e.start("Sort the notes")
+        e.status("waiting")
+        assert e.ev("approval")[-1]["title"] == "Choose **Delete...** in **Sort By** in Notes" and not c.of("set_value"), e.ev("approval")[-1]
+        e.post("reply", decision="deny")
+        e.finish()
+        assert not c.of("set_value")
+
+
+@check
+def type_app_only_into_text_roles():
+    c, a, v = _opened(label_of={145: "Back"})
+    out = a.execute("type_app", {"ref": _aref(v, 145), "text": "x"})
+    assert out == "Error: button is not a text field; use click_app" and not c.of("type_text") and not c.of("set_value"), out
+    assert not a.execute("type_app", {"ref": _aref(v, 150), "text": "x"}).startswith("Error")
+
+
+@check
+def snapshot_of_another_app_unbinds():
+    c, a, v = _opened()
+    c.st.names[12282] = "Mail"                                                         # the pid we were given is another app
+    try:
+        a.observe()
+        raise AssertionError("the window of another app must not be read as Notes")
+    except app.McpError as ex:
+        assert str(ex) == "the window belongs to Mail, not Notes; open_app again", str(ex)
+    assert (a.surface, a.app, a.app_pid, a.bundle_id) == ("browser", None, None, None) and a.execute("click_app", {"ref": "e1"}).startswith("Error: no Mac app is open")
+    # the bundle id says so too, even when the names agree
+    c2, a2, _ = _opened()
+    c2.st.bundles[12282] = "com.apple.Terminal"
+    try:
+        a2.observe()
+        raise AssertionError("a window of another bundle must not be read")
+    except app.McpError as ex:
+        assert "not Notes" in str(ex) and a2.surface == "browser"
+    # a re-read inside a retry is checked too: the click is not retried against the other app
+    c3, a3, v3 = _opened()
+    c3.st.n += 1
+    c3.st.names[12282] = "Mail"
+    out = a3.execute("click_app", {"ref": _aref(v3, 150)})
+    assert out == "Error: the window belongs to Mail, not Notes; open_app again" and len(c3.of("click")) == 1, out
+    # the view never takes its app from the data: a matching name in other spelling still binds, and the bound name is shown
+    c4, a4, _ = _opened()
+    c4.st.names[12282] = "notes.app"
+    assert a4.observe()["text"].startswith("App: Notes")
+    # a run: the model is told, and has no refs to act with
+    c5 = app_client()[0]
+    c5.st.names[12282] = "Terminal"
+    with _app_run(Model(tca("open_app", name="Notes"), tc("done", answer="x")), c5) as e:
+        e.start("Look at Notes")
+        e.finish()
+        assert "The app window could not be read: the window belongs to Terminal, not Notes; open_app again" in e.model.text(1)
+
+
+@check
+def tiers_ignore_invisible_characters_and_know_bundle_ids():
+    T = app.app_tier
+    assert T("‎WhatsApp", {}) == "ask" and T("What​sApp", {}) == "ask" and T("‪System Settings‬", {}) == "read"
+    assert T("‎WhatsApp", {"WhatsApp": "read"}) == "read" and T("WhatsApp", {"‎WhatsApp": "allowed"}) == "allowed"
+    # a localized macOS: the name has no default, the bundle id does; the user's override still wins
+    assert T("Systemeinstellungen", {}) == "allowed" and T("Systemeinstellungen", {}, "com.apple.systempreferences") == "read"
+    assert T("Systemeinstellungen", {"Systemeinstellungen": "allowed"}, "com.apple.systempreferences") == "allowed"
+    assert T("Systemeinstellungen", {"com.apple.systempreferences": "ask"}, "com.apple.systempreferences") == "ask"
+    assert T("Notes", {}, "com.apple.Notes") == "allowed" and T("Nachrichten", {}, "com.apple.MobileSMS") == "ask" and T("Mail", {}, "com.apple.Terminal") == "read"
+    assert T("Foo", {}, "COM.APPLE.TERMINAL") == "read"
+    for b in ("com.apple.systempreferences", "com.apple.keychainaccess", "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.mitchellh.ghostty",
+              "com.apple.ScriptEditor2", "com.apple.Automator", "com.apple.shortcuts", "com.1password.1password", "com.bitwarden.desktop", "com.apple.Passwords"):
+        assert T("X", {}, b) == "read", b
+    for b in ("com.apple.mail", "com.apple.MobileSMS", "net.whatsapp.WhatsApp", "com.tinyspeck.slackmacgap", "com.apple.iCal", "com.apple.finder", "ru.keepcoder.Telegram",
+              "com.hnc.Discord", "org.whispersystems.signal-desktop", "com.microsoft.teams2", "com.microsoft.Outlook", "us.zoom.xos"):
+        assert T("X", {}, b) == "ask", b
+    # the adapter keeps both, and the loop judges by them
+    apps = [dict(x) for x in APP_LIST["apps"]]
+    apps[2]["name"] = "‎Systeme​instellungen"
+    c, a = app_client(list_apps=_tr({"apps": apps}))
+    c.st.names[555] = "Systemeinstellungen"
+    assert a.execute("open_app", {"name": "Systemeinstellungen"}).startswith("Opened") and a.observe()
+    assert a.app == "Systemeinstellungen" and a.bundle_id == "com.apple.systempreferences"                    # stored without the invisible characters
+    c2 = app_client(list_apps=_tr({"apps": apps}))[0]
+    c2.st.names[555] = "Systemeinstellungen"
+    ref = _aref(app.app_view({**NOTES, "snapshot_id": "s00000001"}), 150)
+    with _app_run(Model(tca("open_app", name="Systemeinstellungen"), tc("click_app", ref=ref), tc("done", answer="x")), c2) as e:
+        e.start("Change a setting")
+        e.finish()
+        step = e.ev("step")[1]
+        assert step["decision"] == "blocked" and "read-only" in step["result"] and not c2.of("click"), step
+
+
+@check
+def open_app_of_a_sensitive_app_that_is_not_running_asks():
+    G = lambda tool, **ctx: app.gate("open_app", {"name": "Terminal"}, None, _gc(**ctx))                      # noqa: E731
+    tg = lambda running, tier: {"target": {"name": "Terminal", "running": running, "tier": tier}}              # noqa: E731
+    assert G("open_app") == ("safe", "opening an app does not change anything in it")                           # nothing known: safe, open_app errors by itself
+    assert G("open_app", **tg(False, "read"))[0] == "risky" and G("open_app", **tg(False, "ask"))[0] == "risky"
+    assert G("open_app", **tg(True, "read"))[0] == "safe" and G("open_app", **tg(False, "allowed"))[0] == "safe"
+    assert app.approval_title("open_app", None, _gc(**tg(False, "read")), {"name": "terminal"}) == "Open **Terminal**"
+    assert app.approval_title("open_app", None, _gc(), {"name": "*Evil*"}) == "Open **\\*Evil\\***"
+    c = app_client()[0]
+    with _app_run(Model(tca("open_app", name="terminal"), tc("done", answer="x")), c) as e:
+        e.start("Open Terminal")
+        e.status("waiting")
+        ap = e.ev("approval")[-1]
+        assert ap["title"] == "Open **Terminal**" and ap["tool"] == "open_app" and not c.of("launch_app"), ap
+        e.post("reply", decision="deny")
+        e.finish()
+        assert not c.of("launch_app")
+    c2 = app_client()[0]
+    with _app_run(Model(tca("open_app", name="terminal"), tc("done", answer="x")), c2) as e:
+        e.start("Open Terminal")
+        e.status("waiting")
+        e.post("reply", decision="allow")
+        e.finish()
+        assert len(c2.of("launch_app")) == 1
+    # a running Terminal, a not-running allowed app: no question
+    c3 = app_client(list_apps=_tr({"apps": [{"name": "Terminal", "bundle_id": "com.apple.Terminal", "pid": 12282, "running": True}]}))[0]
+    with _app_run(Model(tca("open_app", name="Terminal"), tc("done", answer="x")), c3) as e:
+        e.start("Look at Terminal")
+        e.finish()
+        assert not e.ev("approval") and len(c3.of("launch_app")) == 1
+
+
+@check
+def tier_gates_menu_and_hotkey_in_runs():
+    c = app_client()[0]
+    model = Model(tca("open_app", name="Mail"), tc("menu", app="Mail", path=["Message", "New Message"]), tc("hotkey", keys=["cmd", "n"]), tc("done", answer="x"))
+    with _app_run(model, c) as e:                                                       # Mail: ask
+        e.start("Look at Mail")
+        e.status("waiting")
+        assert e.ev("approval")[-1]["title"] == "Use menu **Message › New Message** in Mail" and not c.of("invoke_menu")
+        e.post("reply", decision="deny")
+        e.status("waiting")
+        assert e.ev("approval")[-1]["title"] == "Press **⌘+N** in Mail" and not c.of("hotkey")
+        e.post("reply", decision="allow")
+        e.finish()
+        assert len(c.of("hotkey")) == 1 and not c.of("invoke_menu")
+    c2 = app_client()[0]
+    model = Model(tca("open_app", name="System Settings"), tc("menu", app="System Settings", path=["View", "Network"]), tc("hotkey", keys=["cmd", "n"]), tc("done", answer="x"))
+    with _app_run(model, c2) as e:                                                      # System Settings: read
+        e.start("Look at Settings")
+        e.finish()
+        steps = e.ev("step")
+        assert [s["decision"] for s in steps[1:3]] == ["blocked", "blocked"] and not e.ev("approval")
+        assert not c2.of("invoke_menu") and not c2.of("hotkey")
+
+
+@check
+def hotkey_sends_only_known_keys():
+    c, a, v = _opened()
+    c.calls.clear()
+    for keys in (["cmd", "n"], ["cmd-n"], ["Cmd+Shift+F5"], ["ctrl", "left"], ["PageDown"], ["option", "space"]):
+        assert a.execute("hotkey", {"keys": keys}).startswith("Pressed"), keys
+    assert [x.get("keys") or x.get("key") for n, x in c.calls] == [["cmd", "n"], ["cmd", "n"], ["cmd", "shift", "f5"], ["ctrl", "left"], "pagedown", ["option", "space"]], c.calls
+    c.calls.clear()
+    for keys in (["cmd", "volume_up"], ["cmd", "⏎x"], ["cmd", "n; kill"], ["cmd", "f21"], ["nope"]):
+        out = a.execute("hotkey", {"keys": keys})
+        assert out.startswith("Error: unknown key"), (keys, out)
+    assert c.calls == []
+
+
+@check
+def narrow_stale_markers():
+    c, a, v = _opened()
+    e = _aref(v, 150)
+    n = len(c.of("get_window_state"))
+    c.script["click"] = _tr({"status": "refused", "refusal": {"message": "menu item not found"}}, ok=False)
+    assert a.execute("click_app", {"ref": e}) == "Error: menu item not found" and len(c.of("click")) == 1 and len(c.of("get_window_state")) == n
+    c.script["click"] = _tr({"status": "refused", "refusal": {"message": "element not found for token"}}, ok=False)
+    a.execute("click_app", {"ref": e})
+    assert len(c.of("click")) == 3 and len(c.of("get_window_state")) == n + 1                 # an element that vanished is re-read once
+
+
+@check
+def wording_follows_the_surface():
+    class Gone(FakeAdapter):
+        def take_over(self):
+            raise app.McpError("no window")
+    for surface, word in (("app", "app"), ("browser", "browser")):
+        ad = Gone(fview(("e1", "button", "Next")))
+        ad.surface = surface
+        box = {}
+
+        def first(mode, msgs, box=box):
+            box["env"].c.post(f"/api/agent/runs/{app._agent_current.id}/takeover")
+            return tc("note", text="seen")
+        with Env(ad, Model(first, tc("done", answer="ok"))) as e:
+            box["env"] = e
+            e.start()
+            e.status("paused")
+            assert any(x["text"].startswith(f"Couldn't bring the {word} to the front") for x in e.ev("note")), e.ev("note")
+            e.post("resume")
+            e.finish()
+    ad = FakeAdapter(app.McpError("the window belongs to X"))
+    ad.surface = "app"
+    with Env(ad, Model(tc("done", answer="ok"))) as e:
+        e.start()
+        e.finish()
+        assert "The app window could not be read" in e.model.text(0) and "read_app" in e.model.text(0)
 
 
 if __name__ == "__main__":

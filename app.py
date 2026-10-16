@@ -1772,7 +1772,7 @@ _SENSITIVE_AC = re.compile(r"^(current-password|new-password|one-time-code|cc-.*
 _DOM_KEY = re.compile(r"(?:^|\s)(\w[\w-]*)=")
 _AX_INTERACTIVE = frozenset((
     "Button TextField TextArea SearchField SecureTextField CheckBox RadioButton PopUpButton MenuButton MenuItem MenuBarItem Link "
-    "Row Cell Slider ComboBox Tab DisclosureTriangle Switch Stepper").split())
+    "Row Cell Slider ComboBox Tab DisclosureTriangle Switch Stepper Incrementor").split())
 _AX_ACTIONS = frozenset(("AXPress", "AXConfirm", "AXPick"))
 
 
@@ -2073,6 +2073,15 @@ APP_TIERS_DEFAULT = {
         "Mail", "Messages", "WhatsApp", "Slack", "Calendar", "Finder",
         "Telegram", "Discord", "Signal", "Microsoft Teams", "Skype", "LINE", "WeChat", "Zoom", "zoom.us", "Outlook", "Microsoft Outlook")},
 }
+APP_TIERS_BUNDLE_DEFAULT = {                                  # the same defaults by bundle id, which a localized macOS ("Systemeinstellungen") does not change
+    **{b: "read" for b in (
+        "com.apple.systempreferences", "com.apple.keychainaccess", "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
+        "com.mitchellh.ghostty", "com.apple.ScriptEditor2", "com.apple.Automator", "com.apple.shortcuts", "com.1password.1password",
+        "com.bitwarden.desktop", "com.apple.Passwords")},
+    **{b: "ask" for b in (
+        "com.apple.mail", "com.apple.MobileSMS", "net.whatsapp.WhatsApp", "com.tinyspeck.slackmacgap", "com.apple.iCal", "com.apple.finder",
+        "ru.keepcoder.Telegram", "com.hnc.Discord", "org.whispersystems.signal-desktop", "com.microsoft.teams2", "com.microsoft.Outlook", "us.zoom.xos")},
+}
 READ_ONLY_NAME = re.compile(r"bank|banking|finance|wallet|password|crypto|invest|broker|trading|pay\b", re.I)
 SEARCH_DOMAINS = frozenset(("duckduckgo.com", "google.com", "bing.com"))     # open_url may go to a search on exactly these hosts (_search_ok)
 _TIER_NAMES = ("read", "ask", "allowed")
@@ -2084,8 +2093,11 @@ _CTRL_RE = re.compile("[\\x00-\\x08\\x0a-\\x1f\\x7f\\u2028\\u2029\\x85]")      #
 _ENTER_KEYS = frozenset(("↩", "⏎", "⌅", "↵", "space", "spacebar", "␣", "kpenter", "newline", "linefeed", "lf", "cr"))
 _DELETE_KEYS = frozenset(("del", "⌫", "⌦", "kpdelete"))
 _APP_ACTING = frozenset(("click_app", "type_app", "menu", "hotkey"))
+_SETTABLE = frozenset(("popupbutton", "combobox", "slider", "incrementor"))            # type_app sets these with set_value: a choice, not typing
+_TEXT_ROLES = frozenset(("textfield", "textarea", "searchfield")) | {"combobox"}       # type_app types into these with type_text
+_KEY_SPLIT = re.compile(r"[+\s]+|(?<=\w)-(?=\w)")
 _TYPING = frozenset(("type", "type_app"))
-_SAFE_TOOLS = frozenset(("read_page", "scroll", "back", "note", "ask_user", "done", "list_apps", "open_app", "read_app"))
+_SAFE_TOOLS = frozenset(("read_page", "scroll", "back", "note", "ask_user", "done", "list_apps", "read_app"))
 _MD_SPECIAL = re.compile(r"([\\*_\[\]()!`#<>|&~])|:(?=//)")
 
 
@@ -2106,7 +2118,7 @@ def _md_escape(s):
 
 
 def _tier_key(name):
-    k = (name or "").strip().casefold()
+    k = _norm_label(name).casefold()                         # no invisible characters: "\u200eWhatsApp" is WhatsApp
     return k[:-4] if k.endswith(".app") else k
 
 
@@ -2120,16 +2132,18 @@ def _default_tier(k):
     return best[1] if best else None
 
 
-def app_tier(app_name, overrides):
-    """"read" (look only), "ask" (every action needs approval) or "allowed": the user's overrides (exact name) first, else the
-    stricter of the default list (name or whole-word prefix) and the name rule (money or secrets: read); else allowed."""
-    k = _tier_key(app_name)
+def app_tier(app_name, overrides, bundle_id=None):
+    """"read" (look only), "ask" (every action needs approval) or "allowed": the user's overrides (exact name, or bundle id) first,
+    else the stricter of the default list (name or whole-word prefix), the same list by bundle id and the name rule (money or
+    secrets: read); else allowed."""
+    k, bid = _tier_key(app_name), str(bundle_id or "").casefold()
     for n, t in (overrides or {}).items():
-        if _tier_key(n) == k and t in _TIER_NAMES:
+        if t in _TIER_NAMES and (_tier_key(n) == k or bid and _tier_key(n) == bid):
             return t
     t = _default_tier(k) or (_default_tier(k.rstrip("0123456789 ")) if k.rstrip("0123456789 ") != k else None)   # iTerm2 -> iterm
     rule = "read" if READ_ONLY_NAME.search(_norm_label(app_name)) else None            # "Zoom Pay", "Mail Banking": the stricter of the two wins
-    return min((x for x in (t, rule) if x), key=_TIER_NAMES.index, default="allowed")
+    by_id = next((v for b, v in APP_TIERS_BUNDLE_DEFAULT.items() if b.casefold() == bid), None) if bid else None
+    return min((x for x in (t, rule, by_id) if x), key=_TIER_NAMES.index, default="allowed")
 
 
 def _norm_url(u):
@@ -2214,7 +2228,7 @@ def _key_class(keys):
             return "enter"
         if any(part and not part.strip(" ") for part in unicodedata.normalize("NFKC", k).split("+")):
             return "enter"                                          # a literal space key, `shift+ `
-        toks += [t for t in re.split(r"[+\s]+|(?<=\w)-(?=\w)", k) if t]
+        toks += [t for t in _KEY_SPLIT.split(k) if t]
     if not toks:
         return "invalid"
     for t in toks:
@@ -2257,6 +2271,11 @@ def gate(tool, args, facts, ctx):
     facts = facts if isinstance(facts, dict) else None
     if tool in _SAFE_TOOLS:
         return "safe", "reading, scrolling and notes do not change anything"
+    if tool == "open_app":
+        t = ctx.get("target") if isinstance(ctx.get("target"), dict) else None
+        if t and not t.get("running") and t.get("tier") in ("read", "ask"):
+            return "risky", f"{_norm_label(t.get('name')) or 'this app'} is not running and is {'read-only' if t['tier'] == 'read' else 'an ask-first app'} for the agent"
+        return "safe", "opening an app does not change anything in it"
     if tool == "download":
         return "risky", "a file is about to be downloaded"
     if tool == "dialog":
@@ -2321,6 +2340,8 @@ def _gate_acting(tool, args, facts, ctx):
         if in_app and RISKY_WORDS.search(name):
             return "risky", f"the field {name!r} sounds irreversible"
         text = args.get("text")
+        if tool == "type_app" and facts.get("role") in _SETTABLE and isinstance(text, str) and RISKY_WORDS.search(_norm_label(text)):
+            return "risky", f"the choice {_clip(_norm_label(text), 60)!r} sounds irreversible"          # a pull-down can run "Delete…"
         if args.get("submit") or (isinstance(text, str) and _CTRL_RE.search(text)):
             if _is_search_field(facts, name):
                 return "safe", "a search"
@@ -2360,7 +2381,11 @@ def approval_title(tool, facts, ctx, args=None):
     if tool == "type":
         return f"Type into **{label()}** {where_web}"
     if tool == "type_app":
+        if f.get("role") in _SETTABLE:
+            return f"Choose **{esc(args.get('text'))}** in **{label()}** {where_app}"
         return f"Type into **{label()}** {where_app}"
+    if tool == "open_app":
+        return f"Open **{esc((ctx.get('target') or {}).get('name') or args.get('name') or 'an app')}**"
     if tool == "download":
         return f"Download **{esc(f.get('name') or args.get('name') or args.get('filename') or 'a file')}** {where_web}"
     if tool == "dialog":
@@ -2374,7 +2399,7 @@ def approval_title(tool, facts, ctx, args=None):
     if tool == "hotkey":
         ks = args.get("keys")
         parts = [t for k in ([ks] if isinstance(ks, str) else ks if isinstance(ks, (list, tuple)) else ()) if isinstance(k, str)
-                 for t in re.split(r"[+\s]+|(?<=\w)-(?=\w)", _norm_label(k)) if t]
+                 for t in _KEY_SPLIT.split(_norm_label(k)) if t]
         keys = [_KEY_NAMES.get(t.lower(), t.capitalize() if len(t) > 1 else t.upper()) for t in parts]
         return f"Press **{esc('+'.join(keys) or '?')}** {where_app}"
     return f"Run **{esc(tool)}**"
@@ -2443,11 +2468,12 @@ def _is_stale(res):
     return any(m in blob for m in _STALE_MARKERS)
 
 
-_APP_STALE = ("stale", "snapshot", "element_token", "window_not_found", "no such window", "not found")   # what a Mac app says when the tree moved on; a retry re-reads first
+_APP_STALE = ("stale", "snapshot", "element_token", "element not found", "element_not_found", "window_not_found", "no such window")   # what a Mac app says when the tree moved on; a retry re-reads first
 _BROWSER_ONLY = frozenset(("click", "type", "scroll", "back"))
 _APP_ONLY = frozenset(("click_app", "type_app", "menu", "hotkey"))
-_SETTABLE = frozenset(("popupbutton", "combobox", "slider", "stepper"))            # type_app sets these with set_value; text fields take type_text
 AGENT_TYPE_LINES = 100
+_KNOWN_KEY = re.compile(r"^(?:cmd|command|shift|option|opt|alt|ctrl|control|fn|[a-z0-9]|f(?:[1-9]|1[0-9]|20)|left|right|up|down|return|enter|tab|escape|esc|"
+                        r"space|delete|home|end|pageup|pagedown)$")
 
 
 def _parse_apps(res):
@@ -2518,7 +2544,7 @@ class Adapter:
         self._viewport = AGENT_VIEWPORT
         self._actions: dict = {}                             # CuaDriver ref -> its actions, from the last semantic read
         self._last_res = None
-        self.app_pid = self.app_window = None                # the Mac app being driven (surface "app"); the browser keeps pid/window_id
+        self.app_pid = self.app_window = self.bundle_id = None    # the Mac app being driven (surface "app"); the browser keeps pid/window_id
         self._app_rebind_due = False
         self._shot, self._shot_fresh = None, False           # the picture that came with the last app read; good until something acts
 
@@ -2776,7 +2802,7 @@ class Adapter:
 
     # -- Mac apps: their own pid/window, their own recovery (a stale snapshot is re-read, never re-bound like the browser)
     def _to_browser(self):
-        self.surface, self.app, self.app_pid, self.app_window = "browser", None, None, None
+        self.surface, self.app, self.app_pid, self.app_window, self.bundle_id = "browser", None, None, None, None
         self._app_rebind_due, self._shot, self._shot_fresh = False, None, False
 
     def _apps(self):
@@ -2801,8 +2827,17 @@ class Adapter:
 
     def _bind_app(self, a, pid, tries):
         win = self._app_main_window(pid, a["name"], tries)
-        self.surface, self.app, self.app_pid, self.app_window = "app", a["name"], pid, win["window_id"]
+        self.surface, self.app, self.app_pid, self.app_window = "app", _norm_label(a["name"]), pid, win["window_id"]
+        self.bundle_id = a.get("bundle_id") or None
         self.view, self._app_rebind_due, self._shot, self._shot_fresh = None, False, None, False
+
+    def app_info(self, name):
+        """{name, bundle_id, running} of the app a name means, or None (unknown, ambiguous, or list_apps failing: open_app then says so itself)."""
+        try:
+            a, why = _match_app(self._apps(), str(name or ""))
+        except McpError:
+            return None
+        return None if why else {"name": a["name"], "bundle_id": a.get("bundle_id"), "running": a["running"]}
 
     def _list_apps(self, args):
         apps = self._apps()
@@ -2850,8 +2885,15 @@ class Adapter:
                 break
             if attempt:
                 raise McpError(_cua_problem(res) or "the app window could not be read")
+        d = res["data"]
+        theirs = d.get("app_name") if isinstance(d.get("app_name"), str) else None
+        bid = next((d[k] for k in ("bundle_id", "bundleId") if isinstance(d.get(k), str)), None)
+        if (theirs is not None and _tier_key(theirs) != _tier_key(self.app)) or (bid and self.bundle_id and bid.casefold() != self.bundle_id.casefold()):
+            bound = self.app
+            self._to_browser()                               # the tier was worked out for another app: nothing may act here until open_app binds one
+            raise McpError(f"the window belongs to {_clip(_norm_label(theirs or bid), 40)}, not {_clip(bound, 40)}; open_app again")
         self._shot, self._shot_fresh = res.get("image"), True
-        self.view = app_view({"pid": self.app_pid, "window_id": self.app_window, "app_name": self.app, **res["data"]})
+        self.view = app_view({**d, "pid": self.app_pid, "window_id": self.app_window, "app_name": self.app})     # the app is the bound one, whatever the data says
         return self.view
 
     def _app_screenshot(self):
@@ -2901,12 +2943,15 @@ class Adapter:
 
     def _type_app(self, args):
         short, hit = self._ref(args)
+        role = hit["facts"].get("role")
+        if role not in _TEXT_ROLES and role not in _SETTABLE:
+            raise McpError(f"{_clip(role, 30)} is not a text field; use click_app")
         if args.get("text") is None or str(args["text"]) == "":
             raise McpError("text is needed")
         lines = str(args["text"]).replace("\r\n", "\n").replace("\r", "\n").split("\n")
         if len(lines) > AGENT_TYPE_LINES:
             raise McpError(f"the text has more than {AGENT_TYPE_LINES} lines; type less at once")
-        sig, settable = self._sig(hit), hit["facts"].get("role") in _SETTABLE
+        sig, settable = self._sig(hit), role in _SETTABLE
         for i, line in enumerate(lines):                     # type_text has no special keys: each new line is a Return key press
             if line:
                 self._app_act(lambda: ("set_value", {"pid": self.app_pid, "value": line, "element_token": self._token(self._same_ref(args, sig))}) if settable
@@ -2932,9 +2977,12 @@ class Adapter:
     def _hotkey(self, args):
         keys = args.get("keys")
         keys = [keys] if isinstance(keys, str) else keys
-        toks = [t.lower() for k in keys for t in re.split(r"\s*\+\s*", k.strip()) if t] if isinstance(keys, (list, tuple)) and all(isinstance(k, str) for k in keys) else []
+        toks = [unicodedata.normalize("NFKC", t).lower() for k in keys for t in _KEY_SPLIT.split(k) if t] if isinstance(keys, (list, tuple)) and all(isinstance(k, str) for k in keys) else []
         if not toks:
             raise McpError('keys must be a list like ["cmd", "n"]')
+        bad = next((t for t in toks if not _KNOWN_KEY.match(t)), None)
+        if bad is not None:                                  # only keys the gate has a name for are ever sent
+            raise McpError(f"unknown key {_clip(bad, 20)!r}")
         if len(toks) == 1:
             self._app_once("press_key", {"key": toks[0], "pid": self.app_pid})
         else:
@@ -3324,7 +3372,7 @@ class _AgentLoop:
         except _AgentEnd:
             raise
         except Exception as e:                               # the user can still find the window themselves
-            run.emit({"type": "note", "text": f"Couldn't bring the browser to the front: {_clip(e, 200)}"})
+            run.emit({"type": "note", "text": f"Couldn't bring the {'app' if getattr(self.ad, 'surface', 'browser') == 'app' else 'browser'} to the front: {_clip(e, 200)}"})
         run.emit({"type": "note", "text": "Paused while you take over. Press Resume when you're done."})
         run.save()
         with run.cond:
@@ -3382,12 +3430,14 @@ class _AgentLoop:
             self.reuse = False
             return self.ad.view
         self.reuse = False
+        app_s = getattr(self.ad, "surface", "browser") == "app"          # an unbinding read leaves the browser surface behind
         try:
             return self.mcp(self.ad.observe)
         except _AgentEnd:
             raise
         except Exception as e:                               # this page can't be read; the model can go elsewhere
-            return {"text": f"(The page could not be read: {_clip(e, 200)}. Try read_page, back or open_url.)", "refs": {},
+            return {"text": (f"(The app window could not be read: {_clip(e, 200)}. Try read_app, open_app or open_url.)" if app_s
+                             else f"(The page could not be read: {_clip(e, 200)}. Try read_page, back or open_url.)"), "refs": {},
                     "interactive": 0, "sparse": False, "unread": True}
 
     def sparse(self, view):
@@ -3412,7 +3462,7 @@ class _AgentLoop:
         ad = self.ad
         surface, app_name = getattr(ad, "surface", "browser"), getattr(ad, "app", None)
         fresh = not (view and view.get("unread"))           # after a failed read the adapter still holds the previous page: vouch for nothing from it
-        return {"surface": surface, "app": app_name, "tier": app_tier(app_name, self.tiers) if surface == "app" else None,
+        return {"surface": surface, "app": app_name, "tier": app_tier(app_name, self.tiers, getattr(ad, "bundle_id", None)) if surface == "app" else None,
                 "domain": getattr(ad, "domain", None) if fresh else None, "task_domains": self.task_domains,
                 "link_domains": set(getattr(ad, "link_domains", None) or ()) if fresh else set()}
 
@@ -3488,6 +3538,13 @@ class _AgentLoop:
             # not in the view the model was shown this step (the adapter may still hold an older page's refs): nothing to judge or do
             return self.record(n, name, args, None, f"Error: {_clip(args['ref'], 20)} is not in the current view; read_page to refresh", "error", thought)
         ctx = self.ctx(view)
+        if name == "open_app" and hasattr(ad, "app_info"):                # starting a read-only or ask-first app that is not running needs approval
+            try:
+                info = ad.app_info(args.get("name"))
+            except Exception:
+                info = None
+            if info:
+                ctx["target"] = {"name": info["name"], "running": info["running"], "tier": app_tier(info["name"], self.tiers, info.get("bundle_id"))}
         decision, reason = gate(name, args, facts, ctx)
         if decision == "blocked":
             return self.record(n, name, args, facts, f"Blocked: {reason}", "blocked", thought)
