@@ -1962,7 +1962,7 @@ def browser_view(state, dom=None, budget=6000):
         role, name = r["role"], _clip(r.get("name"), 100)
         editable = _sem_class(role) == "text" or "type" in (r.get("actions") or ()) and role not in ("button", "link", "checkbox", "radio", "menuitem", "tab", "switch")
         itype = a.get("type")
-        if editable and itype != "password" and _PASSWORD_RE.search(name):      # a "show password" toggle turns type=password into text
+        if editable and itype not in ("password", "search") and _PASSWORD_RE.search(name):      # a "show password" toggle turns type=password into text
             itype = "password"
         ac = a.get("autocomplete")
         if editable and not _sensitive_ac(ac):               # the label is the fallback unless the DOM already says it is sensitive
@@ -2061,9 +2061,9 @@ def fold_history(lines, budget=3000):
 # the inflections people see on buttons ("Sends", "Deleting...", "Payment"); \s* / \s+ inside the multi-word ones.
 RISKY_WORDS = re.compile(
     r"\b(?:send(?:s|ing)?|sent|submit(?:s|ted|ting)?|buy(?:s|ing)?|pay(?:s|ing|ment|ments|ed)?|order(?:s|ed|ing)?|"
-    r"check[\s-]*out|confirm(?:s|ed|ing|ation)?|delet(?:e|es|ed|ing|ion)|remov(?:e|es|ed|ing|al)|post(?:s|ed|ing)?|"
-    r"publish(?:es|ed|ing)?|sign[\s-]*up|(?:un)?subscri(?:be|bes|bed|bing|ption|ptions)|book(?:s|ed|ing)?|transfer(?:s|red|ring)?|"
-    r"place[\s-]*order|purchas(?:e|es|ed|ing)|donat(?:e|es|ed|ing|ion|ions)|trash(?:ed|ing)?|repl(?:y|ies|ied|ying)|"
+    r"check[\s\-‐-―−]*out|confirm(?:s|ed|ing|ation)?|delet(?:e|es|ed|ing|ion)|remov(?:e|es|ed|ing|al)|post(?:s|ed|ing)?|"
+    r"publish(?:es|ed|ing)?|sign[\s\-‐-―−]*up|(?:un)?subscri(?:be|bes|bed|bing|ption|ptions)|book(?:s|ed|ing)?|transfer(?:s|red|ring)?|"
+    r"place[\s\-‐-―−]*order|purchas(?:e|es|ed|ing)|donat(?:e|es|ed|ing|ion|ions)|trash(?:ed|ing)?|repl(?:y|ies|ied|ying)|"
     r"shar(?:e|es|ed|ing)|authori[sz](?:e|es|ed|ing|ation)|approv(?:e|es|ed|ing|al)|accept(?:s|ed|ing)?|grant(?:s|ed|ing)?)\b", re.I)
 APP_TIERS_DEFAULT = {
     **{n: "read" for n in (
@@ -2080,7 +2080,9 @@ APP_TIERS_DEFAULT = {
 READ_ONLY_NAME = re.compile(r"bank|banking|finance|wallet|password|crypto|invest|broker|trading|pay\b", re.I)
 SEARCH_DOMAINS = frozenset(("duckduckgo.com", "google.com", "bing.com"))     # open_url may go to a search on exactly these hosts (_search_ok)
 _TIER_NAMES = ("read", "ask", "allowed")
-_SEARCH_FIELD_RE = re.compile(r"^\s*(?:search|find)\b|\bsearch\b", re.I)
+_SEARCH_FIRST_RE = re.compile(r"^\s*(?:search|find)\b", re.I)
+_SEARCH_HINT_RE = re.compile(r"\b(?:enter|type)\s+(?:your\s+)?search\b|\bsearch\s+(?:here|for|the|this|google|bing|duckduckgo|the\s+web)\b", re.I)
+_COMPOSER_RE = re.compile(r"^\s*(?:message|reply|comment|chat|post|write|send|compose)\b", re.I)    # a message box is never a search box
 _SEARCH_ROLES = frozenset(("searchbox", "searchfield"))
 _CTRL_RE = re.compile("[\\x00-\\x08\\x0a-\\x1f\\x7f\\u2028\\u2029\\x85]")      # C0 controls but tab (Enter, NSEnter \\x03, Backspace, ...) and line separators
 _ENTER_KEYS = frozenset(("↩", "⏎", "⌅", "↵", "space", "spacebar", "␣", "kpenter", "newline", "linefeed", "lf", "cr"))
@@ -2096,6 +2098,11 @@ def _norm_label(s):
     s = unicodedata.normalize("NFKC", str(s if s is not None else ""))
     s = "".join(" " if unicodedata.category(c) == "Cc" else "" if unicodedata.category(c) == "Cf" else c for c in s)
     return " ".join(s.split())
+
+
+def _visible(s):
+    """Spell out format (Cf) and control characters as ‹U+200D› so a lookalike host cannot hide behind them."""
+    return "".join(f"‹U+{ord(c):04X}›" if unicodedata.category(c) in ("Cf", "Cc") else c for c in str(s if s is not None else ""))
 
 
 def _md_escape(s):
@@ -2118,14 +2125,15 @@ def _default_tier(k):
 
 
 def app_tier(app_name, overrides):
-    """"read" (look only), "ask" (every action needs approval) or "allowed": the user's overrides (exact name) first, then the
-    defaults (name or whole-word prefix), then a name that sounds like money or secrets (read), else allowed."""
+    """"read" (look only), "ask" (every action needs approval) or "allowed": the user's overrides (exact name) first, else the
+    stricter of the default list (name or whole-word prefix) and the name rule (money or secrets: read); else allowed."""
     k = _tier_key(app_name)
     for n, t in (overrides or {}).items():
         if _tier_key(n) == k and t in _TIER_NAMES:
             return t
     t = _default_tier(k) or (_default_tier(k.rstrip("0123456789 ")) if k.rstrip("0123456789 ") != k else None)   # iTerm2 -> iterm
-    return t or ("read" if READ_ONLY_NAME.search(_norm_label(app_name)) else "allowed")
+    rule = "read" if READ_ONLY_NAME.search(_norm_label(app_name)) else None            # "Zoom Pay", "Mail Banking": the stricter of the two wins
+    return min((x for x in (t, rule) if x), key=_TIER_NAMES.index, default="allowed")
 
 
 def _norm_url(u):
@@ -2161,17 +2169,28 @@ def _host(s):
 
 
 def _search_ok(url, host):
-    """A plain web search on exactly google.com, bing.com or duckduckgo.com (www. allowed); not their subdomains, redirectors
-    (/url, /l/, /ck/a) or form/script hosts, which can carry data out."""
+    """A plain web search on exactly google.com, bing.com or duckduckgo.com (www. allowed). The path must be exactly the
+    search page (urlsplit does not resolve dot segments, browsers do, so nothing with a `%` or a `.` segment qualifies);
+    not their subdomains, redirectors (/url, /l/, /ck/a), "I'm feeling lucky" (btnI) or bangs / `\\` queries (DuckDuckGo
+    and Bing), which jump to other sites."""
     if host not in SEARCH_DOMAINS:
         return False
     try:
         parts = _split_url(url)
+        q = parse_qs(parts.query, keep_blank_values=True)
     except ValueError:
         return False
-    if host == "duckduckgo.com":
-        return (parts.path in ("", "/") and bool(parse_qs(parts.query).get("q"))) or parts.path == "/html" or parts.path.startswith("/html/")
-    return parts.path == "/search"
+    path = parts.path.lower()
+    if "%" in path or "\\" in url:
+        return False
+    qs = [v.strip() for k, vs in q.items() if k.lower() == "q" for v in vs]
+    if host != "google.com" and any("!" in v or v.startswith("\\") for v in qs):
+        return False
+    if host == "google.com":
+        return path == "/search" and not any(k.lower() == "btni" for k in q)
+    if host == "bing.com":
+        return path == "/search"
+    return (path in ("", "/") and any(qs)) or path in ("/html", "/html/")
 
 
 def _domain_in(host, domains):
@@ -2249,6 +2268,8 @@ def gate(tool, args, facts, ctx):
     if tool == "open_url":
         url = _norm_url(args.get("url"))
         sch = _url_scheme(url)
+        if re.match(r"^[a-z0-9.-]+:\d+(?:[/?#]|$)", url, re.I):
+            return "blocked", "the address needs http:// or https:// in front"
         if sch and sch not in ("http", "https"):
             return "blocked", f"only http and https addresses can be opened, not {sch}:"
         host = _host(url)                                           # no scheme counts as https://<host>
@@ -2261,6 +2282,14 @@ def gate(tool, args, facts, ctx):
     if tool in _TYPING or tool == "click" or tool in _APP_ACTING:
         return _gate_acting(tool, args, facts, ctx)
     return "blocked", f"unknown tool {tool!r}"
+
+
+def _is_search_field(facts, name):
+    """A search box, whose Enter only runs a search: an AX/ARIA search role, a name that starts with search/find, or a
+    placeholder like "Enter your search here". Never a message composer ("Message #search-team", "Reply to: ...search...")."""
+    if _COMPOSER_RE.search(name):
+        return False
+    return (facts.get("role") or "").lower() in _SEARCH_ROLES or bool(_SEARCH_FIRST_RE.search(name) or _SEARCH_HINT_RE.search(name))
 
 
 def _gate_acting(tool, args, facts, ctx):
@@ -2297,7 +2326,7 @@ def _gate_acting(tool, args, facts, ctx):
             return "risky", f"the field {name!r} sounds irreversible"
         text = args.get("text")
         if args.get("submit") or (isinstance(text, str) and _CTRL_RE.search(text)):
-            if (facts.get("role") or "").lower() in _SEARCH_ROLES or _SEARCH_FIELD_RE.search(name):
+            if _is_search_field(facts, name):
                 return "safe", "a search"
             return "risky", "typing would also press Enter"
         return "safe", "ordinary typing"
@@ -2334,7 +2363,8 @@ def approval_title(tool, facts, ctx, args=None):
         return f"Answer a page dialog {where_web}"
     if tool == "open_url":
         url = _norm_url(args.get("url"))
-        return f"Open **{_md_escape(_host(url)) or 'an address with no host'}** ({esc(url)})"
+        show = lambda v, n=80: _md_escape(_clip(_visible(v), n))       # joiners and bidi marks are spelled out, not hidden
+        return f"Open **{show(_host(url), 200) or 'an address with no host'}** ({show(url)})"
     if tool == "menu":
         return f"Use menu **{esc(' › '.join(_menu_path(args.get('path')) or ['?']))}** {where_app}"
     if tool == "hotkey":

