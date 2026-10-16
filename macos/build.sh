@@ -18,6 +18,7 @@ python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$ROOT/app.py" 
 UV=$(command -v uv || echo ~/.local/bin/uv)
 $UV run -q --no-project --python 3.12 --with numpy python "$HERE/check_search.py"
 $UV run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python "$HERE/check_app.py"
+$UV run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python "$HERE/check_agent.py"
 
 echo "==> Compiling"
 xcrun swiftc -O -target arm64-apple-macos14.0 -framework Cocoa -framework WebKit \

@@ -62,6 +62,16 @@ SEARCH_DIR = DATA / "search"                                 # its index
 SEARCH_REQS = ROOT / "search-requirements.txt"
 SEARCH_DEPS_OK = DATA / "search-deps.ok"                     # written by setup.sh --search
 SEARCH_DEFAULTS = {"enabled": False, "folders": [], "removed": [], "paused": False, "on_battery": False}
+# Local Agent: drives the Mac through CuaDriver (MCP over a unix socket in standard mode, no manifest).
+AGENT_DIR = DATA / "agent"
+AGENT_RUNS = AGENT_DIR / "runs"
+AGENT_SOCK = AGENT_DIR / "cua.sock"                          # absolute; a unix socket path must stay under 104 bytes
+CUA_DRIVER = shutil.which("cua-driver") or str(BIN / "cua-driver")
+CUA_MIN = (0, 28, 2)
+AGENT_DEFAULTS = {"enabled": False, "max_steps": 40, "max_minutes": 15, "tiers": {}}   # tiers: app name -> read|ask|allowed
+AGENT_BUSY_MSG = "The agent is running a task. Stop it or wait for it to finish."
+agent_lock = threading.Lock()                                # held for the length of an agent run
+agent_engine = {"mode": None, "model_id": None}              # the engine the run uses, set by the loop
 
 CATALOG = json.loads((ROOT / "catalog.json").read_text())
 
@@ -79,14 +89,14 @@ def _local_origin(host, origin):
 
 
 class LocalOnly:
-    """Search and "My files" return the text of the user's files, so a page on another site (or a
-    rebound DNS name) must not be able to call them. Plain ASGI, so streaming is untouched."""
+    """Search, "My files" and the agent return the text of the user's files or drive the Mac, so a
+    page on another site (or a rebound DNS name) must not be able to call them. Plain ASGI, so streaming is untouched."""
 
     def __init__(self, inner):
         self.inner = inner
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and (scope["path"].startswith("/api/search") or scope["path"] == "/api/chat"):
+        if scope["type"] == "http" and (scope["path"].startswith(("/api/search", "/api/agent")) or scope["path"] == "/api/chat"):
             h = dict(scope["headers"])
             if not _local_origin(h.get(b"host", b"").decode("latin-1"), h.get(b"origin", b"").decode("latin-1")):
                 return await JSONResponse({"detail": "Forbidden"}, status_code=403)(scope, receive, send)
@@ -151,6 +161,7 @@ def load_settings():
     s.setdefault("image_model", next(m["id"] for m in CATALOG["image"] if m.get("default")))
     s.setdefault("custom", [])
     s["search"] = {**SEARCH_DEFAULTS, **(s.get("search") or {})}
+    s["agent"] = {**AGENT_DEFAULTS, **(s.get("agent") or {})}
     return s
 
 
@@ -637,6 +648,8 @@ def _ensure_quiet(mode, m):
 
 @app.post("/api/engine/start")
 def engine_start():
+    if agent_lock.locked():
+        raise HTTPException(409, AGENT_BUSY_MSG)
     m = chat_model()
     if not model_installed(m):
         raise HTTPException(409, f"Download {m['name']} first (Model library).")
@@ -647,6 +660,8 @@ def engine_start():
 
 @app.post("/api/engine/stop")
 def engine_stop():
+    if agent_lock.locked():
+        raise HTTPException(409, AGENT_BUSY_MSG)
     with engine_lock:
         for mode in ENGINES:
             _stop_engine(mode)
@@ -719,10 +734,15 @@ async def _counted(gen):
         active_chats -= 1
 
 
+@app.get("/api/agent/status")
+def agent_status():
+    return {"enabled": load_settings()["agent"]["enabled"]}
+
+
 @app.get("/api/busy")
 def api_busy():
     """Read by the search service between batches: it waits while the Mac is doing user-facing work."""
-    return {"busy": active_chats > 0 or any(j.get("status") in ("queued", "running") for j in jobs.values())}
+    return {"busy": active_chats > 0 or agent_lock.locked() or any(j.get("status") in ("queued", "running") for j in jobs.values())}
 
 
 @app.post("/api/chat")
@@ -750,6 +770,10 @@ async def chat(request: Request):
     mode = "gguf" if gguf else ("vision" if needs_vision else "text")
 
     async def relay():
+        # The agent holds the machine: only its own engine may answer (requests run one at a time).
+        if agent_lock.locked() and (mode, m["id"]) != (agent_engine["mode"], agent_engine["model_id"]):
+            yield _sse({"error": AGENT_BUSY_MSG})
+            return
         if sources:
             yield _sse({"x_sources": sources})
         if needs_vision and not m.get("vision"):
@@ -1112,6 +1136,8 @@ async def create_image(prompt: str = Form(...), width: int = Form(1024), height:
                        negative_prompt: str = Form(""), step_cache: str = Form(""),
                        mode: str = Form("generate"), model_id: str = Form(""),
                        images: list[UploadFile] = File(default=[])):
+    if agent_lock.locked():
+        raise HTTPException(409, AGENT_BUSY_MSG)
     if mode == "edit" and not EDIT_MODEL:
         raise HTTPException(400, "Editing needs the full Qwen-Image-2.1 checkpoint; the 4-bit "
                                  "weights installed here are text-to-image only.")
