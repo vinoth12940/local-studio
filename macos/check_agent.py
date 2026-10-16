@@ -1017,6 +1017,311 @@ def approval_titles():
     assert T("menu", None, _ac(), {"path": 3}) == "Use menu **?** in Notes"
 
 
+# ---- tool adapter (web)
+
+class FakeClient:
+    """McpClient stand-in: records every call; script maps a tool name to a ToolResult, a list of them (consumed in order,
+    the last one repeats), an exception, or a function of the arguments."""
+
+    def __init__(self, script=None):
+        self.calls, self.script = [], dict(script or {})
+
+    def call(self, name, args, timeout=30):
+        self.calls.append((name, dict(args)))
+        s = self.script.get(name)
+        if callable(s):
+            s = s(args)
+        elif isinstance(s, list):
+            s = s.pop(0) if len(s) > 1 else s[0]
+        if isinstance(s, Exception):
+            raise s
+        assert s is not None, f"unscripted call {name}"
+        return s
+
+    def names(self):
+        return [n for n, _ in self.calls]
+
+    def of(self, name):
+        return [a for n, a in self.calls if n == name]
+
+
+def _tr(data=None, text="", ok=True, image=None):
+    return {"ok": ok, "text": text or (json.dumps(data) if data is not None else ""), "data": data, "image": image}
+
+
+def _wins(*specs):
+    return _tr({"windows": [{"pid": pid, "window_id": wid, "is_on_screen": on, "bounds": {"x": 0, "y": 0, "width": 900, "height": h}}
+                            for pid, wid, on, h in specs]})
+
+
+STALE = _tr({"status": "refused", "refusal": {"code": "browser_binding_stale", "message": "binding is stale"}}, ok=False)
+GOOD_WIN = _wins((47601, 7, True, 800))
+
+
+def web_client(**over):
+    sem, dom = _fx("browser_semantic_login"), _fx("browser_domrefs_login")
+
+    def state(args):
+        if "pid" in args:
+            return _tr(_fx("browser_bind"))
+        if args.get("snapshot_format") == "semantic_v2":
+            return _tr(sem, image=b"PNG" if args.get("include_screenshot") else None)
+        return _tr(dom)
+
+    script = {"browser_prepare": _tr(_fx("browser_prepare")), "list_windows": GOOD_WIN, "get_browser_state": state,
+              "browser_navigate": lambda a: _tr({"status": "ok", "url": a["url"], "refs_invalidated": True}),
+              "browser_click": _tr(_fx("browser_click_dom_result")), "browser_type": _tr(_fx("browser_type_result")),
+              "browser_pointer": _tr({"status": "ok"}), "bring_to_front": _tr({"status": "ok"}), "end_session": _tr({"status": "ok"})}
+    script.update(over)
+    return FakeClient(script)
+
+
+def web_adapter(**over):
+    app._agent_sleep = lambda s: SLEPT.append(s)
+    SLEPT.clear()
+    c = web_client(**over)
+    return c, app.Adapter(c, "ls-abc123")
+
+
+SLEPT = []
+BIND = _fx("browser_bind")
+
+
+@check
+def first_open_url_prepares_and_binds():
+    c, a = web_adapter(list_windows=[_wins((47601, 7, True, 200), (99, 1, True, 900), (47601, 8, False, 800)), GOOD_WIN])
+    assert a.observe() is None and c.calls == [] and a.screenshot() is None
+    out = a.execute("open_url", {"url": "https://github.com/login"})
+    assert not out.startswith("Error"), out
+    assert c.names() == ["browser_prepare", "list_windows", "list_windows", "get_browser_state", "browser_navigate"], c.names()
+    assert all(args["session"] == "ls-abc123" for _, args in c.calls)
+    assert c.of("browser_prepare")[0] == {"allow_launch": True, "profile": {"mode": "isolated_named", "name": "local-studio"}, "session": "ls-abc123"}
+    assert c.of("list_windows")[0] == {"pid": 47601, "session": "ls-abc123"} and SLEPT == [0.5], SLEPT
+    assert c.of("get_browser_state")[0] == {"pid": 47601, "window_id": 7, "session": "ls-abc123"}
+    tab, tgt = BIND["tabs"][0]["tab_id"], BIND["target_id"]
+    assert c.of("browser_navigate")[0] == {"target_id": tgt, "tab_id": tab, "url": "https://github.com/login", "session": "ls-abc123"}
+    a.execute("open_url", {"url": "https://github.com/x"})                      # bound: no second prepare
+    assert c.names().count("browser_prepare") == 1 and c.names().count("list_windows") == 2
+    # no window ever appears: an error line after 10 tries, not a raise
+    c2, a2 = web_adapter(list_windows=_wins((47601, 7, False, 800)))
+    out = a2.execute("open_url", {"url": "https://example.com"})
+    assert out.startswith("Error:") and len(c2.of("list_windows")) == 10 and "browser_navigate" not in c2.names(), (out, c2.names())
+    # a schemeless address is opened the way the gate read it (https://host); other schemes never reach CuaDriver
+    c3, a3 = web_adapter()
+    a3.execute("open_url", {"url": " example.com/a b\n"})
+    assert c3.of("browser_navigate")[0]["url"] == "https://example.com/a b", c3.of("browser_navigate")
+    for bad in ("javascript:alert(1)", "file:///etc/passwd", "", None):
+        assert a3.execute("open_url", {"url": bad}).startswith("Error:"), bad
+    assert len(c3.of("browser_navigate")) == 1
+
+
+@check
+def observe_and_click_map_short_refs():
+    c, a = web_adapter()
+    a.execute("open_url", {"url": "https://github.com/login"})
+    v = a.observe()
+    assert v and a.surface == "browser" and a.url == "https://github.com/login" and a.domain == "github.com" and a.app is None
+    tab, tgt = BIND["tabs"][0]["tab_id"], BIND["target_id"]
+    sem_calls = [x for x in c.of("get_browser_state") if x.get("snapshot_format")]
+    assert sem_calls[-1] == {"target_id": tgt, "tab_id": tab, "snapshot_format": "semantic_v2", "session": "ls-abc123"}
+    assert {"target_id": tgt, "tab_id": tab, "session": "ls-abc123"} in c.of("get_browser_state")      # the default dom_refs_v1 read
+    want = v["refs"]["e3"]["ref"]
+    assert a.facts("click", {"ref": "e3"}) == v["refs"]["e3"]["facts"] and a.facts("open_url", {"url": "x"}) is None and a.facts("click", {"ref": "e99"}) is None
+    out = a.execute("click", {"ref": "e3"})
+    assert not out.startswith("Error") and "read the page" in out, out
+    assert c.of("browser_click")[-1] == {"target_id": tgt, "tab_id": tab, "ref": want, "input_route": "dom_event", "session": "ls-abc123"}
+    assert a.execute("click", {"ref": "e99"}) == "Error: e99 is not on the page; read_page to refresh"
+    assert a.execute("type", {"ref": "e99", "text": "x"}) == "Error: e99 is not on the page; read_page to refresh"
+    # a refusal from CuaDriver comes back as an Error line (ok True, status refused / effect refused)
+    c.script["browser_click"] = _tr(_fx("errors")["click_trust_unavailable"]["structuredContent"], text=_fx("errors")["click_trust_unavailable"]["content"][0]["text"])
+    out = a.execute("click", {"ref": "e3"})
+    assert out.startswith("Error:") and "browser_input_trust_unavailable" in out, out
+
+
+@check
+def type_and_submit():
+    c, a = web_adapter()
+    a.execute("open_url", {"url": "https://github.com/login"})
+    v = a.observe()
+    pw = next(k for k, r in v["refs"].items() if r["facts"]["name"] == "Password")
+    out = a.execute("type", {"ref": pw, "text": "hunter2"})
+    assert not out.startswith("Error") and "hunter2" not in out, out
+    assert c.of("browser_type")[-1] == {"target_id": BIND["target_id"], "tab_id": BIND["tabs"][0]["tab_id"], "ref": v["refs"][pw]["ref"], "text": "hunter2", "session": "ls-abc123"}
+    assert len(c.of("browser_type")) == 1
+    out = a.execute("type", {"ref": pw, "text": "abc", "submit": True})
+    assert [x["text"] for x in c.of("browser_type")][1:] == ["abc", "\n"] and "Enter" in out, (out, c.of("browser_type"))
+
+
+@check
+def read_page_retries_route_unavailable():
+    refusal = _tr({"status": "refused", "refusal": {"code": "browser_route_unavailable", "message": "no route"}})
+    sem, dom = _fx("browser_semantic_login"), _fx("browser_domrefs_login")
+    seq = [refusal, _tr(sem)]
+    calls = []
+
+    def state(args):
+        calls.append(args)
+        if "pid" in args:
+            return _tr(_fx("browser_bind"))
+        return seq.pop(0) if args.get("snapshot_format") == "semantic_v2" else _tr(dom)
+
+    c, a = web_adapter(get_browser_state=state)
+    a.execute("open_url", {"url": "https://github.com/login"})
+    seq[:] = [refusal, _tr(sem)]
+    SLEPT.clear(); calls.clear()
+    out = a.execute("read_page", {})
+    assert "Sign in" in out and "[e1]" in out and not out.startswith("Error"), out
+    assert sum(1 for x in calls if x.get("snapshot_format")) == 2 and SLEPT == [0.5], (calls, SLEPT)
+    assert sum(1 for x in calls if "snapshot_format" not in x and "pid" not in x) == 1       # dom_refs_v1 for facts
+    # a second refusal is an Error line, not another retry
+    seq[:] = [refusal, refusal, _tr(sem)]
+    calls.clear()
+    out = a.execute("read_page", {"query": "password"})
+    assert out.startswith("Error:") and sum(1 for x in calls if x.get("snapshot_format")) == 2, (out, calls)
+    seq[:] = [_tr(sem)]
+    a.execute("read_page", {"query": "password"})
+    assert [x for x in calls if x.get("snapshot_format")][-1]["query"] == "password"
+
+
+@check
+def back_uses_history():
+    c, a = web_adapter()
+    assert a.execute("back", {}).startswith("Error:")
+    a.execute("open_url", {"url": "https://github.com/login"})
+    assert a.execute("back", {}).startswith("Error:")                                       # nothing before the first page
+    a.execute("open_url", {"url": "https://example.com/two"})
+    out = a.execute("back", {})
+    assert not out.startswith("Error") and c.of("browser_navigate")[-1]["url"] == "https://github.com/login", out
+    assert a.url == "https://github.com/login" and a.domain == "github.com"
+    assert a.execute("back", {}).startswith("Error:")                                       # going back is not itself added to the history
+
+
+@check
+def stale_binding_rebinds():
+    nav = [STALE, _tr({"status": "ok", "url": "https://github.com/login"})]
+    c, a = web_adapter()
+    a.execute("open_url", {"url": "https://github.com/login"})
+    c.script["browser_navigate"] = nav
+    n_win = len(c.of("list_windows"))
+    out = a.execute("open_url", {"url": "https://github.com/two"})
+    assert not out.startswith("Error"), out
+    assert len(c.of("list_windows")) == n_win + 1 and len(c.of("browser_navigate")) == 3, c.names()
+    assert c.of("browser_navigate")[-1]["url"] == "https://github.com/two"
+    c.script["browser_navigate"] = [STALE]
+    out = a.execute("open_url", {"url": "https://github.com/three"})
+    assert out.startswith("Error:") and "stale" in out.lower(), out
+    # a stale ref: re-bind, re-read, retry the click with the ref looked up again in the new view
+    a.observe()
+    ok = _tr(_fx("browser_click_dom_result"))
+    c.script["browser_click"] = [_tr({"code": "browser_ref_stale"}, text="browser_ref_stale: ref p9:3 is gone", ok=False), ok]
+    n_win, n_click = len(c.of("list_windows")), len(c.of("browser_click"))
+    out = a.execute("click", {"ref": "e3"})
+    assert not out.startswith("Error") and len(c.of("list_windows")) == n_win + 1 and len(c.of("browser_click")) == n_click + 2, (out, c.names())
+    c.script["browser_click"] = [STALE]
+    assert a.execute("click", {"ref": "e3"}).startswith("Error:")
+
+
+@check
+def rebind_prepares_again_when_the_window_is_gone():
+    c, a = web_adapter()
+    a.execute("open_url", {"url": "https://github.com/login"})
+    a.observe()
+    c.script["list_windows"] = [_wins(), _wins(), _wins(), _wins(), _wins(), _wins(), _wins(), _wins(), _wins(), _wins(), GOOD_WIN]
+    c.script["browser_click"] = [STALE, _tr(_fx("browser_click_dom_result"))]
+    out = a.execute("click", {"ref": "e3"})
+    assert not out.startswith("Error") and c.names().count("browser_prepare") == 2, (out, c.names())
+    assert c.of("browser_prepare")[1]["session"] == "ls-abc123"
+
+
+@check
+def screenshot_from_browser_state():
+    c, a = web_adapter()
+    assert a.screenshot() is None
+    a.execute("open_url", {"url": "https://github.com/login"})
+    assert a.screenshot() == b"PNG"
+    last = c.of("get_browser_state")[-1]
+    assert last["include_screenshot"] is True and last["snapshot_format"] == "semantic_v2" and last["session"] == "ls-abc123"
+    c.script["get_browser_state"] = app.McpError("gone")
+    assert a.screenshot() is None
+
+
+@check
+def link_domains_from_dom():
+    c, a = web_adapter()
+    assert a.link_domains == set() and a.surface == "browser" and a.url is None and a.domain is None
+    a.execute("open_url", {"url": "https://github.com/login"})
+    a.observe()
+    ld = a.link_domains
+    assert {"github.githubassets.com", "avatars.githubusercontent.com", "docs.github.com", "support.github.com"} <= ld, ld
+    assert all(h and "/" not in h and "#" not in h for h in ld) and "" not in ld                     # relative and fragment hrefs add nothing
+    assert a.domain == "github.com"
+    # accumulated across the run, not replaced
+    dom = {"refs": [{"node": "a", "label": "id=x href=https://one.example.org/p", "ref": "p1:0"},
+                    {"node": "button", "label": "href=https://notalink.example.net", "ref": "p1:1"},
+                    {"node": "a", "label": "href=mailto:a@b.co", "ref": "p1:2"}]}
+    c.script["get_browser_state"] = lambda args: _tr(_fx("browser_semantic_login")) if args.get("snapshot_format") else _tr(dom)
+    a.observe()
+    assert "one.example.org" in a.link_domains and "avatars.githubusercontent.com" in a.link_domains
+    assert "notalink.example.net" not in a.link_domains and "b.co" not in a.link_domains
+
+
+@check
+def scroll_take_over_resume_close():
+    c, a = web_adapter()
+    a.execute("open_url", {"url": "https://github.com/login"})
+    tab, tgt = BIND["tabs"][0]["tab_id"], BIND["target_id"]
+    assert not a.execute("scroll", {"direction": "down"}).startswith("Error")
+    assert c.of("browser_pointer")[-1] == {"target_id": tgt, "tab_id": tab, "action": "scroll", "delta_y": 600, "session": "ls-abc123"}
+    a.execute("scroll", {"direction": "up"})
+    assert c.of("browser_pointer")[-1]["delta_y"] == -600
+    assert a.execute("scroll", {"direction": "sideways"}).startswith("Error:")
+    a.take_over()
+    assert c.of("bring_to_front")[-1] == {"pid": 47601, "session": "ls-abc123"}
+    a.observe()
+    n_win = len(c.of("list_windows"))
+    a.resume()
+    assert a.execute("click", {"ref": "e1"}) == "Error: e1 is not on the page; read_page to refresh"      # stale until the next observe
+    assert a.observe() is not None and len(c.of("list_windows")) == n_win + 1               # re-bound lazily
+    a.close()
+    assert c.of("end_session")[-1] == {"session": "ls-abc123"}
+    c.script["end_session"] = app.McpError("down")
+    a.close()                                                                               # never raises
+
+
+@check
+def execute_never_raises():
+    c, a = web_adapter()
+    a.execute("open_url", {"url": "https://github.com/login"})
+    a.observe()
+    for name in ("browser_navigate", "browser_click", "browser_type", "browser_pointer", "get_browser_state"):
+        c.script[name] = app.McpError("The computer-control helper stopped responding.")
+    for tool, args in (("open_url", {"url": "https://a.com"}), ("click", {"ref": "e3"}), ("type", {"ref": "e1", "text": "x"}),
+                       ("scroll", {"direction": "down"}), ("read_page", {}), ("back", {}), ("click", {"ref": None}), ("scroll", {}),
+                       ("click", {}), ("type", {"ref": "e1"})):
+        out = a.execute(tool, args)
+        assert isinstance(out, str) and out.startswith("Error:"), (tool, out)
+    assert "stopped responding" in a.execute("click", {"ref": "e3"})
+    # control tools and unknown tools are not the adapter's
+    for tool in ("note", "ask_user", "done", "kill_app"):
+        assert a.execute(tool, {"text": "x"}).startswith("Error:"), tool
+    # a malformed reply (no data, not ok) is an Error line too
+    c.script["browser_navigate"] = _tr(None, text="boom", ok=False)
+    assert a.execute("open_url", {"url": "https://a.com"}) == "Error: boom"
+
+
+@check
+def agent_tools_schema():
+    names = [t["function"]["name"] for t in app.AGENT_TOOLS]
+    assert names == ["open_url", "read_page", "click", "type", "scroll", "back", "note", "ask_user", "done"], names
+    by = {t["function"]["name"]: t["function"] for t in app.AGENT_TOOLS}
+    assert all(t["type"] == "function" and t["function"]["description"] and t["function"]["parameters"]["type"] == "object" for t in app.AGENT_TOOLS)
+    assert by["click"]["parameters"]["required"] == ["ref"] and by["type"]["parameters"]["required"] == ["ref", "text"]
+    assert by["type"]["parameters"]["properties"]["submit"]["type"] == "boolean"
+    assert by["scroll"]["parameters"]["properties"]["direction"]["enum"] == ["up", "down"] and by["read_page"]["parameters"].get("required", []) == []
+    assert by["open_url"]["parameters"]["required"] == ["url"] and by["done"]["parameters"]["required"] == ["answer"]
+    assert by["back"]["parameters"]["properties"] == {} and by["note"]["parameters"]["required"] == ["text"] and by["ask_user"]["parameters"]["required"] == ["question"]
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

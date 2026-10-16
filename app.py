@@ -2384,6 +2384,283 @@ def approval_title(tool, facts, ctx, args=None):
     return f"Run **{esc(tool)}**"
 
 
+# -- tool adapter: the model's simple tools (open_url, click e12, ...) -> CuaDriver's (pids, window ids, targets, tabs, sessions)
+
+def _tool_schema(name, description, props=None, required=()):
+    return {"type": "function", "function": {"name": name, "description": description,
+                                             "parameters": {"type": "object", "properties": props or {}, "required": list(required)}}}
+
+
+AGENT_TOOLS = [
+    _tool_schema("open_url", "Open a web page in the browser.", {"url": {"type": "string", "description": "Full address, like https://example.com"}}, ["url"]),
+    _tool_schema("read_page", "Read the current page again. Give a query to look only for matching parts of a long page.",
+                 {"query": {"type": "string", "description": "Words to look for (optional)"}}),
+    _tool_schema("click", "Click an element by its ref, like e12.", {"ref": {"type": "string", "description": "Ref from the page, like e12"}}, ["ref"]),
+    _tool_schema("type", "Type text into a field by its ref, like e5. Set submit to true to press Enter afterwards.",
+                 {"ref": {"type": "string", "description": "Ref of the field, like e5"}, "text": {"type": "string", "description": "Text to type"},
+                  "submit": {"type": "boolean", "description": "Press Enter after typing (default false)"}}, ["ref", "text"]),
+    _tool_schema("scroll", "Scroll the page up or down to see more.", {"direction": {"type": "string", "enum": ["up", "down"]}}, ["direction"]),
+    _tool_schema("back", "Go back to the previous page."),
+    _tool_schema("note", "Save a short fact you will need later, like a price or a name.", {"text": {"type": "string", "description": "The fact to remember"}}, ["text"]),
+    _tool_schema("ask_user", "Ask the user a question and wait for the answer. Use it when you need a choice or a missing detail.",
+                 {"question": {"type": "string", "description": "One short question"}}, ["question"]),
+    _tool_schema("done", "Finish the task and give the user the answer.", {"answer": {"type": "string", "description": "What you found or did"}}, ["answer"]),
+]
+
+AGENT_BIND_TRIES = 10                                        # list_windows polls for the isolated browser's window (0.5 s apart)
+AGENT_SCROLL_PX = 600
+_STALE_MARKERS = ("browser_binding_stale", "browser_ref_stale", "browser_tab_not_found", "browser_wrong_target_refused", "stale")
+
+
+def _agent_sleep(s):
+    time.sleep(s)                                            # a function of its own so the checks can replace it
+
+
+def _cua_problem(res):
+    """The one-line reason a CuaDriver result failed, or None. A refusal comes back with ok True and
+    status "refused" (or effect "refused"), or with isError."""
+    d = res.get("data") or {}
+    ref = d.get("refusal") if isinstance(d.get("refusal"), dict) else None
+    if res.get("ok") and not ref and d.get("status") != "refused" and d.get("effect") != "refused":
+        return None
+    return _clip((ref or {}).get("message") or res.get("text") or d.get("code") or "the browser refused", 300)
+
+
+def _cua_blob(res):
+    return (str(res.get("text") or "") + " " + json.dumps(res.get("data") or {}, default=str)).lower()
+
+
+def _is_stale(res):
+    blob = _cua_blob(res)
+    return any(m in blob for m in _STALE_MARKERS)
+
+
+class Adapter:
+    """What the agent loop talks to for a web run. One CuaDriver session (`session`) for the whole run; the isolated
+    browser lives until close(). Short refs (e1..) belong to the last view this adapter read: observe() and read_page
+    replace it, and anything older is "not on the page". Read failures raise McpError from observe(); execute() never raises."""
+
+    def __init__(self, client, session):
+        self.client, self.session = client, session
+        self.surface, self.app = "browser", None
+        self.url = self.domain = None
+        self.link_domains: set[str] = set()                  # hosts of every link seen on any page this run (for the gate)
+        self.view = None
+        self.pid = self.window_id = self.target = self.tab = None
+        self._rebind_due = False
+        self._history: list[str] = []                        # pages before the current one, for back()
+
+    def _call(self, name, args):
+        return self.client.call(name, {**args, "session": self.session})
+
+    # -- binding: prepare the isolated Chromium -> its window -> target/tab ids
+    def _bind(self):
+        for fresh in (self.pid is None, True):               # a known pid whose window is gone is prepared once more
+            if self.pid is None:
+                res = self._call("browser_prepare", {"allow_launch": True, "profile": {"mode": "isolated_named", "name": "local-studio"}})
+                pid = (res.get("data") or {}).get("prepared_pid")
+                if _cua_problem(res) or not isinstance(pid, int):
+                    raise McpError(_cua_problem(res) or "the browser did not start")
+                self.pid = pid
+            win = None
+            for i in range(AGENT_BIND_TRIES):
+                res = self._call("list_windows", {"pid": self.pid})
+                win = next((w for w in (res.get("data") or {}).get("windows") or []
+                            if w.get("pid") == self.pid and w.get("is_on_screen") and ((w.get("bounds") or {}).get("height") or 0) > 300), None)
+                if win:
+                    break
+                if i < AGENT_BIND_TRIES - 1:
+                    _agent_sleep(0.5)
+            if win:
+                break
+            if fresh:
+                raise McpError("the browser window did not appear")
+            self.pid = None
+        res = self._call("get_browser_state", {"pid": self.pid, "window_id": win["window_id"]})
+        d = res.get("data") or {}
+        tab = next((t.get("tab_id") for t in d.get("tabs") or [] if t.get("tab_id")), None)
+        if _cua_problem(res) or not d.get("target_id") or not tab:
+            raise McpError(_cua_problem(res) or "could not attach to the browser tab")
+        self.window_id, self.target, self.tab, self._rebind_due = win["window_id"], d["target_id"], tab, False
+
+    def _ids(self):
+        if self.target is None:
+            raise McpError("no page is open; use open_url first")
+        if self._rebind_due:
+            self._bind()
+        return {"target_id": self.target, "tab_id": self.tab}
+
+    def _act(self, make, reread=True):
+        """One CuaDriver call built by make() -> (tool, args). A stale binding or ref gets one re-bind (and re-read, so make()
+        can look its short ref up again) and one retry; any other failure, and a second one, raises McpError."""
+        for attempt in (0, 1):
+            name, args = make()
+            res = self._call(name, args)
+            why = _cua_problem(res)
+            if why is None:
+                return res
+            if attempt == 0 and _is_stale(res):
+                self._bind()
+                if reread:
+                    self._read()
+                continue
+            raise McpError(why)
+
+    # -- reading
+    def _state(self, extra=None):
+        """get_browser_state with its two known hiccups handled: browser_route_unavailable is retried once after 0.5 s,
+        a stale binding is re-bound once."""
+        slept = rebound = False
+        while True:
+            res = self._call("get_browser_state", {**self._ids(), **(extra or {})})
+            if _cua_problem(res) is None:
+                return res
+            if "browser_route_unavailable" in _cua_blob(res) and not slept:
+                slept = True
+                _agent_sleep(0.5)
+            elif _is_stale(res) and not rebound:
+                rebound = True
+                self._bind()
+            else:
+                return res
+
+    def _set_page(self, url):
+        if url:
+            self.url, self.domain = url, _host(url) or None
+
+    def _read(self, query=None):
+        sem = self._state({"snapshot_format": "semantic_v2", **({"query": query} if query else {})})
+        if _cua_problem(sem) or not sem.get("data"):
+            raise McpError(_cua_problem(sem) or "the page could not be read")
+        dom = self._state()                                  # dom_refs_v1: input types, autocomplete, links; the gate depends on it
+        if _cua_problem(dom) or not dom.get("data"):
+            raise McpError("could not read the page's form fields: " + (_cua_problem(dom) or "no data"))
+        sd, dd = sem["data"], dom["data"]
+        for r in dd.get("refs") or []:
+            if r.get("node") in ("a", "link"):
+                href = _dom_attrs(r.get("label")).get("href") or ""
+                if re.match(r"^(?:https?:)?//", href, re.I) and _host(href):
+                    self.link_domains.add(_host(href))
+        self._set_page((sd.get("page") or {}).get("url") or dd.get("url"))
+        self.view = browser_view(sd, dd)
+        return self.view
+
+    def observe(self):
+        return None if self.target is None else self._read()
+
+    def facts(self, tool, args):
+        if tool not in ("click", "type"):
+            return None
+        hit = ((self.view or {}).get("refs") or {}).get(str((args or {}).get("ref") or "").strip())
+        return hit["facts"] if hit else None
+
+    def screenshot(self):
+        if self.target is None:
+            return None
+        try:
+            return self._state({"snapshot_format": "semantic_v2", "include_screenshot": True}).get("image")
+        except McpError:
+            return None
+
+    # -- acting
+    def _ref(self, args):
+        short = str(args.get("ref") or "").strip()
+        if not short:
+            raise McpError("a ref like e12 is needed")
+        hit = ((self.view or {}).get("refs") or {}).get(short)
+        if not hit:
+            raise McpError(f"{short} is not on the page; read_page to refresh")
+        return short, hit
+
+    def _navigate(self, url):
+        res = self._act(lambda: ("browser_navigate", {**self._ids(), "url": url}), reread=False)
+        new = (res.get("data") or {}).get("url") or url
+        if self.url and self.url != new:
+            self._history = (self._history + [self.url])[-50:]
+        self.view = None                                     # the old page's refs are gone
+        self._set_page(new)
+        return new
+
+    def _open_url(self, args):
+        url = _norm_url(args.get("url"))
+        if not url or "\\" in url:
+            raise McpError("open_url needs a full web address")
+        sch = _url_scheme(url)
+        if sch and sch not in ("http", "https"):
+            raise McpError(f"only http and https addresses can be opened, not {sch}:")
+        if not sch:
+            url = "https:" + url if url.startswith("//") else "https://" + url        # the gate read it as https://<host>
+        if self.target is None:
+            self._bind()
+        return f"Opened {self._navigate(url)}; read the page to see it."
+
+    def _read_page(self, args):
+        self._ids()
+        return self._read(str(args.get("query") or "").strip() or None)["text"]
+
+    def _click(self, args):
+        short, hit = self._ref(args)
+        self._act(lambda: ("browser_click", {**self._ids(), "ref": self._ref(args)[1]["ref"], "input_route": "dom_event"}))
+        return f"Clicked {_clip(hit['facts']['name'], 60) or short}; read the page to see the result."
+
+    def _type(self, args):
+        short, hit = self._ref(args)
+        if args.get("text") is None:
+            raise McpError("text is needed")
+        text = str(args["text"])
+        self._act(lambda: ("browser_type", {**self._ids(), "ref": self._ref(args)[1]["ref"], "text": text}))
+        if args.get("submit") is True:
+            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._ref(args)[1]["ref"], "text": "\n"}))      # Enter, as typed text
+        return f"Typed into {_clip(hit['facts']['name'], 60) or short}" + (" and pressed Enter" if args.get("submit") is True else "") + "; read the page to see the result."
+
+    def _scroll(self, args):
+        d = args.get("direction")
+        if d not in ("up", "down"):
+            raise McpError('direction must be "up" or "down"')
+        self._act(lambda: ("browser_pointer", {**self._ids(), "action": "scroll", "delta_y": AGENT_SCROLL_PX if d == "down" else -AGENT_SCROLL_PX}))
+        return f"Scrolled {d}; read the page to see more."
+
+    def _back(self, args):
+        if not self._history:
+            raise McpError("there is no earlier page")
+        prev = self._history[-1]
+        res = self._act(lambda: ("browser_navigate", {**self._ids(), "url": prev}), reread=False)
+        self._history.pop()
+        self.view = None
+        self._set_page((res.get("data") or {}).get("url") or prev)
+        return f"Went back to {self.url}; read the page to see it."
+
+    def execute(self, tool, args):
+        fn = {"open_url": self._open_url, "read_page": self._read_page, "click": self._click, "type": self._type,
+              "scroll": self._scroll, "back": self._back}.get(tool)
+        if fn is None:
+            return f"Error: {tool} is not a web tool"
+        try:
+            return fn(args if isinstance(args, dict) else {})
+        except McpError as e:
+            return f"Error: {_clip(e, 300)}"
+        except Exception as e:                               # the loop counts these lines; nothing the adapter does may end the run
+            return f"Error: {type(e).__name__}: {_clip(e, 200)}"
+
+    # -- handing the browser to the user and back
+    def take_over(self):
+        if self.pid is not None:
+            res = self._call("bring_to_front", {"pid": self.pid})
+            if _cua_problem(res):
+                raise McpError(_cua_problem(res))
+
+    def resume(self):
+        self.view = None                                     # the user may have changed the page; refs from before are stale
+        self._rebind_due = self.target is not None
+
+    def close(self):
+        try:
+            self._call("end_session", {})
+        except McpError:
+            pass
+        self.target = self.tab = None
+
+
 # ---------------------------------------------------------------- versions & updates
 
 update_job: dict = {"status": "idle"}
