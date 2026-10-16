@@ -822,6 +822,11 @@ def gate_table():
         ('bing bang', "open_url", {"url": 'https://www.bing.com/search?q=!g'}, None, _gc(task_domains=set(), domain=None), "risky"),
         ('bing ducky', "open_url", {"url": 'https://www.bing.com/search?q=%5Cx'}, None, _gc(task_domains=set(), domain=None), "risky"),
         ('bing plain', "open_url", {"url": 'https://www.bing.com/search?q=cats'}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ('ddg fullwidth bang', "open_url", {"url": 'https://duckduckgo.com/?q=\uff01g+x'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg encoded fullwidth bang', "open_url", {"url": 'https://duckduckgo.com/?q=%EF%BC%81g'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg fullwidth ducky', "open_url", {"url": 'https://duckduckgo.com/?q=\uff3cevil'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg zwsp ducky', "open_url", {"url": 'https://duckduckgo.com/?q=%E2%80%8B%5Cevil'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('google lucky semicolon', "open_url", {"url": 'https://www.google.com/search?q=x;btnI=1'}, None, _gc(task_domains=set(), domain=None), "risky"),
         ('composer search-team', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Message #search-team", in_form=True), _gc(), "risky"),
         ('composer reply search', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Reply to: How does search work?"), _gc(), "risky"),
         ('composer comment search', 'type', {'ref': 'e1', 'text': 'hi', 'submit': True}, _gf("textbox", "Comment on search ranking"), _gc(), "risky"),
@@ -992,6 +997,19 @@ def approval_titles():
     t = T("open_url", None, _gc(), {"url": "https://exam\u200dple.com/x"})
     assert t.startswith("Open **exam\u2039U+200D\u203aple.com** (https\\://exam\u2039U+200D\u203aple.com/x)") and "\u200d" not in t, t
     assert "U+202E" in T("open_url", None, _gc(), {"url": "https://a.com/\u202eexe.txt"})
+    # a long host is never clipped at its end: the registrable domain is always on the card
+    u = "https://" + "a" * 63 + "." + "b" * 63 + "." + "c" * 59 + ".google.com.x.evil.net/?d=SECRET"
+    assert len(app._host(u)) == 209 and app.gate("open_url", {"url": u}, None, _gc(task_domains=set(), domain=None))[0] == "risky"
+    t = T("open_url", None, _gc(), {"url": u})
+    hp = t[len("Open **"):t.index("** (")]
+    assert "x.evil.net" in hp and hp.endswith("google.com.x.evil.net") and not hp.endswith("google.com.\u2026"), t
+    t = T("open_url", None, _gc(), {"url": "https://" + ("a" * 60 + ".") * 8 + "wordpre\u00df.google.com.x.evil.net/"})
+    hp = t[len("Open **"):t.index("** (")]                    # past a DNS name's length only the start is cut, from the left
+    assert hp.startswith("\u2026") and hp.endswith("google.com.x.evil.net") and len(hp) == 257, t
+    t = T("click", _gf("button", "Pay"), _gc(domain=app._host(u)))           # the page's domain on other cards: same rule
+    assert t.endswith(".google.com.x.evil.net") and "\u2026" not in t, t
+    assert T("click", _gf("button", "Pay"), _gc(domain="exam\u200dple.com")) == "Click **Pay** on exam\u2039U+200D\u203aple.com"
+    assert T("dialog", None, _gc(domain=None)) == "Answer a page dialog on this page"
     assert "http://" in app.gate("open_url", {"url": "localhost:3000"}, None, _gc())[1]
     assert T("hotkey", None, _ac(), {"keys": "cmd+return"}) == "Press **\u2318+Return** in Notes"
     assert T("hotkey", None, _ac(), {"keys": 5}) == "Press **?** in Notes"

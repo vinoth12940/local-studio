@@ -23,7 +23,7 @@ import time
 import unicodedata
 import uuid
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -2183,11 +2183,11 @@ def _search_ok(url, host):
     path = parts.path.lower()
     if "%" in path or "\\" in url:
         return False
-    qs = [v.strip() for k, vs in q.items() if k.lower() == "q" for v in vs]
+    qs = [_norm_label(v) for k, vs in q.items() if k.lower() == "q" for v in vs]   # fullwidth ！ / ＼ and a ZWSP before \ count
     if host != "google.com" and any("!" in v or v.startswith("\\") for v in qs):
         return False
-    if host == "google.com":
-        return path == "/search" and not any(k.lower() == "btni" for k in q)
+    if host == "google.com":                                        # btnI anywhere, also after a `;` parse_qs does not split on
+        return path == "/search" and "btni" not in unquote(parts.query).lower()
     if host == "bing.com":
         return path == "/search"
     return (path in ("", "/") and any(qs)) or path in ("/html", "/html/")
@@ -2340,12 +2340,20 @@ def _gate_acting(tool, args, facts, ctx):
 _KEY_NAMES = {"cmd": "⌘", "command": "⌘", "shift": "⇧", "option": "⌥", "alt": "⌥", "opt": "⌥", "ctrl": "⌃", "control": "⌃"}
 
 
+def _card_host(h):
+    """A host for the approval card: joiners and bidi marks spelled out, whole up to a DNS name's length; past that only the
+    START is cut (leading …), never the registrable tail (x.evil.net)."""
+    h = " ".join(_visible(h).split())
+    keep = max(256, len(".".join(h.split(".")[-3:])))
+    return _md_escape(h if len(h) <= keep else "…" + h[-keep:])
+
+
 def approval_title(tool, facts, ctx, args=None):
     """One line for the approval card, in the user's terms. Labels come from the facts, not from the model; everything a
     page or app controls is cleaned (_norm_label) and markdown-escaped so it cannot rewrite the card."""
     args, ctx = args or {}, ctx or {}
     esc = lambda v, n=80: _md_escape(_clip(_norm_label(v), n))
-    where_web = f"on {esc(ctx.get('domain') or 'this page')}"
+    where_web = f"on {_card_host(ctx.get('domain') or '') or 'this page'}"
     where_app = f"in {esc(ctx.get('app') or 'the app')}"
     f = facts or {}
     label = lambda: esc(f.get("name") or f.get("role") or "control")
@@ -2364,7 +2372,7 @@ def approval_title(tool, facts, ctx, args=None):
     if tool == "open_url":
         url = _norm_url(args.get("url"))
         show = lambda v, n=80: _md_escape(_clip(_visible(v), n))       # joiners and bidi marks are spelled out, not hidden
-        return f"Open **{show(_host(url), 200) or 'an address with no host'}** ({show(url)})"
+        return f"Open **{_card_host(_host(url)) or 'an address with no host'}** ({show(url)})"
     if tool == "menu":
         return f"Use menu **{esc(' › '.join(_menu_path(args.get('path')) or ['?']))}** {where_app}"
     if tool == "hotkey":
