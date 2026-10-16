@@ -1765,8 +1765,13 @@ _VIEW_PLAIN_ROLES = frozenset((                              # page structure th
 _VIEW_LANDMARKS = frozenset(("main", "banner", "navigation", "contentinfo", "search", "region"))
 _VIEW_FLAGS = ("required", "focused", "selected", "expanded", "pressed", "disabled", "invalid")
 # A button counts as a submit when the DOM says type=submit, or (no DOM info) its label starts like one.
-_SUBMIT_RE = re.compile(r"^(submit|send|place order|sign in|log in|continue|next)\b", re.I)
-_PASSWORD_RE = re.compile(r"pass(word|code)", re.I)         # a semantic textbox so named is treated as a password field when the DOM did not say
+# (and a button inside a <form> with no DOM type is one too: HTML's default button type is submit)
+_SUBMIT_RE = re.compile(r"^(submit|send|place order|sign in|log in|continue|next|pay|buy|purchase|sign up|register|create account)\b", re.I)
+# Name heuristics for a textbox the DOM view did not describe: a field so named is treated as sensitive.
+_PASSWORD_RE = re.compile(r"pass(word|code|wort|wd)|kennwort|mot de passe|contrase[ñn]a|senha|wachtwoord|パスワード|密码|密碼|비밀번호|\bpin\b", re.I)
+_OTP_RE = re.compile(r"\botp\b|one[- ]?time|verification code|authenticat\w* code|auth code|sms code|2fa|two[- ]factor", re.I)
+_CARD_RE = re.compile(r"card number|credit card|debit card|card holder|cardholder|\bcvv\b|\bcvc\b|security code|expir(y|ation)", re.I)
+_SENSITIVE_AC = re.compile(r"^(current-password|new-password|one-time-code|cc-.*)$", re.I)
 _DOM_KEY = re.compile(r"(?:^|\s)(\w[\w-]*)=")
 _AX_INTERACTIVE = frozenset((
     "Button TextField TextArea SearchField SecureTextField CheckBox RadioButton PopUpButton MenuButton MenuItem MenuBarItem Link "
@@ -1775,11 +1780,22 @@ _AX_ACTIONS = frozenset(("AXPress", "AXConfirm", "AXPick"))
 
 
 def _dom_attrs(label):
-    """`name=password id=password type=password` -> dict. A value runs to the next `key=`, so it may hold spaces."""
-    out, ms = {}, list(_DOM_KEY.finditer(label or ""))
+    """`name=password id=password type=password value=x y` -> dict. `value=` is the last attribute and takes the rest of the
+    label (it may hold spaces and fake `key=`s); of every other key the first occurrence counts. A page controls
+    these strings, so a sensitive type/autocomplete anywhere in the label wins over a later or earlier decoy."""
+    label = label or ""
+    v = re.search(r"(?:^|\s)value=", label)
+    head = label[:v.start()] if v else label
+    out, ms = {}, list(_DOM_KEY.finditer(head))
     for i, m in enumerate(ms):
-        end = ms[i + 1].start() if i + 1 < len(ms) else len(label)
-        out[m.group(1).lower()] = label[m.end():end].strip()
+        out.setdefault(m.group(1).lower(), head[m.end():ms[i + 1].start() if i + 1 < len(ms) else len(head)].strip())
+    if v:
+        out["value"] = label[v.end():].strip()
+    if re.search(r"(?:^|\s)type=password\b", label, re.I):
+        out["type"] = "password"
+    sens = [m for m in re.findall(r"(?:^|\s)autocomplete=(\S+)", label, re.I) if _SENSITIVE_AC.match(m)]
+    if sens:
+        out["autocomplete"] = sens[0].lower()
     return out
 
 
@@ -1827,9 +1843,27 @@ def _on(v):
     return v not in (None, False, 0, "", "false", "0", "no")
 
 
-def _facts(role, name, input_type=None, autocomplete=None, in_form=False, is_submit=False, href=None, box=None):
+def _dom_sensitive(dom):
+    """True when the DOM view lists a visible password, one-time-code or card input."""
+    for r in (dom or {}).get("refs") or []:
+        if r.get("node") == "input":
+            a = _dom_attrs(r.get("label"))
+            if a.get("type") != "hidden" and (a.get("type") == "password" or _SENSITIVE_AC.match(a.get("autocomplete") or "")):
+                return True
+    return False
+
+
+def _guess_autocomplete(name):
+    if _OTP_RE.search(name):
+        return "one-time-code"
+    m = _CARD_RE.search(name)
+    return None if not m else "cc-csc" if re.search(r"cvv|cvc|security", m.group(0), re.I) else "cc-exp" if m.group(0).lower().startswith("expir") else "cc-number"
+
+
+def _facts(role, name, input_type=None, autocomplete=None, in_form=False, is_submit=False, href=None, box=None, sensitive_unknown=False):
     return {"role": role, "name": name, "input_type": input_type, "autocomplete": autocomplete,
-            "in_form": in_form, "is_submit": is_submit, "href": href, "box": box}
+            "in_form": in_form, "is_submit": is_submit, "href": href, "box": box,
+            "sensitive_unknown": sensitive_unknown}              # editable, not matched to the DOM, on a page whose DOM holds a sensitive input
 
 
 def _assemble(header, items, budget):
@@ -1876,6 +1910,7 @@ def browser_view(state, dom=None, budget=6000):
     sem = [r for r in refs if r.get("role") not in _VIEW_TEXT_ROLES and r.get("role") not in _VIEW_PLAIN_ROLES]
     joined = _dom_join(sem, dom)
     dom_of = {id(s): joined[i] for i, s in enumerate(sem) if i in joined}
+    dom_sens = _dom_sensitive(dom)
     sem_ids = {id(r) for r in sem}
     # walk the outline for document order, text and <form> scope; refs are matched to outline lines in order
     seq, ptr, forms, vis, form_at = [], 0, [], "in_viewport", None
@@ -1917,15 +1952,18 @@ def browser_view(state, dom=None, budget=6000):
         r, in_form = e[1], e[2]
         a = dom_of.get(id(r)) or {}
         role, name = r["role"], _clip(r.get("name"), 100)
-        itype = a.get("type") or ("password" if _sem_class(role) == "text" and _PASSWORD_RE.search(name) else None)
-        submit = a.get("type") == "submit" or (role == "button" and bool(_SUBMIT_RE.match(name)))
+        editable = _sem_class(role) == "text" or "type" in (r.get("actions") or ()) and role not in ("button", "link", "checkbox", "radio", "menuitem", "tab", "switch")
+        itype = a.get("type") or ("password" if editable and _PASSWORD_RE.search(name) else None)
+        ac = a.get("autocomplete") or (_guess_autocomplete(name) if editable else None)
+        unknown = bool(editable and dom_sens and id(r) not in dom_of)
+        submit = a.get("type") == "submit" or (role == "button" and a.get("type") is None and (in_form or bool(_SUBMIT_RE.match(name))))
         st = r.get("states") or {}
         flags = [f for f in _VIEW_FLAGS if _on(st.get(f))] + (["checked" if _on(st["checked"]) else "unchecked"] if "checked" in st else [])
         extra = (f" type={itype}" if itype and itype not in ("text", "submit", "button") else "") + (f" [{' '.join(flags)}]" if flags else "")
-        if r.get("value") not in (None, "") and itype != "password":
+        if r.get("value") not in (None, "") and itype != "password" and not unknown and not _SENSITIVE_AC.match(ac or ""):
             extra += f' = "{_clip(r["value"], 80)}"'
         items.append({"kind": "i", "vis": r.get("visibility") == "in_viewport", "ref": r["ref"], "line": _control_line(role, name, extra),
-                      "facts": _facts(role, r.get("name"), itype, a.get("autocomplete"), in_form, submit)})
+                      "facts": _facts(role, r.get("name"), itype, ac, in_form, submit, sensitive_unknown=unknown)})
     page = state.get("page") or {}
     title = page.get("title")
     if not title or title == "about:blank":                  # the root web area carries the real title

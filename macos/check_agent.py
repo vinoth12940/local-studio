@@ -429,7 +429,7 @@ def refs_are_short_and_stable():
 
 @check
 def facts_from_fixture():
-    keys = {"role", "name", "input_type", "autocomplete", "in_form", "is_submit", "href", "box"}
+    keys = {"role", "name", "input_type", "autocomplete", "in_form", "is_submit", "href", "box", "sensitive_unknown"}
     login, dom = _fx("browser_semantic_login"), _fx("browser_domrefs_login")
     v = app.browser_view(login, dom)
     by = {r["facts"]["name"]: r["facts"] for r in v["refs"].values()}
@@ -485,6 +485,62 @@ def fold_history_budget():
     huge = ["y" * 50000, "z" * 50000]
     assert app.est_tokens("\n".join(app.fold_history(huge))) <= 3000
     assert app.est_tokens("\n".join(app.fold_history(lines, budget=100))) <= 100
+
+
+@check
+def unmatched_sensitive_fields_fail_safe():
+    login, dom = _fx("browser_semantic_login"), _fx("browser_domrefs_login")
+    for nm in ("Mot de passe", "Contraseña", "Passwort", "PIN", "Your secret", "", None):
+        st = json.loads(json.dumps(login))
+        next(r for r in st["refs"] if r["name"] == "Password")["name"] = nm
+        v = app.browser_view(st, dom)
+        f = next(x["facts"] for x in v["refs"].values() if x["ref"] == "p9:1")
+        assert f["input_type"] == "password" or f["sensitive_unknown"] is True, (nm, f)
+        if nm in ("Your secret", "", None):
+            assert f["sensitive_unknown"] is True and "= " not in next(l for l in v["text"].splitlines() if l.startswith("[e2]"))
+        assert all(set(x["facts"]) >= {"sensitive_unknown"} for x in v["refs"].values())
+    # a matched field is not "unknown", and a page with no sensitive input flags nothing
+    ok = app.browser_view(login, dom)
+    assert {x["facts"]["name"]: x["facts"]["sensitive_unknown"] for x in ok["refs"].values()}["Password"] is False
+    assert not any(x["facts"]["sensitive_unknown"] for x in app.browser_view(_fx("browser_semantic_form"))["refs"].values())
+    assert not any(x["facts"]["sensitive_unknown"] for x in app.browser_view(login)["refs"].values()), "no DOM view, nothing to infer from"
+    # names alone resolve the obvious ones
+    for nm, ac in (("Verification code", "one-time-code"), ("Enter OTP", "one-time-code"), ("Card number", "cc-number"), ("CVV", "cc-csc"), ("Expiry date", "cc-exp")):
+        st = {"page": {"title": "t", "url": "u"}, "outline": "", "refs": [{"ref": "p1:0", "role": "textbox", "name": nm, "actions": ["type"], "states": {}, "value": None, "visibility": "in_viewport"}]}
+        assert app.browser_view(st)["refs"]["e1"]["facts"]["autocomplete"] == ac, nm
+    # DOM autocomplete counts as sensitive evidence even without a password input
+    d2 = {"refs": [{"node": "input", "label": "name=otp autocomplete=one-time-code type=text"}]}
+    st = {"page": {"title": "t", "url": "u"}, "outline": "", "refs": [{"ref": "p1:0", "role": "textbox", "name": "Zzz", "actions": ["type"], "states": {}, "value": None, "visibility": "in_viewport"}]}
+    assert app.browser_view(st, d2)["refs"]["e1"]["facts"]["autocomplete"] == "one-time-code"       # joined by order: one and one
+    st["refs"].append({**st["refs"][0], "ref": "p1:1", "name": "Qqq"})
+    assert [x["facts"]["sensitive_unknown"] for x in app.browser_view(st, d2)["refs"].values()] == [True, True]   # two vs one: no join
+
+
+@check
+def dom_attrs_cannot_be_spoofed():
+    a = app._dom_attrs("name=password id=password type=password value=x type=text")
+    assert a["type"] == "password" and a["value"] == "x type=text" and a["name"] == "password", a
+    assert app._dom_attrs("type=text name=a type=password")["type"] == "password"
+    assert app._dom_attrs("name=a type=text autocomplete=off autocomplete=one-time-code")["autocomplete"] == "one-time-code"
+    assert app._dom_attrs("aria-label=Dismiss this message type=button") == {"aria-label": "Dismiss this message", "type": "button"}
+    assert app._dom_attrs(None) == {}
+
+
+@check
+def buttons_in_forms_default_to_submit():
+    f = {r["facts"]["name"]: r["facts"] for r in app.browser_view(_fx("browser_semantic_form"))["refs"].values()}
+    assert f["Show time picker Show time picker"]["in_form"] is True and f["Show time picker Show time picker"]["is_submit"] is True
+    login, dom = _fx("browser_semantic_login"), _fx("browser_domrefs_login")
+    g = {r["facts"]["name"]: r["facts"] for r in app.browser_view(login, dom)["refs"].values()}
+    assert g["Manage cookies"]["in_form"] is False and g["Manage cookies"]["is_submit"] is False
+    for nm in ("Pay now", "Buy", "Purchase", "Sign up", "Register", "Create account"):
+        st = {"page": {"title": "t", "url": "u"}, "outline": "", "refs": [{"ref": "p1:0", "role": "button", "name": nm, "actions": ["click"], "states": {}, "value": None, "visibility": "in_viewport"}]}
+        assert app.browser_view(st)["refs"]["e1"]["facts"]["is_submit"] is True, nm
+    # a DOM type=button inside a form is not a submit
+    st = {"page": {"title": "t", "url": "u"}, "outline": "- form\n  - button \"Menu\"\n", "refs": [{"ref": "p1:0", "role": "button", "name": "Menu", "actions": ["click"], "states": {}, "value": None, "visibility": "in_viewport"}]}
+    d = {"refs": [{"node": "button", "label": "aria-label=Menu type=button"}]}
+    assert app.browser_view(st)["refs"]["e1"]["facts"]["is_submit"] is True
+    assert app.browser_view(st, d)["refs"]["e1"]["facts"]["is_submit"] is False
 
 
 if __name__ == "__main__":
