@@ -20,6 +20,7 @@ import signal
 import subprocess
 import threading
 import time
+import unicodedata
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -1780,6 +1781,12 @@ _AX_INTERACTIVE = frozenset((
 _AX_ACTIONS = frozenset(("AXPress", "AXConfirm", "AXPick"))
 
 
+def _sensitive_ac(v):
+    """True when any whitespace-separated autocomplete token is a password, one-time-code or card one
+    (`billing cc-number`, `section-x cc-number`, `current-password webauthn`)."""
+    return any(_SENSITIVE_AC.match(t) for t in str(v or "").split())
+
+
 def _dom_attrs(label):
     """`name=password id=password type=password value=x y` -> dict. `value=` is the last attribute and takes the rest of the
     label (it may hold spaces and fake `key=`s); of every other key the first occurrence counts. A page controls
@@ -1794,8 +1801,8 @@ def _dom_attrs(label):
         out["value"] = label[v.end():].strip()
     if re.search(r"(?:^|\s)type=password\b", label, re.I):
         out["type"] = "password"
-    sens = [m for m in re.findall(r"(?:^|\s)autocomplete=(\S+)", label, re.I) if _SENSITIVE_AC.match(m)]
-    if sens:
+    sens = [m.strip() for m in re.findall(r"(?:^|\s)autocomplete=(.*?)(?=\s\w[\w-]*=|$)", label, re.I | re.S) if _sensitive_ac(m)]
+    if sens:                                                 # the value is a token list: `billing cc-number`
         out["autocomplete"] = sens[0].lower()
     return out
 
@@ -1849,7 +1856,7 @@ def _dom_sensitive(dom):
     for r in (dom or {}).get("refs") or []:
         if r.get("node") == "input":
             a = _dom_attrs(r.get("label"))
-            if a.get("type") != "hidden" and (a.get("type") == "password" or _SENSITIVE_AC.match(a.get("autocomplete") or "")):
+            if a.get("type") != "hidden" and (a.get("type") == "password" or _sensitive_ac(a.get("autocomplete"))):
                 return True
     return False
 
@@ -1955,13 +1962,15 @@ def browser_view(state, dom=None, budget=6000):
         role, name = r["role"], _clip(r.get("name"), 100)
         editable = _sem_class(role) == "text" or "type" in (r.get("actions") or ()) and role not in ("button", "link", "checkbox", "radio", "menuitem", "tab", "switch")
         itype = a.get("type") or ("password" if editable and _PASSWORD_RE.search(name) else None)
-        ac = a.get("autocomplete") or (_guess_autocomplete(name) if editable else None)
+        ac = a.get("autocomplete")
+        if editable and not _sensitive_ac(ac):               # the label is the fallback unless the DOM already says it is sensitive
+            ac = _guess_autocomplete(name) or ac
         unknown = bool(editable and dom_sens and id(r) not in dom_of)
         submit = a.get("type") == "submit" or (role == "button" and a.get("type") is None and (in_form or bool(_SUBMIT_RE.match(name))))
         st = r.get("states") or {}
         flags = [f for f in _VIEW_FLAGS if _on(st.get(f))] + (["checked" if _on(st["checked"]) else "unchecked"] if "checked" in st else [])
         extra = (f" type={itype}" if itype and itype not in ("text", "submit", "button") else "") + (f" [{' '.join(flags)}]" if flags else "")
-        if r.get("value") not in (None, "") and itype != "password" and not unknown and not _SENSITIVE_AC.match(ac or ""):
+        if r.get("value") not in (None, "") and itype != "password" and not unknown and not _sensitive_ac(ac):
             extra += f' = "{_clip(r["value"], 80)}"'
         items.append({"kind": "i", "vis": r.get("visibility") == "in_viewport", "ref": r["ref"], "line": _control_line(role, name, extra),
                       "facts": _facts(role, r.get("name"), itype, ac, in_form, submit, sensitive_unknown=unknown)})
@@ -2046,18 +2055,48 @@ def fold_history(lines, budget=3000):
 
 # ---- approval gate: decides from facts about the target (never the model's own words) whether an action is safe, risky or blocked
 
-RISKY_WORDS = re.compile(r"\b(send|submit|buy|pay|order|checkout|check out|confirm|delete|remove|post|publish|sign up|subscribe|book|transfer|place order)\b", re.I)
+# Words on a control (or in a menu path) that make acting on it irreversible or public. Matched after _norm_label, with
+# the inflections people see on buttons ("Sends", "Deleting...", "Payment"); \s* / \s+ inside the multi-word ones.
+RISKY_WORDS = re.compile(
+    r"\b(?:send(?:s|ing)?|sent|submit(?:s|ted|ting)?|buy(?:s|ing)?|pay(?:s|ing|ment|ments|ed)?|order(?:s|ed|ing)?|"
+    r"check\s*out|confirm(?:s|ed|ing|ation)?|delet(?:e|es|ed|ing|ion)|remov(?:e|es|ed|ing|al)|post(?:s|ed|ing)?|"
+    r"publish(?:es|ed|ing)?|sign\s*up|(?:un)?subscri(?:be|bes|bed|bing|ption|ptions)|book(?:s|ed|ing)?|transfer(?:s|red|ring)?|"
+    r"place\s+order|purchas(?:e|es|ed|ing)|donat(?:e|es|ed|ing|ion|ions)|trash(?:ed|ing)?|repl(?:y|ies|ied|ying)|"
+    r"shar(?:e|es|ed|ing)|authori[sz](?:e|es|ed|ing|ation)|approv(?:e|es|ed|ing|al)|accept(?:s|ed|ing)?|grant(?:s|ed|ing)?)\b", re.I)
 APP_TIERS_DEFAULT = {
-    **{n: "read" for n in ("Keychain Access", "System Settings", "Terminal", "iTerm", "Warp", "1Password", "Bitwarden", "Passwords")},
-    **{n: "ask" for n in ("Mail", "Messages", "WhatsApp", "Slack", "Calendar", "Finder")},
+    **{n: "read" for n in (
+        "Keychain Access", "System Settings", "Terminal", "iTerm", "Warp", "1Password", "Bitwarden", "Passwords",
+        "Chase", "PayPal", "Venmo", "Coinbase", "Robinhood", "Wise", "Revolut", "Schwab", "Fidelity", "Vanguard",
+        "E*TRADE", "Binance", "Kraken", "Quicken", "YNAB",
+        "LastPass", "Dashlane", "Keeper", "Enpass", "KeePassXC", "Proton Pass",
+        "Ghostty", "kitty", "Alacritty", "WezTerm", "Hyper", "Tabby",
+        "Shortcuts", "Script Editor", "Automator")},
+    **{n: "ask" for n in (
+        "Mail", "Messages", "WhatsApp", "Slack", "Calendar", "Finder",
+        "Telegram", "Discord", "Signal", "Microsoft Teams", "Skype", "LINE", "WeChat", "Zoom", "zoom.us")},
 }
-READ_ONLY_NAME = re.compile(r"bank|finance|wallet|password|crypto", re.I)
+READ_ONLY_NAME = re.compile(r"bank|banking|finance|wallet|password|crypto|invest|broker|trading|pay\b", re.I)
+SEARCH_DOMAINS = frozenset(("duckduckgo.com", "google.com", "bing.com"))     # open_url may always go to these
 _TIER_NAMES = ("read", "ask", "allowed")
-_SEARCH_RE = re.compile(r"search|find|query", re.I)
-_ENTER_DELETE_KEYS = frozenset(("return", "enter", "delete", "backspace", "forwarddelete", "del"))
+_SEARCH_FIELD_RE = re.compile(r"^\s*(search|find)\b", re.I)
+_NEWLINE_RE = re.compile("[\r\n  \x0b\x0c\x85]")
+_ENTER_KEYS = frozenset(("↩", "⏎", "⌅", "↵", "space", "spacebar", "␣", "kpenter", "newline", "linefeed", "lf", "cr"))
+_DELETE_KEYS = frozenset(("del", "⌫", "⌦", "kpdelete"))
 _APP_ACTING = frozenset(("click_app", "type_app", "menu", "hotkey"))
 _TYPING = frozenset(("type", "type_app"))
 _SAFE_TOOLS = frozenset(("read_page", "scroll", "back", "note", "ask_user", "done", "list_apps", "open_app", "read_app"))
+_MD_SPECIAL = re.compile(r"([\\*_\[\]()!`#<>|&~])|:(?=//)")
+
+
+def _norm_label(s):
+    """What a person would read: NFKC, no zero-width/bidi (Cf) or control characters, whitespace collapsed."""
+    s = unicodedata.normalize("NFKC", str(s if s is not None else ""))
+    s = "".join(" " if unicodedata.category(c) == "Cc" else "" if unicodedata.category(c) == "Cf" else c for c in s)
+    return " ".join(s.split())
+
+
+def _md_escape(s):
+    return _MD_SPECIAL.sub(lambda m: "\\" + m.group(0), s)
 
 
 def _tier_key(name):
@@ -2078,50 +2117,96 @@ def app_tier(app_name, overrides):
         for n, t in APP_TIERS_DEFAULT.items():
             if _tier_key(n) == base:
                 return t
-    return "read" if READ_ONLY_NAME.search(app_name or "") else "allowed"
+    return "read" if READ_ONLY_NAME.search(_norm_label(app_name)) else "allowed"
+
+
+def _norm_url(u):
+    """The WHATWG way: leading/trailing C0 controls and spaces go, tab/CR/LF vanish everywhere."""
+    return re.sub(r"[\t\r\n]", "", str(u if u is not None else "")).strip("".join(map(chr, range(0x21))))
+
+
+def _url_scheme(u):
+    m = re.match(r"^([a-z][a-z0-9+.-]*):(?!\d+(?:[/?#]|$))", u, re.I)   # `example.com:8080/x` is a host and a port, not a scheme
+    return m.group(1).lower() if m else ""
 
 
 def _host(s):
-    """Lowercase host of a URL or bare host, without www., port or trailing dot; "" if there is none."""
-    s = (s or "").strip()
-    if not s or "\\" in s:                                         # browsers read \ as /, urlsplit does not: https://evil.net\@example.com
+    """Lowercase ASCII (IDNA) host of a URL or bare host, without www., port or trailing dot; "" if there is none."""
+    s = _norm_url(s)
+    if not s or "\\" in s:                                          # browsers read \ as /, urlsplit does not: https://evil.net\@example.com
         return ""
     try:
         h = urlsplit(s if "//" in s else "//" + s).hostname or ""
-    except ValueError:
+        h = h.lower().rstrip(".").encode("idna").decode("ascii")
+    except (ValueError, UnicodeError):
         return ""
-    h = h.lower().rstrip(".")
     return h[4:] if h.startswith("www.") else h
 
 
 def _domain_in(host, domains):
     for d in domains or ():
         d = _host(d)
-        if d and (host == d or host.endswith("." + d)):
+        if "." in d and (host == d or host.endswith("." + d)):          # a bare label ("com", "localhost") never vouches for anything
             return True
     return False
 
 
 def _sensitive_field(facts):
-    ac = (facts.get("autocomplete") or "").strip().lower()
-    return (facts.get("input_type") or "").strip().lower() == "password" or ac in ("current-password", "new-password", "one-time-code") or ac.startswith("cc-")
+    return (facts.get("input_type") or "").strip().lower() == "password" or _sensitive_ac(facts.get("autocomplete"))
+
+
+def _key_class(keys):
+    """"plain", "enter" (return/enter/space, any spelling), "delete" or "invalid" for a hotkey's `keys`: a list of strings
+    (a lone string counts as one element), each element possibly a combo like `cmd+return` or `cmd-return`."""
+    if isinstance(keys, str):
+        keys = [keys]
+    if not isinstance(keys, (list, tuple)) or not keys or not all(isinstance(k, str) for k in keys):
+        return "invalid"
+    toks, cls = [], "plain"
+    for k in keys:
+        if _NEWLINE_RE.search(k):
+            return "enter"
+        toks += [t for t in re.split(r"[+\s]+|(?<=\w)-(?=\w)", k) if t]
+    if not toks:
+        return "invalid"
+    for t in toks:
+        t = unicodedata.normalize("NFKC", t).lower().replace("_", "").replace("-", "")
+        if t in _ENTER_KEYS or "enter" in t or "return" in t:
+            return "enter"
+        if t in _DELETE_KEYS or "delete" in t or "backspace" in t:
+            cls = "delete"
+    return cls
+
+
+def _menu_path(path):
+    """A menu path as a list of item names: a list of strings, or one string like `File > Delete Note`. None if it is neither."""
+    if isinstance(path, str):
+        path = [path]
+    if not isinstance(path, (list, tuple)) or not path or not all(isinstance(p, str) for p in path):
+        return None
+    out = [_norm_label(x) for p in path for x in re.split(r"[>›]", p)]
+    return [x for x in out if x] or None
 
 
 def gate(tool, args, facts, ctx):
     """Decide `("safe" | "risky" | "blocked", reason)` for one action. Pure; reads only its arguments.
 
-    tool   model-facing tool name (open_url, click, type, ... see _SAFE_TOOLS and _APP_ACTING), plus the adapter's own
+    tool   model-facing tool name (see _SAFE_TOOLS, _TYPING, _APP_ACTING, click, open_url), plus the adapter's own
            `download` (a download about to happen) and `dialog` (answering a page confirm/beforeunload dialog).
-    args   the tool's arguments (`url` for open_url, `submit` for type, `keys` for hotkey, `path` for menu).
+    args   the tool's arguments (`url` for open_url, `text`/`submit` for type, `keys` for hotkey, `app`/`path` for menu).
     facts  Facts of the target ref (None when there is none); a click/type without facts is risky.
-    ctx    surface         "browser" | "app"
+    ctx    surface         "browser" | "app"; every acting tool is judged by the app's tier when it is "app"
            app, tier       the app being acted on and its tier ("read" | "ask" | "allowed"); a missing tier counts as "ask"
-           domain          host of the current page
+           domain          host of the current page (open_url to it is safe)
            task_domains    set of hosts the task is about
            link_domains    set of hosts of links seen on the page (from the DOM; facts["href"] is always None for the browser)
-           url_from_page   True when the URL being opened came from page content rather than the user
-    A subdomain of a task or link domain counts as that domain."""
-    args, ctx = args or {}, ctx or {}
+           url_from_page   not used: the model writes every URL, so where it came from cannot be known
+    open_url is safe only within task_domains | link_domains | {domain} | SEARCH_DOMAINS (a subdomain counts as its parent;
+    a domain with no dot never counts); anything else is risky. Typing that presses Enter (submit=True, or a newline in
+    the text) is risky unless the target is a search field."""
+    args = args if isinstance(args, dict) else {}
+    ctx = ctx if isinstance(ctx, dict) else {}
+    facts = facts if isinstance(facts, dict) else None
     if tool in _SAFE_TOOLS:
         return "safe", "reading, scrolling and notes do not change anything"
     if tool == "download":
@@ -2129,50 +2214,59 @@ def gate(tool, args, facts, ctx):
     if tool == "dialog":
         return "risky", "the page is asking a question in a dialog"
     if tool == "open_url":
-        url = str(args.get("url") or "").strip()
-        m = re.match(r"^([a-z][a-z0-9+.-]*):", url, re.I)
-        if m and m.group(1).lower() not in ("http", "https"):
-            return "blocked", f"only http and https addresses can be opened, not {m.group(1).lower()}:"
-        if not ctx.get("url_from_page"):
-            return "safe", "the address came from the user"
-        host = _host(url)
+        url = _norm_url(args.get("url"))
+        sch = _url_scheme(url)
+        if sch and sch not in ("http", "https"):
+            return "blocked", f"only http and https addresses can be opened, not {sch}:"
+        host = _host(url)                                           # no scheme counts as https://<host>
         if not host:
-            return "risky", "the address from the page has no usable host"
-        if _domain_in(host, ctx.get("task_domains")) or _domain_in(host, ctx.get("link_domains")):
-            return "safe", f"{host} is part of the task or linked from the page"
-        return "risky", f"the page points to {host}, which the task does not involve"
+            return "risky", "the address has no usable host"
+        if (_domain_in(host, ctx.get("task_domains")) or _domain_in(host, ctx.get("link_domains"))
+                or _domain_in(host, [ctx.get("domain")]) or _domain_in(host, SEARCH_DOMAINS)):
+            return "safe", f"{host} is part of the task, the page or a search engine"
+        return "risky", f"{host} is not part of the task"
     if tool in _TYPING or tool == "click" or tool in _APP_ACTING:
         return _gate_acting(tool, args, facts, ctx)
     return "blocked", f"unknown tool {tool!r}"
 
 
 def _gate_acting(tool, args, facts, ctx):
-    app_tool = tool in _APP_ACTING
-    tier = (ctx.get("tier") or "ask") if app_tool else None
+    in_app = ctx.get("surface") == "app" or tool in _APP_ACTING
+    tier = (ctx.get("tier") if ctx.get("tier") in _TIER_NAMES else "ask") if in_app else None
+    app = ctx.get("app")
     if tool in _TYPING and facts and _sensitive_field(facts):
         return "blocked", "passwords, one-time codes and card details are never typed by the agent"
     if tier == "read":
-        return "blocked", f"{ctx.get('app') or 'this app'} is read-only for the agent"
+        return "blocked", f"{app or 'this app'} is read-only for the agent"
     if tier == "ask":
-        return "risky", f"every action in {ctx.get('app') or 'this app'} needs approval"
-    if tool == "hotkey":
-        keys = {str(k).strip().lower() for k in args.get("keys") or ()}
-        return ("risky", "the keys include return or delete") if keys & _ENTER_DELETE_KEYS else ("safe", "an ordinary shortcut")
+        if ctx.get("surface") != "app" and not ctx.get("tier"):
+            return "risky", "keyboard shortcuts and app actions need approval when no app is chosen"
+        return "risky", f"every action in {app or 'this app'} needs approval"
     if tool == "menu":
-        hit = next((p for p in args.get("path") or () if RISKY_WORDS.search(str(p))), None)
+        if args.get("app") is not None and _tier_key(_norm_label(args.get("app"))) != _tier_key(_norm_label(app)):
+            return "risky", f"the menu belongs to {_norm_label(args.get('app'))!r}, not {app or 'the chosen app'}"
+        path = _menu_path(args.get("path"))
+        if not path:
+            return "risky", "the menu path is not understood"
+        hit = next((p for p in path if RISKY_WORDS.search(p)), None)
         return ("risky", f"the menu item {hit!r} sounds irreversible") if hit else ("safe", "an ordinary menu item")
+    if tool == "hotkey":
+        k = _key_class(args.get("keys"))
+        return {"invalid": ("risky", "the keys are not understood"), "enter": ("risky", "the keys include return, enter or space"),
+                "delete": ("risky", "the keys include delete"), "plain": ("safe", "an ordinary shortcut")}[k]
     if not facts:
         return "risky", "the target could not be identified"
-    name = facts.get("name") or ""
+    name = _norm_label(facts.get("name"))
     if tool in _TYPING:
         if facts.get("sensitive_unknown"):
             return "risky", "this field may hold a password or code"
-        if tool == "type" and args.get("submit") and facts.get("in_form"):
-            if facts.get("role") == "searchbox" or _SEARCH_RE.search(name):
-                return "safe", "a search"
-            return "risky", "typing would also submit the form"
-        if app_tool and RISKY_WORDS.search(name):
+        if in_app and RISKY_WORDS.search(name):
             return "risky", f"the field {name!r} sounds irreversible"
+        text = args.get("text")
+        if args.get("submit") or (isinstance(text, str) and _NEWLINE_RE.search(text)):
+            if facts.get("role") == "searchbox" or _SEARCH_FIELD_RE.search(name):
+                return "safe", "a search"
+            return "risky", "typing would also press Enter"
         return "safe", "ordinary typing"
     if facts.get("is_submit"):
         return "risky", "this control submits a form"
@@ -2185,11 +2279,14 @@ _KEY_NAMES = {"cmd": "⌘", "command": "⌘", "shift": "⇧", "option": "⌥", "
 
 
 def approval_title(tool, facts, ctx, args=None):
-    """One line for the approval card, in the user's terms. Labels come from the facts, not from the model."""
+    """One line for the approval card, in the user's terms. Labels come from the facts, not from the model; everything a
+    page or app controls is cleaned (_norm_label) and markdown-escaped so it cannot rewrite the card."""
     args, ctx = args or {}, ctx or {}
-    where_web = f"on {ctx.get('domain') or 'this page'}"
-    where_app = f"in {ctx.get('app') or 'the app'}"
-    label = lambda: _clip((facts or {}).get("name") or (facts or {}).get("role") or "control", 80)
+    esc = lambda v, n=80: _md_escape(_clip(_norm_label(v), n))
+    where_web = f"on {esc(ctx.get('domain') or 'this page')}"
+    where_app = f"in {esc(ctx.get('app') or 'the app')}"
+    f = facts or {}
+    label = lambda: esc(f.get("name") or f.get("role") or "control")
     if tool == "click":
         return f"Click **{label()}** {where_web}"
     if tool == "click_app":
@@ -2199,18 +2296,21 @@ def approval_title(tool, facts, ctx, args=None):
     if tool == "type_app":
         return f"Type into **{label()}** {where_app}"
     if tool == "download":
-        name = (facts or {}).get("name") or args.get("name") or args.get("filename") or "a file"
-        return f"Download **{_clip(name, 80)}** {where_web}"
+        return f"Download **{esc(f.get('name') or args.get('name') or args.get('filename') or 'a file')}** {where_web}"
     if tool == "dialog":
         return f"Answer a page dialog {where_web}"
     if tool == "open_url":
-        return f"Open **{_clip(args.get('url'), 80)}**"
+        url = _norm_url(args.get("url"))
+        return f"Open **{_md_escape(_host(url)) or 'an address with no host'}** ({esc(url)})"
     if tool == "menu":
-        return f"Use menu **{_clip(' › '.join(str(p) for p in args.get('path') or ()), 80)}** {where_app}"
+        return f"Use menu **{esc(' › '.join(_menu_path(args.get('path')) or ['?']))}** {where_app}"
     if tool == "hotkey":
-        keys = [_KEY_NAMES.get(str(k).lower(), str(k).capitalize() if len(str(k)) > 1 else str(k).upper()) for k in args.get("keys") or ()]
-        return f"Press **{_clip('+'.join(keys), 80)}** {where_app}"
-    return f"Run **{_clip(str(tool), 80)}**"
+        ks = args.get("keys")
+        parts = [t for k in ([ks] if isinstance(ks, str) else ks if isinstance(ks, (list, tuple)) else ()) if isinstance(k, str)
+                 for t in re.split(r"[+\s]+|(?<=\w)-(?=\w)", _norm_label(k)) if t]
+        keys = [_KEY_NAMES.get(t.lower(), t.capitalize() if len(t) > 1 else t.upper()) for t in parts]
+        return f"Press **{esc('+'.join(keys) or '?')}** {where_app}"
+    return f"Run **{esc(tool)}**"
 
 
 # ---------------------------------------------------------------- versions & updates

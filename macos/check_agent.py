@@ -524,6 +524,27 @@ def dom_attrs_cannot_be_spoofed():
     assert app._dom_attrs("name=a type=text autocomplete=off autocomplete=one-time-code")["autocomplete"] == "one-time-code"
     assert app._dom_attrs("aria-label=Dismiss this message type=button") == {"aria-label": "Dismiss this message", "type": "button"}
     assert app._dom_attrs(None) == {}
+    # autocomplete is a token list: any sensitive token counts, wherever it sits
+    for ac in ("billing cc-number", "section-x cc-number", "current-password webauthn", "ON  Cc-Exp"):
+        assert app._sensitive_ac(ac), ac
+        got = app._dom_attrs(f"name=a type=text autocomplete={ac} id=z")["autocomplete"]
+        assert app._sensitive_ac(got), (ac, got)
+        assert app._dom_sensitive({"refs": [{"node": "input", "label": f"name=a type=text autocomplete={ac}"}]}), ac
+    assert not app._sensitive_ac("off") and not app._sensitive_ac("section-a email") and not app._sensitive_ac(None)
+    assert not app._dom_sensitive({"refs": [{"node": "input", "label": "name=a type=text autocomplete=section-a email"}]})
+    # a DOM autocomplete with no sensitive token does not switch off the "Card number" name fallback
+    st = {"page": {"title": "t", "url": "u"}, "outline": "", "refs": [
+        {"ref": "p1:0", "role": "textbox", "name": "Card number", "actions": ["type"], "states": {}, "value": None, "visibility": "in_viewport"},
+        {"ref": "p1:1", "role": "textbox", "name": "Verification code", "actions": ["type"], "states": {}, "value": None, "visibility": "in_viewport"},
+        {"ref": "p1:2", "role": "textbox", "name": "Nickname", "actions": ["type"], "states": {}, "value": None, "visibility": "in_viewport"}]}
+    d = {"refs": [{"node": "input", "label": "aria-label=Card number type=text autocomplete=off"},
+                  {"node": "input", "label": "aria-label=Verification code type=text autocomplete=on"},
+                  {"node": "input", "label": "aria-label=Nickname type=text autocomplete=nickname"}]}
+    fs = {r["facts"]["name"]: r["facts"] for r in app.browser_view(st, d)["refs"].values()}
+    assert fs["Card number"]["autocomplete"] == "cc-number" and fs["Verification code"]["autocomplete"] == "one-time-code"
+    assert fs["Nickname"]["autocomplete"] == "nickname"
+    d2 = {"refs": [{"node": "input", "label": "aria-label=Card number type=text autocomplete=billing cc-number"}]}
+    assert app.browser_view(st, d2)["refs"]["e1"]["facts"]["autocomplete"] == "billing cc-number"
 
 
 @check
@@ -568,6 +589,13 @@ def app_tiers():
     assert t("Notes", {}) == "allowed" and t("Safari", {}) == "allowed"
     assert t("Mail", {"Mail": "allowed"}) == "allowed" and t("Notes", {"Notes": "ask"}) == "ask"
     assert t("Chase Bank", {"Chase Bank": "allowed"}) == "allowed"
+    for n in ("Chase", "PayPal", "Coinbase", "Robinhood", "LastPass", "Dashlane", "Ghostty", "kitty", "Alacritty", "WezTerm",
+              "Shortcuts", "Script Editor", "Automator", "E*TRADE", "Proton Pass", "KeePassXC", "Fidelity Investments", "My Broker",
+              "Trading View", "Apple Pay", "Banking", "Tabby", "Hyper"):
+        assert t(n, {}) == "read", n
+    for n in ("Telegram", "Discord", "Signal", "Microsoft Teams", "Skype", "LINE", "WeChat", "Zoom", "zoom.us"):
+        assert t(n, {}) == "ask", n
+    assert t("Notes", {}) == "allowed" and t("Pages", {}) == "allowed" and t("Preview", {}) == "allowed"
     assert t("Mail", {"Mail": "bogus"}) == "ask"                       # a junk override is ignored
     assert app.RISKY_WORDS.search("Place order") and not app.RISKY_WORDS.search("Bold")
 
@@ -585,12 +613,18 @@ def gate_table():
         ("plain button", "click", {"ref": "e1"}, _gf(name="Next page"), _gc(), "safe"),
         ("click without facts", "click", {"ref": "e9"}, None, _gc(), "risky"),
         ("submit in a form", "type", {"ref": "e2", "text": "hi", "submit": True}, _gf("textbox", "Message", in_form=True), _gc(), "risky"),
-        ("submit outside a form", "type", {"ref": "e2", "text": "hi", "submit": True}, _gf("textbox", "Message"), _gc(), "safe"),
+        ("submit outside a form", "type", {"ref": "e2", "text": "hi", "submit": True}, _gf("textbox", "Message"), _gc(), "risky"),
         ("type no submit in a form", "type", {"ref": "e2", "text": "hi", "submit": False}, _gf("textbox", "Message", in_form=True), _gc(), "safe"),
         ("search submit by role", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("searchbox", "", in_form=True), _gc(), "safe"),
         ("search submit by name", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("textbox", "Search products", in_form=True), _gc(), "safe"),
         ("find submit by name", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("textbox", "Find a store", in_form=True), _gc(), "safe"),
-        ("query submit by name", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("textbox", "Your QUERY", in_form=True), _gc(), "safe"),
+        ("query is not a search field", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("textbox", "Your QUERY", in_form=True), _gc(), "risky"),
+        ("Research is not a search field", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("textbox", "Research topic", in_form=True), _gc(), "risky"),
+        ("search name with leading space", "type", {"ref": "e2", "text": "cats", "submit": True}, _gf("textbox", "  SEARCH the web", in_form=True), _gc(), "safe"),
+        ("search with newline text", "type", {"ref": "e2", "text": "cats\n"}, _gf("searchbox", "", in_form=True), _gc(), "safe"),
+        ("newline text, no submit, in a form", "type", {"ref": "e2", "text": "hi\n", "submit": False}, _gf("textbox", "Message", in_form=True), _gc(), "risky"),
+        ("newline text outside a form", "type", {"ref": "e2", "text": "hi\r\n"}, _gf("textbox", "Message"), _gc(), "risky"),
+        ("search with sensitive autocomplete", "type", {"ref": "e2", "text": "4111", "submit": True}, _gf("searchbox", "Search", autocomplete="billing cc-number"), _gc(), "blocked"),
         ("search but sensitive_unknown", "type", {"ref": "e2", "text": "x", "submit": True}, _gf("searchbox", "Search", in_form=True, sensitive_unknown=True), _gc(), "risky"),
         ("sensitive_unknown field", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Code", sensitive_unknown=True), _gc(), "risky"),
         ("type without facts", "type", {"ref": "e9", "text": "x"}, None, _gc(), "risky"),
@@ -603,7 +637,23 @@ def gate_table():
         ("open_url new domain from page", "open_url", {"url": "https://evil.net/x"}, None, _gc(url_from_page=True), "risky"),
         ("open_url lookalike domain", "open_url", {"url": "https://badexample.com/"}, None, _gc(url_from_page=True), "risky"),
         ("open_url parent of task domain", "open_url", {"url": "https://com/"}, None, _gc(url_from_page=True), "risky"),
-        ("open_url new domain typed by user", "open_url", {"url": "https://evil.net/x"}, None, _gc(url_from_page=False), "safe"),
+        ("open_url new domain, url_from_page False", "open_url", {"url": "https://evil.net/x"}, None, _gc(url_from_page=False), "risky"),
+        ("open_url current page domain", "open_url", {"url": "https://foo.org/p"}, None, _gc(domain="foo.org", task_domains=set(), link_domains=set()), "safe"),
+        ("open_url search engine", "open_url", {"url": "https://www.google.com/search?q=x"}, None, _gc(task_domains=set(), link_domains=set()), "safe"),
+        ("open_url duckduckgo", "open_url", {"url": "https://duckduckgo.com/?q=x"}, None, _gc(url_from_page=True, task_domains=set()), "safe"),
+        ("open_url single-label task domain", "open_url", {"url": "http://localhost/x"}, None, _gc(task_domains={"localhost"}, domain=None), "risky"),
+        ("open_url bare tld task domain", "open_url", {"url": "https://evil.com/"}, None, _gc(task_domains={"com"}, link_domains={"com"}, domain="com"), "risky"),
+        ("open_url tab inside host", "open_url", {"url": "https://exam\tple.com/"}, None, _gc(), "safe"),
+        ("open_url control chars around", "open_url", {"url": "\x01 https://evil.net/ \x02"}, None, _gc(), "risky"),
+        ("open_url idn lookalike", "open_url", {"url": "https://exаmple.com/"}, None, _gc(), "risky"),
+        ("open_url port", "open_url", {"url": "https://example.com:8443/x"}, None, _gc(), "safe"),
+        ("open_url host:port no scheme", "open_url", {"url": "evil.net:8080/x"}, None, _gc(), "risky"),
+        ("open_url userinfo trick", "open_url", {"url": "https://example.com@evil.net/"}, None, _gc(), "risky"),
+        ("open_url control-char javascript", "open_url", {"url": "\x01javascript:alert(1)"}, None, _gc(), "blocked"),
+        ("open_url tab-split javascript", "open_url", {"url": "java\tscript:alert(1)"}, None, _gc(), "blocked"),
+        ("open_url newline-split javascript", "open_url", {"url": "  java\nscript:alert(1)"}, None, _gc(), "blocked"),
+        ("open_url file scheme", "open_url", {"url": "file:///etc/passwd"}, None, _gc(), "blocked"),
+        ("open_url data scheme", "open_url", {"url": "DATA:text/html,x"}, None, _gc(), "blocked"),
         ("open_url no scheme", "open_url", {"url": "evil.net/x"}, None, _gc(url_from_page=True), "risky"),
         ("open_url backslash trick", "open_url", {"url": "https://evil.net\\@example.com/"}, None, _gc(url_from_page=True), "risky"),
         ("open_url junk from page", "open_url", {"url": "https://"}, None, _gc(url_from_page=True), "risky"),
@@ -650,6 +700,111 @@ def gate_table():
         ("unknown tool", "kill_app", {}, None, _gc(), "blocked"),
         ("javascript url", "open_url", {"url": "javascript:alert(1)"}, None, _gc(), "blocked"),
     ]
+    rows += [
+        # hotkeys: every spelling of Enter / Delete
+        ("hotkey string keys return", "hotkey", {"keys": "return"}, None, _ac(), "risky"),
+        ("hotkey combo string", "hotkey", {"keys": ["cmd+return"]}, None, _ac(), "risky"),
+        ("hotkey dash combo", "hotkey", {"keys": ["cmd-return"]}, None, _ac(), "risky"),
+        ("hotkey kp_enter", "hotkey", {"keys": ["kp_enter"]}, None, _ac(), "risky"),
+        ("hotkey keypad_enter", "hotkey", {"keys": ["keypad_enter"]}, None, _ac(), "risky"),
+        ("hotkey numpad enter", "hotkey", {"keys": ["numpad enter"]}, None, _ac(), "risky"),
+        ("hotkey arrow symbol", "hotkey", {"keys": ["↩"]}, None, _ac(), "risky"),
+        ("hotkey return symbol", "hotkey", {"keys": ["⏎"]}, None, _ac(), "risky"),
+        ("hotkey space", "hotkey", {"keys": ["space"]}, None, _ac(), "risky"),
+        ("hotkey newline", "hotkey", {"keys": ["\n"]}, None, _ac(), "risky"),
+        ("hotkey CR", "hotkey", {"keys": ["\r"]}, None, _ac(), "risky"),
+        ("hotkey backspace symbol", "hotkey", {"keys": ["⌫"]}, None, _ac(), "risky"),
+        ("hotkey fwd delete symbol", "hotkey", {"keys": ["⌦"]}, None, _ac(), "risky"),
+        ("hotkey forward_delete", "hotkey", {"keys": ["forward_delete"]}, None, _ac(), "risky"),
+        ("hotkey forwarddelete", "hotkey", {"keys": ["cmd", "forwarddelete"]}, None, _ac(), "risky"),
+        ("hotkey del", "hotkey", {"keys": ["del"]}, None, _ac(), "risky"),
+        ("hotkey Return case", "hotkey", {"keys": ["CMD", "RETURN"]}, None, _ac(), "risky"),
+        ("hotkey plain string combo", "hotkey", {"keys": "cmd+b"}, None, _ac(), "safe"),
+        ("hotkey cmd minus", "hotkey", {"keys": ["cmd+-"]}, None, _ac(), "safe"),
+        ("hotkey not a list", "hotkey", {"keys": 5}, None, _ac(), "risky"),
+        ("hotkey non-string item", "hotkey", {"keys": ["cmd", 5]}, None, _ac(), "risky"),
+        ("hotkey empty", "hotkey", {"keys": []}, None, _ac(), "risky"),
+        ("hotkey missing", "hotkey", {}, None, _ac(), "risky"),
+        ("hotkey dict", "hotkey", {"keys": {"a": 1}}, None, _ac(), "risky"),
+        ("hotkey in a browser ctx", "hotkey", {"keys": ["cmd", "b"]}, None, _gc(), "risky"),
+        # typing text in apps
+        ("type_app newline", "type_app", {"ref": "e1", "text": "hi\n"}, _gf("textfield", "Title"), _ac(), "risky"),
+        ("type_app crlf", "type_app", {"ref": "e1", "text": "hi\r\nthere"}, _gf("textfield", "Title"), _ac(), "risky"),
+        ("type_app line separator", "type_app", {"ref": "e1", "text": "hi "}, _gf("textfield", "Title"), _ac(), "risky"),
+        ("type_app search with newline", "type_app", {"ref": "e1", "text": "cats\n"}, _gf("searchfield", "Search"), _ac(), "safe"),
+        ("type_app in read tier with newline", "type_app", {"ref": "e1", "text": "ls\n"}, _gf("textfield", "cmd"), _ac("read", "Terminal"), "blocked"),
+        # sensitive autocomplete is a token list
+        ("autocomplete billing cc-number", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Card", autocomplete="billing cc-number"), _gc(), "blocked"),
+        ("autocomplete section cc-number", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Card", autocomplete="section-x cc-number"), _gc(), "blocked"),
+        ("autocomplete webauthn", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Pw", autocomplete="current-password webauthn"), _gc(), "blocked"),
+        ("autocomplete spaced upper", "type_app", {"ref": "e2", "text": "x"}, _gf("textfield", "Pw", autocomplete="  ON   Cc-Number "), _ac(), "blocked"),
+        ("autocomplete harmless", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Email", autocomplete="section-a email"), _gc(), "safe"),
+        ("autocomplete off", "type", {"ref": "e2", "text": "x"}, _gf("textbox", "Note", autocomplete="off"), _gc(), "safe"),
+        # menu: target app and path shape
+        ("menu for another app", "menu", {"app": "Terminal", "path": ["File", "New"]}, None, _ac(), "risky"),
+        ("menu app same, other case", "menu", {"app": "notes", "path": ["Format", "Bold"]}, None, _ac(), "safe"),
+        ("menu app with .app", "menu", {"app": "Notes.app", "path": ["Format", "Bold"]}, None, _ac(), "safe"),
+        ("menu string path risky", "menu", {"app": "Notes", "path": "File > Delete Note"}, None, _ac(), "risky"),
+        ("menu string path arrow risky", "menu", {"app": "Notes", "path": "File › Delete Note"}, None, _ac(), "risky"),
+        ("menu string path plain", "menu", {"app": "Notes", "path": "Format > Bold"}, None, _ac(), "safe"),
+        ("menu joined item risky", "menu", {"app": "Notes", "path": ["File > Delete Note"]}, None, _ac(), "risky"),
+        ("menu path of wrong type", "menu", {"app": "Notes", "path": 7}, None, _ac(), "risky"),
+        ("menu empty path", "menu", {"app": "Notes", "path": []}, None, _ac(), "risky"),
+        ("menu no app arg", "menu", {"path": ["Format", "Bold"]}, None, _ac(), "safe"),
+        ("menu other app, ctx has none", "menu", {"app": "Notes", "path": ["Format", "Bold"]}, None, _gc(surface="app", tier="allowed", app=None), "risky"),
+        # the tier follows the surface, not the tool name
+        ("click on app surface, read tier", "click", {"ref": "e1"}, _gf(name="OK"), _ac("read", "Terminal"), "blocked"),
+        ("type on app surface, read tier", "type", {"ref": "e1", "text": "x"}, _gf("textfield", "cmd"), _ac("read", "Terminal"), "blocked"),
+        ("click on app surface, ask tier", "click", {"ref": "e1"}, _gf(name="Bold"), _ac("ask", "Mail"), "risky"),
+        ("type on app surface, ask tier", "type", {"ref": "e1", "text": "x"}, _gf("textfield", "Body"), _ac("ask", "Mail"), "risky"),
+        ("click on app surface, no tier", "click", {"ref": "e1"}, _gf(name="Bold"), _gc(surface="app", tier=None, app="Notes"), "risky"),
+        ("click on app surface, allowed", "click", {"ref": "e1"}, _gf(name="Bold"), _ac(), "safe"),
+        ("click Send on app surface, allowed", "click", {"ref": "e1"}, _gf(name="Send"), _ac(), "risky"),
+        ("type risky field on app surface", "type", {"ref": "e1", "text": "x"}, _gf("textfield", "Order notes"), _ac(), "risky"),
+        ("risky word 'Make payment'", "click", {"ref": "e1"}, _gf(name="Make payment"), _gc(), "risky"),
+        ("risky word 'Payment'", "click", {"ref": "e1"}, _gf(name="Payment"), _gc(), "risky"),
+        ("risky word 'Complete purchase'", "click", {"ref": "e1"}, _gf(name="Complete purchase"), _gc(), "risky"),
+        ("risky word 'Purchase'", "click", {"ref": "e1"}, _gf(name="Purchase"), _gc(), "risky"),
+        ("risky word 'Donate $50'", "click", {"ref": "e1"}, _gf(name="Donate $50"), _gc(), "risky"),
+        ("risky word 'Move to Trash'", "click", {"ref": "e1"}, _gf(name="Move to Trash"), _gc(), "risky"),
+        ("risky word 'Reply'", "click", {"ref": "e1"}, _gf(name="Reply"), _gc(), "risky"),
+        ("risky word 'Share'", "click", {"ref": "e1"}, _gf(name="Share"), _gc(), "risky"),
+        ("risky word 'Authorize'", "click", {"ref": "e1"}, _gf(name="Authorize"), _gc(), "risky"),
+        ("risky word 'Authorise'", "click", {"ref": "e1"}, _gf(name="Authorise"), _gc(), "risky"),
+        ("risky word 'Sends'", "click", {"ref": "e1"}, _gf(name="Sends"), _gc(), "risky"),
+        ("risky word 'Deleting...'", "click", {"ref": "e1"}, _gf(name="Deleting..."), _gc(), "risky"),
+        ("risky word 'Deleted'", "click", {"ref": "e1"}, _gf(name="Deleted"), _gc(), "risky"),
+        ("risky word 'Unsubscribe'", "click", {"ref": "e1"}, _gf(name="Unsubscribe"), _gc(), "risky"),
+        ("risky word 'Sign  up'", "click", {"ref": "e1"}, _gf(name="Sign  up"), _gc(), "risky"),
+        ("risky word 'Signup'", "click", {"ref": "e1"}, _gf(name="Signup"), _gc(), "risky"),
+        ("risky word 'Check\\nout'", "click", {"ref": "e1"}, _gf(name="Check\nout"), _gc(), "risky"),
+        ("risky word 'Checkout'", "click", {"ref": "e1"}, _gf(name="Checkout"), _gc(), "risky"),
+        ("risky word 'Approve'", "click", {"ref": "e1"}, _gf(name="Approve"), _gc(), "risky"),
+        ("risky word 'Accept all'", "click", {"ref": "e1"}, _gf(name="Accept all"), _gc(), "risky"),
+        ("risky word 'Grant access'", "click", {"ref": "e1"}, _gf(name="Grant access"), _gc(), "risky"),
+        ("risky word 'S\\u200bend'", "click", {"ref": "e1"}, _gf(name="S\u200bend"), _gc(), "risky"),
+        ("risky word '\\uff33\\uff45\\uff4e\\uff44'", "click", {"ref": "e1"}, _gf(name="\uff33\uff45\uff4e\uff44"), _gc(), "risky"),
+        ("risky word 'Place   order'", "click", {"ref": "e1"}, _gf(name="Place   order"), _gc(), "risky"),
+        ("risky word 'Subscription'", "click", {"ref": "e1"}, _gf(name="Subscription"), _gc(), "risky"),
+        ("risky word 'Posting'", "click", {"ref": "e1"}, _gf(name="Posting"), _gc(), "risky"),
+        ("risky word 'Removed'", "click", {"ref": "e1"}, _gf(name="Removed"), _gc(), "risky"),
+        ("risky word 'Replies'", "click", {"ref": "e1"}, _gf(name="Replies"), _gc(), "risky"),
+        ("risky word 'Transferred'", "click", {"ref": "e1"}, _gf(name="Transferred"), _gc(), "risky"),
+        ("risky word 'Publishing'", "click", {"ref": "e1"}, _gf(name="Publishing"), _gc(), "risky"),
+        ("safe word 'Bold'", "click", {"ref": "e1"}, _gf(name="Bold"), _gc(), "safe"),
+        ("safe word 'Italic'", "click", {"ref": "e1"}, _gf(name="Italic"), _gc(), "safe"),
+        ("safe word 'Sharp'", "click", {"ref": "e1"}, _gf(name="Sharp"), _gc(), "safe"),
+        ("safe word 'Border'", "click", {"ref": "e1"}, _gf(name="Border"), _gc(), "safe"),
+        ("safe word 'Postal map'", "click", {"ref": "e1"}, _gf(name="Postal map"), _gc(), "safe"),
+        ("safe word 'Bookmarks'", "click", {"ref": "e1"}, _gf(name="Bookmarks"), _gc(), "safe"),
+        ("safe word 'Pricing'", "click", {"ref": "e1"}, _gf(name="Pricing"), _gc(), "safe"),
+        ("safe word 'Next page'", "click", {"ref": "e1"}, _gf(name="Next page"), _gc(), "safe"),
+        ("safe word 'Reading list'", "click", {"ref": "e1"}, _gf(name="Reading list"), _gc(), "safe"),
+        ("safe word 'Ordinary'", "click", {"ref": "e1"}, _gf(name="Ordinary"), _gc(), "safe"),
+        ("safe word 'Replace font'", "click", {"ref": "e1"}, _gf(name="Replace font"), _gc(), "safe"),
+        ("safe word 'Sentence'", "click", {"ref": "e1"}, _gf(name="Sentence"), _gc(), "safe"),
+        ("safe word 'Payroll tab'", "click", {"ref": "e1"}, _gf(name="Payroll tab"), _gc(), "safe"),
+    ]
     bad = []
     for label, tool, args, facts, ctx, want in rows:
         got, reason = G(tool, args, facts, ctx)
@@ -672,13 +827,30 @@ def approval_titles():
     assert T("type_app", _gf("textfield", "Body"), _ac("ask", "Mail")) == "Type into **Body** in Mail"
     assert T("click_app", _gf("button", "Send"), _ac("ask", "Mail")) == "Click **Send** in Mail"
     assert T("download", _gf("link", "Report.pdf"), _gc()) == "Download **Report.pdf** on example.com"
-    assert T("open_url", None, _gc(), {"url": "https://evil.net/x"}) == "Open **https://evil.net/x**"
+    assert T("open_url", None, _gc(), {"url": "https://evil.net/x"}) == "Open **evil.net** (https\\://evil.net/x)"
     assert T("dialog", None, _gc()) == "Answer a page dialog on example.com"
     assert T("menu", None, _ac("ask", "Mail"), {"path": ["File", "Delete Note"]}) == "Use menu **File \u203a Delete Note** in Mail"
     assert T("hotkey", None, _ac("ask", "Mail"), {"keys": ["cmd", "return"]}) == "Press **\u2318+Return** in Mail"
     long = T("click", _gf("button", "x" * 300), _gc())
     assert long.startswith("Click **xxx") and "\u2026** on example.com" in long and len(long) < 120
     assert "\n" not in T("click", _gf("button", "a\nb"), _gc())
+    # a page-controlled label cannot rewrite the card
+    t = T("click", _gf("button", "OK** on example.com ![x](https://evil.net/t.png) **"), _gc())
+    assert t.startswith("Click **OK\\*\\* on example.com \\!\\[x\\]\\(https\\://evil.net/t.png\\) \\*\\***") and t.endswith("** on example.com"), t
+    t = T("type_app", _gf("textfield", "`a` <b>x</b> # | _y_ [l](u)"), _ac("ask", "Mail"))
+    assert not any(c in t[len("Type into **"):-len("** in Mail")].replace("\\" + c, "") for c in "`<>#|_[]()"), t
+    assert T("click", _gf("button", "S\u200be\u202ent"), _gc()) == "Click **Sent** on example.com"
+    assert T("click", _gf("button", "x"), _gc(domain="a_b*c.com")) == "Click **x** on a\\_b\\*c.com"
+    # a URL's real host is shown, unclipped and in ASCII
+    t = T("open_url", None, _gc(), {"url": "https://" + "a" * 60 + ".evil.net/" + "p" * 200})
+    assert t.startswith("Open **" + "a" * 60 + ".evil.net** (https\\://") and t.endswith("\u2026)"), t
+    assert T("open_url", None, _gc(), {"url": "https://\u0435xample.com/"}).startswith("Open **xn--xample-2of.com** ("), T("open_url", None, _gc(), {"url": "https://\u0435xample.com/"})
+    assert T("open_url", None, _gc(), {"url": "https://www.example.com\t/x"}).startswith("Open **example.com** (")
+    assert T("open_url", None, _gc(), {"url": "https://"}).startswith("Open **an address with no host**")
+    assert T("hotkey", None, _ac(), {"keys": "cmd+return"}) == "Press **\u2318+Return** in Notes"
+    assert T("hotkey", None, _ac(), {"keys": 5}) == "Press **?** in Notes"
+    assert T("menu", None, _ac(), {"path": "File > Delete Note"}) == "Use menu **File \u203a Delete Note** in Notes"
+    assert T("menu", None, _ac(), {"path": 3}) == "Use menu **?** in Notes"
 
 
 if __name__ == "__main__":
