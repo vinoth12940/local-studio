@@ -67,6 +67,8 @@ os.environ["HF_HUB_CACHE"] = str(TMP / "hub")             # a Mac with no models
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app  # noqa: E402
 import base64  # noqa: E402
+
+app.CUA_DRIVER = str(TMP / "no-cua-driver")               # the real one is installed on this Mac: no check may run it
 from fastapi.testclient import TestClient  # noqa: E402
 
 CHECKS = []
@@ -109,7 +111,13 @@ def chat_and_engine_routes_respect_agent_lock():
 def agent_routes_are_local_only():
     c = TestClient(app.app, base_url="http://127.0.0.1:7860")
     assert c.get("/api/agent/status", headers={"origin": "https://evil.example"}).status_code == 403
-    assert c.get("/api/agent/status").json() == {"enabled": False}
+    real = app.cua_status
+    app.cua_status = lambda: {"installed": False, "version": None, "ok_version": False, "telemetry": None}
+    try:
+        st = c.get("/api/agent/status").json()
+    finally:
+        app.cua_status = real
+    assert st["enabled"] is False and st["running"] is None and st["cua"]["installed"] is False, st
 
 
 def fake_client(script, **kw):
@@ -1644,6 +1652,696 @@ def call_model_payload():
                 raise AssertionError((status, body))
     finally:
         app.httpx.post = real
+
+
+# ---- agent loop and routes
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
+VISION_MLX, TEXT_MLX, VISION_GGUF = "qwen3.8-27b", "lfm2.5-1.2b", "gguf-gemma-4-12b"
+
+
+def tc(name, **args):
+    return {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": name, "arguments": json.dumps(args)}}],
+            "finish_reason": "tool_calls"}
+
+
+class Model:
+    """Scripted _agent_model: replies in order (a dict, an exception, or a function of (mode, messages)); records every call."""
+
+    def __init__(self, *replies):
+        self.replies, self.calls = list(replies), []
+
+    def __call__(self, mode, m, messages, tools):
+        assert tools is app.AGENT_TOOLS
+        self.calls.append({"mode": mode, "model": m["id"], "messages": json.loads(json.dumps(messages)), "engine": dict(app.agent_engine)})
+        assert self.replies, "the model was asked more often than scripted"
+        r = self.replies.pop(0)
+        r = r(mode, messages) if callable(r) else r
+        if isinstance(r, Exception):
+            raise r
+        return json.loads(json.dumps(r))
+
+    def text(self, k):
+        return _text_of(self.calls[k]["messages"][1])
+
+
+def fview(*controls, url="https://shop.example/", sparse=False, text=None):
+    """A view as browser_view makes it: controls are (eid, role, name, extra facts)."""
+    refs, lines = {}, [f"Page: Shop", f"URL: {url}"]
+    for eid, role, name, *extra in controls:
+        refs[eid] = {"ref": "p1:" + eid, "facts": app._facts(role, name, **(extra[0] if extra else {}))}
+        lines.append(f'[{eid}] {role} "{name}"')
+    return {"text": text or "\n".join(lines), "refs": refs, "interactive": len(refs), "sparse": sparse, "url": url}
+
+
+class FakeAdapter:
+    """Adapter stand-in: observe() pops views (the last repeats; an exception is raised); facts come from the view's refs."""
+
+    def __init__(self, *views, results=None):
+        self.views, self.results, self.calls = list(views), dict(results or {}), []
+        self.surface, self.app, self.url, self.domain, self.link_domains, self.view = "browser", None, None, None, set(), None
+        self.closed = 0
+
+    def observe(self):
+        self.calls.append(("observe",))
+        v = (self.views.pop(0) if len(self.views) > 1 else self.views[0]) if self.views else None
+        if isinstance(v, Exception):
+            raise v
+        self.view = v
+        if v:
+            self.url, self.domain = v["url"], app._host(v["url"])
+        return v
+
+    def facts(self, tool, args):
+        hit = ((self.view or {}).get("refs") or {}).get((args or {}).get("ref"))
+        return hit["facts"] if hit and tool in ("click", "type") else None
+
+    def execute(self, tool, args):
+        self.calls.append(("execute", tool, json.loads(json.dumps(args))))
+        r = self.results.get(tool, f"Did {tool}")
+        return r(args) if callable(r) else r
+
+    def screenshot(self):
+        return PNG
+
+    def take_over(self):
+        self.calls.append(("take_over",))
+
+    def resume(self):
+        self.calls.append(("resume",))
+
+    def close(self):
+        self.closed += 1
+
+    def executed(self):
+        return [(c[1], c[2]) for c in self.calls if c[0] == "execute"]
+
+
+def png_client(**over):
+    """web_client whose screenshots are real PNG bytes."""
+    c = web_client(**over)
+    inner = c.script["get_browser_state"]
+
+    def state(args):
+        r = inner(args)
+        return {**r, "image": PNG} if args.get("include_screenshot") else r
+    c.script["get_browser_state"] = state
+    return c
+
+
+def login_ref(name):
+    v = app.browser_view(_fx("browser_semantic_login"), _fx("browser_domrefs_login"))
+    return next(k for k, r in v["refs"].items() if r["facts"]["name"] == name)
+
+
+HOOKS = ("_agent_adapter", "_agent_client", "_agent_model", "_agent_now", "ensure_engine", "_agent_engine_current", "model_installed", "cua_status")
+CUA_OK = {"installed": True, "version": "0.28.2", "ok_version": True, "telemetry": False}
+
+
+class Env:
+    """Hooks for one scripted run: the adapter, the model, engines that never start, a CuaDriver that is installed."""
+
+    def __init__(self, adapter=None, model=None, current=("text", "gguf"), client=None, **agent):
+        self.adapter, self.model, self.current, self.client = adapter or FakeAdapter(), model or Model(), set(current), client
+        self.agent, self.sessions, self.engines, self.run_ = agent, [], [], None
+
+    def __enter__(self):
+        self.saved = {k: getattr(app, k) for k in HOOKS}
+        self.settings = app.SETTINGS.read_text() if app.SETTINGS.exists() else None
+        app._agent_sleep = lambda s: None
+        app._agent_client = lambda: "CLIENT"
+        def make(client, session):
+            self.sessions.append((client, session))
+            if self.client is not None:                     # a real Adapter on a FakeClient, with the run's session label
+                self.adapter = app.Adapter(self.client, session)
+            return self.adapter
+        app._agent_adapter = make
+        app._agent_model = self.model
+        app.ensure_engine = lambda mode, m, **kw: self.engines.append((mode, m["id"]))
+        app._agent_engine_current = lambda mode, m: mode in self.current
+        app.model_installed = lambda m: True
+        app.cua_status = lambda: dict(CUA_OK)
+        s = app.load_settings()
+        s["agent"].update({"enabled": True, "max_steps": 40, "max_minutes": 15, "tiers": {}, **self.agent})
+        app.SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+        app.save_settings(s)
+        self.c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+        return self
+
+    def __exit__(self, *exc):
+        r = self.run_
+        if r is not None and r.thread is not None and r.thread.is_alive():
+            with r.cond:
+                r.stop = True
+                r.cond.notify_all()
+            r.thread.join(5)
+        for k, v in self.saved.items():
+            setattr(app, k, v)
+        if self.settings is None:
+            app.SETTINGS.unlink(missing_ok=True)
+        else:
+            app.SETTINGS.write_text(self.settings)
+        assert not app.agent_lock.locked(), "a run left the agent lock held"
+        assert app.agent_engine == {"mode": None, "model_id": None}, app.agent_engine
+
+    def start(self, task="Look around shop.example", model_id=TEXT_MLX):
+        r = self.c.post("/api/agent/run", json={"task": task, "model_id": model_id})
+        assert r.status_code == 200, r.text
+        self.rid = r.json()["run_id"]
+        self.run_ = app._agent_runs[self.rid]
+        return self.run_
+
+    def until(self, pred, secs=5):
+        end = time.time() + secs
+        while not pred():
+            assert time.time() < end, f"timed out; status {self.run_.status}, events {self.run_.events}"
+            time.sleep(0.005)
+
+    def status(self, *want):
+        self.until(lambda: self.run_.status in want)
+
+    def finish(self, secs=5):
+        self.run_.thread.join(secs)
+        assert not self.run_.thread.is_alive(), f"the run did not end: {self.run_.status} {self.run_.events}"
+        return self.run_
+
+    def post(self, what, **body):
+        return self.c.post(f"/api/agent/runs/{self.rid}/{what}", json=body)
+
+    def ev(self, kind):
+        return [e for e in self.run_.events if e["type"] == kind]
+
+    def end(self):
+        e = self.run_.events[-1]
+        assert e["type"] == "end", self.run_.events
+        return e
+
+    def saved_run(self):
+        return json.loads((app.AGENT_RUNS / f"{self.rid}.json").read_text())
+
+
+def sse(body):
+    return [json.loads(ln[5:]) for ln in body.splitlines() if ln.startswith("data:")]
+
+
+@check
+def scripted_run_pauses_and_resumes():
+    c = png_client()
+    sign = login_ref("Sign in")
+    model = Model(tc("open_url", url="https://github.com/login"), tc("click", ref=sign), tc("done", answer="Signed in. Source: https://github.com/login"))
+    with Env(model=model, client=c) as e:
+        run = e.start("Sign in on github.com")
+        e.status("waiting")
+        assert e.c.get("/api/agent/status").json()["running"] == e.rid
+        ap = e.ev("approval")[-1]
+        assert ap["n"] == 2 and "Sign in" in ap["title"] and "github.com" in ap["title"] and ap["tool"] == "click", ap
+        assert ap["shot"] == "2-ask.png" and (app.AGENT_RUNS / e.rid / "2-ask.png").read_bytes() == PNG
+        assert "box" in ap and run.pending == {"kind": "approval", "n": 2}
+        assert "browser_click" not in c.names()                                    # nothing happens before the user answers
+        assert e.c.get(f"/api/agent/runs/{e.rid}").json()["status"] == "waiting"
+        assert e.saved_run()["status"] == "waiting"
+        assert e.post("reply", decision="allow").status_code == 200
+        e.finish()
+        steps = e.ev("step")
+        assert [s["tool"] for s in steps] == ["open_url", "click", "done"], steps
+        assert [s["n"] for s in steps] == [1, 2, 3] and steps[1]["decision"] == "allowed" and steps[0]["decision"] == "safe"
+        assert steps[0]["shot"] == "1.png" and (app.AGENT_RUNS / e.rid / "1.png").read_bytes() == PNG
+        assert set(steps[0]) >= {"n", "tool", "args", "summary", "result", "decision", "shot", "thought"}
+        assert e.ev("answer")[-1]["markdown"].startswith("Signed in") and e.end()["status"] == "done"
+        assert [ev["i"] for ev in run.events] == list(range(len(run.events)))
+        assert len(c.of("browser_click")) == 1 and e.sessions == [("CLIENT", f"ls-{e.rid}")]
+        assert all(a["session"] == f"ls-{e.rid}" for _, a in c.calls)
+        assert c.names()[-1] == "end_session"                                          # the isolated browser closes with the run
+        assert [x["mode"] for x in model.calls] == ["text"] * 3 and e.engines == []   # the engine was already up: no switch
+        assert model.calls[0]["engine"] == {"mode": "text", "model_id": TEXT_MLX}
+        d = e.saved_run()
+        assert d["status"] == "done" and d["answer"].startswith("Signed in") and d["task"] == "Sign in on github.com" and d["model_id"] == TEXT_MLX
+        assert d["events"] == run.events and d["ended"] and d["started"]
+        assert "PNG" not in json.dumps(d) and "base64" not in json.dumps(d)
+        assert "Sign in" in model.text(2) and "→" in model.text(2)                     # one line per step in the history
+
+
+@check
+def deny_tells_the_model():
+    ad = FakeAdapter(fview(("e1", "button", "Delete account")))
+    model = Model(tc("click", ref="e1"), tc("done", answer="Left it."))
+    with Env(ad, model) as e:
+        e.start()
+        e.status("waiting")
+        assert e.post("reply", decision="maybe").status_code == 409
+        assert e.post("reply", decision="deny").status_code == 200
+        e.finish()
+        assert ad.executed() == [] and "The user denied" in model.text(1)
+        s = e.ev("step")[0]
+        assert s["decision"] == "denied" and s["result"] == "The user denied this action." and e.end()["status"] == "done"
+
+
+@check
+def stop_while_waiting_never_acts():
+    c = png_client()
+    model = Model(tc("open_url", url="https://github.com/login"), tc("click", ref=login_ref("Sign in")), tc("done", answer="x"))
+    with Env(model=model, client=c) as e:
+        e.start("Sign in on github.com")
+        e.status("waiting")
+        assert e.post("reply", decision="stop").status_code == 200
+        e.finish()
+        assert "browser_click" not in c.names() and len(model.calls) == 2
+        assert e.end()["status"] == "stopped" and e.saved_run()["status"] == "stopped" and e.ev("error") == []
+        assert e.post("stop").status_code == 409                                       # it is over
+    # the Stop button (not the card) while an approval waits
+    ad = FakeAdapter(fview(("e1", "button", "Place order")))
+    with Env(ad, Model(tc("click", ref="e1"), tc("done", answer="x"))) as e:
+        e.start()
+        e.status("waiting")
+        assert e.post("stop").status_code == 200
+        e.finish()
+        assert ad.executed() == [] and e.end()["status"] == "stopped" and ad.closed == 1
+    # Stop while the model is thinking: the call it comes back with is not carried out
+    ad = FakeAdapter(fview(("e1", "button", "Next")))
+    box = {}
+
+    def slow(mode, msgs):
+        assert box["env"].c.post(f"/api/agent/runs/{app._agent_current.id}/stop").status_code == 200
+        return tc("click", ref="e1")
+    with Env(ad, Model(slow)) as e:
+        box["env"] = e
+        e.start()
+        e.finish()
+        assert ad.executed() == [] and e.end()["status"] == "stopped" and e.ev("step") == []
+
+
+@check
+def events_replay_after_reconnect():
+    import threading as th
+    ad = FakeAdapter(fview(("e1", "button", "Pay now")))
+    with Env(ad, Model(tc("note", text="price 10"), tc("click", ref="e1"), tc("done", answer="Paid."))) as e:
+        e.start()
+        e.status("waiting")
+        k = e.ev("approval")[0]["i"]
+        got = {}
+
+        def listen(after):
+            got[after] = TestClient(app.app, base_url="http://127.0.0.1:7860").get(f"/api/agent/runs/{e.rid}/events?after={after}")
+        ts = [th.Thread(target=listen, args=(a,)) for a in (0, k)]
+        for t in ts:
+            t.start()
+        time.sleep(0.3)                                       # both are attached to the live run before it moves on
+        assert all(t.is_alive() for t in ts)
+        e.post("reply", decision="allow")
+        e.finish()
+        for t in ts:
+            t.join(5)
+        r0, rk = got[0], got[k]
+        assert r0.status_code == 200 and r0.headers["content-type"].startswith("text/event-stream")
+        assert sse(r0.text) == e.run_.events, sse(r0.text)
+        assert sse(rk.text) == e.run_.events[k:] and sse(rk.text)[0]["type"] == "approval"
+        # a finished run replays from memory and, after a restart, from disk
+        assert sse(e.c.get(f"/api/agent/runs/{e.rid}/events?after=0").text) == e.run_.events
+        app._agent_runs.pop(e.rid)
+        assert sse(e.c.get(f"/api/agent/runs/{e.rid}/events?after={k}").text) == e.run_.events[k:]
+        assert sse(e.c.get(f"/api/agent/runs/{e.rid}/events?after=999").text) == []
+        assert e.c.get("/api/agent/runs/0123456789ab/events").status_code == 404
+
+
+@check
+def repeat_detection():
+    ad = FakeAdapter(fview(("e1", "button", "Next")))
+    with Env(ad, Model(*[tc("click", ref="e9")] * 4)) as e:
+        e.start()
+        e.finish()
+        res = [s["result"] for s in e.ev("step")]
+        assert len(res) == 4 and all(r.startswith("Error:") for r in res), res
+        assert "try another way" not in res[1] and "That isn't working; try another way or ask_user." in res[2], res
+        assert e.end()["status"] == "failed" and "stuck" in e.end()["reason"] and ad.executed() == []
+        assert any("repeating" in x["message"] for x in e.ev("error"))
+    # a different call in between starts the count again; denial is not a failure
+    calls = [tc("click", ref="e9"), tc("click", ref="e9"), tc("note", text="x"), tc("click", ref="e9"), tc("click", ref="e9"), tc("done", answer="ok")]
+    with Env(FakeAdapter(fview(("e1", "button", "Next"))), Model(*calls)) as e:
+        e.start()
+        e.finish()
+        assert e.end()["status"] == "done" and not any("try another way" in s["result"] for s in e.ev("step"))
+
+
+@check
+def step_limit():
+    with Env(FakeAdapter(), Model(*[tc("note", text=f"fact {i}") for i in range(5)]), max_steps=3) as e:
+        e.start()
+        e.finish()
+        assert len(e.ev("step")) == 3 and len(e.model.calls) == 3
+        assert e.end()["status"] == "failed" and e.end()["reason"] == "step limit"
+        assert "step limit" in e.ev("error")[-1]["message"]
+        assert e.saved_run()["notes"] == ["fact 0", "fact 1", "fact 2"]
+
+
+@check
+def time_limit():
+    clock = [1000.0]
+
+    def note(mode, msgs):
+        clock[0] += 400
+        return tc("note", text="x")
+    with Env(FakeAdapter(), Model(*[note] * 6), max_minutes=15) as e:
+        app._agent_now = lambda: clock[0]
+        e.start()
+        e.finish()
+        assert len(e.model.calls) == 3, len(e.model.calls)                       # 0, 400, 800 s in; at 1200 s it stops
+        assert e.end()["status"] == "failed" and e.end()["reason"] == "time limit" and "time limit" in e.ev("error")[-1]["message"]
+    # time spent waiting for the user does not count
+    clock = [1000.0]
+    ad = FakeAdapter(fview(("e1", "button", "Buy")))
+    with Env(ad, Model(tc("click", ref="e1"), tc("done", answer="ok")), max_minutes=1) as e:
+        app._agent_now = lambda: clock[0]
+        e.start()
+        e.status("waiting")
+        clock[0] += 3600
+        e.post("reply", decision="allow")
+        e.finish()
+        assert e.end()["status"] == "done" and ad.executed() == [("click", {"ref": "e1"})]
+
+
+@check
+def daemon_loss_ends_run():
+    c = png_client()
+    lost = app.McpError("The computer-control helper stopped responding.")
+
+    def nav(a):
+        c.script["get_browser_state"] = lost                  # the daemon dies right after the page opens, and stays dead
+        return _tr({"status": "ok", "url": a["url"], "refs_invalidated": True})
+    c.script["browser_navigate"] = nav
+    model = Model(tc("open_url", url="https://github.com/login"), tc("done", answer="never"))
+    with Env(model=model, client=c) as e:
+        e.start("Open github.com")
+        e.finish()
+        assert e.ev("error")[-1]["message"] == "Lost connection to CuaDriver" and e.end()["status"] == "failed"
+        assert len(model.calls) == 1 and [s["tool"] for s in e.saved_run()["events"] if s["type"] == "step"] == ["open_url"]
+        reads = [a for a in c.of("get_browser_state") if a.get("snapshot_format") == "semantic_v2" and not a.get("include_screenshot")]
+        assert len(reads) == 2, reads                          # one read, one retry after the client's own restart
+    # a page that cannot be read is not a lost daemon: the model hears about it and the run goes on
+    ad = FakeAdapter(app.McpError("could not read the page's form fields: refused"), fview(("e1", "button", "Next")))
+    with Env(ad, Model(tc("back"), tc("done", answer="ok"))) as e:
+        e.start()
+        e.finish()
+        assert e.end()["status"] == "done" and "could not be read" in e.model.text(0)
+    # one hiccup is retried silently
+    ad = FakeAdapter(app.McpError("tools/call timed out after 30s"), fview(("e1", "button", "Next")))
+    with Env(ad, Model(tc("done", answer="ok"))) as e:
+        e.start()
+        e.finish()
+        assert e.end()["status"] == "done" and "[e1]" in e.model.text(0)
+
+
+@check
+def blocked_password_field():
+    c = png_client()
+    pw = login_ref("Password")
+    model = Model(tc("open_url", url="https://github.com/login"), tc("type", ref=pw, text="hunter2"), tc("done", answer="Need you to sign in."))
+    with Env(model=model, client=c) as e:
+        e.start("Sign in on github.com")
+        e.finish()
+        assert "browser_type" not in c.names() and e.ev("approval") == []
+        s = e.ev("step")[1]
+        assert s["decision"] == "blocked" and s["result"].startswith("Blocked: ") and "Blocked" in model.text(2)
+        assert "hunter2" not in json.dumps(e.saved_run()) and "hunter2" not in model.text(2)
+
+
+@check
+def sparse_view_switches_to_vision_once():
+    sparse = fview(("e1", "button", "Go"), url="https://canvas.example/", sparse=True)
+    steps = [tc("open_url", url="https://canvas.example/"), tc("read_page"), tc("scroll", direction="down"), tc("done", answer="ok")]
+    with Env(FakeAdapter(None, sparse), Model(*steps), current=("text",)) as e:
+        e.start("Look at canvas.example", VISION_MLX)
+        e.finish()
+        sw = [x for x in e.ev("x_engine") if x["status"] == "switching"]
+        assert len(sw) == 1 and sw[0]["mode"] == "vision" and e.engines == [("vision", VISION_MLX)], (sw, e.engines)
+        assert [x["status"] for x in e.ev("x_engine")] == ["switching", "ready"]
+        assert [x["mode"] for x in e.model.calls] == ["text", "vision", "vision", "vision"]
+        assert e.model.calls[1]["engine"]["mode"] == "vision"
+        img = e.model.calls[1]["messages"][1]["content"]
+        assert isinstance(img, list) and img[1]["image_url"]["url"].startswith("data:image/png;base64,")
+        assert e.end()["status"] == "done"
+    # a text-only model cannot read it: one step says so (once per page) and nothing switches
+    with Env(FakeAdapter(None, sparse), Model(*steps)) as e:
+        e.start("Look at canvas.example", TEXT_MLX)
+        e.finish()
+        info = [s for s in e.ev("step") if "can't read this page" in s["result"]]
+        assert len(info) == 1 and "Take over" in info[0]["result"] and e.ev("x_engine") == [] and e.engines == []
+        assert all(isinstance(x["messages"][1]["content"], str) for x in e.model.calls)
+    # GGUF with an mmproj never switches but sends the image
+    with Env(FakeAdapter(None, sparse), Model(*steps)) as e:
+        e.start("Look at canvas.example", VISION_GGUF)
+        e.finish()
+        assert e.ev("x_engine") == [] and [x["mode"] for x in e.model.calls] == ["gguf"] * 4
+        assert isinstance(e.model.calls[1]["messages"][1]["content"], list)
+
+
+@check
+def second_run_is_409():
+    with Env(FakeAdapter(), Model(tc("ask_user", question="Which one?"), tc("ask_user", question="And now?"))) as e:
+        e.start()
+        e.status("waiting")
+        r = e.c.post("/api/agent/run", json={"task": "another", "model_id": TEXT_MLX})
+        assert r.status_code == 409, r.text
+        st = e.c.get("/api/agent/status").json()
+        assert st["running"] == e.rid and st["enabled"] is True and st["cua"] == CUA_OK and st["settings"]["max_steps"] == 40
+        assert e.c.delete(f"/api/agent/runs/{e.rid}").status_code == 409            # not while it runs
+        assert e.post("stop").status_code == 200
+        e.finish()
+        assert e.c.get("/api/agent/status").json()["running"] is None
+        r = e.c.post("/api/agent/run", json={"task": "another", "model_id": TEXT_MLX})  # free again
+        assert r.status_code == 200
+        e.rid, e.run_ = r.json()["run_id"], app._agent_runs[r.json()["run_id"]]
+        e.status("waiting")
+        e.post("stop")
+        e.finish()
+
+
+@check
+def run_is_refused_until_ready():
+    with Env(FakeAdapter(), Model()) as e:
+        post = lambda **b: e.c.post("/api/agent/run", json={"task": "find x", "model_id": TEXT_MLX, **b})   # noqa: E731
+        assert post(task="  ").status_code == 409
+        assert post(model_id="no-such-model").status_code == 409
+        app.model_installed = lambda m: False
+        assert "Download" in post().json()["detail"]
+        app.model_installed = lambda m: True
+        app.cua_status = lambda: {"installed": False, "version": None, "ok_version": False, "telemetry": None}
+        assert "CuaDriver" in post().json()["detail"]
+        app.cua_status = lambda: {"installed": True, "version": "0.28.1", "ok_version": False, "telemetry": True}
+        assert "0.28.2" in post().json()["detail"]
+        app.cua_status = lambda: dict(CUA_OK)
+        s = app.load_settings(); s["agent"]["enabled"] = False; app.save_settings(s)
+        assert post().status_code == 409
+        assert e.model.calls == [] and e.sessions == [] and not app.agent_lock.locked()
+
+
+@check
+def interrupted_on_restart():
+    import subprocess as sp
+    state = TMP / "restart-state"
+    runs = state / "data" / "agent" / "runs"
+    runs.mkdir(parents=True)
+    for rid, st in (("aaaaaaaaaaa1", "running"), ("aaaaaaaaaaa2", "waiting"), ("aaaaaaaaaaa3", "paused"), ("aaaaaaaaaaa4", "done")):
+        evs = [{"i": 0, "type": "step", "n": 1}] + ([{"i": 1, "type": "end", "status": "done"}] if st == "done" else [])
+        (runs / f"{rid}.json").write_text(json.dumps({"id": rid, "task": "t", "status": st, "started": 1.0, "ended": None, "events": evs}))
+    (runs / "garbage.json").write_text("{not json")
+    code = "import os, sys; os.environ['LOCAL_STUDIO_HOME'] = sys.argv[1]; sys.path.insert(0, sys.argv[2]); import app"
+    out = sp.run([sys.executable, "-c", code, str(state), str(Path(__file__).resolve().parent.parent)], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr[-2000:]
+    got = {p.stem: json.loads(p.read_text()) for p in runs.glob("aaaa*.json")}
+    for rid in ("aaaaaaaaaaa1", "aaaaaaaaaaa2", "aaaaaaaaaaa3"):
+        assert got[rid]["status"] == "interrupted" and got[rid]["ended"], got[rid]
+        assert got[rid]["events"][-1] == {"i": 1, "type": "end", "status": "interrupted"}
+    assert got["aaaaaaaaaaa4"]["status"] == "done" and len(got["aaaaaaaaaaa4"]["events"]) == 2
+    assert (runs / "garbage.json").read_text() == "{not json"
+    # the sweep itself is safe with no runs folder
+    real = app.AGENT_RUNS
+    app.AGENT_RUNS = TMP / "nowhere" / "runs"
+    try:
+        app._agent_mark_interrupted()
+    finally:
+        app.AGENT_RUNS = real
+
+
+@check
+def takeover_pauses_and_resumes():
+    ad = FakeAdapter(fview(("e1", "button", "Next")))
+    box = {}
+
+    def first(mode, msgs):
+        assert box["env"].c.post(f"/api/agent/runs/{app._agent_current.id}/takeover").status_code == 200
+        return tc("note", text="seen")
+    with Env(ad, Model(first, tc("done", answer="ok"))) as e:
+        box["env"] = e
+        e.start()
+        e.status("paused")
+        assert ("take_over",) in ad.calls and len(e.model.calls) == 1
+        assert any("Paused while you take over" in x["text"] for x in e.ev("note"))
+        assert e.post("takeover").status_code == 409                                     # already paused
+        time.sleep(0.05)
+        assert e.run_.status == "paused" and len(e.model.calls) == 1                    # nothing happens while the user has it
+        assert e.post("resume").status_code == 200
+        e.finish()
+        assert ("resume",) in ad.calls and e.end()["status"] == "done"
+        assert ad.calls.index(("resume",)) < len(ad.calls) - 1 and ad.calls[ad.calls.index(("resume",)) + 1] == ("observe",)   # re-read after
+    # during an approval: the pause is immediate, and the pending action is dropped (the page may have changed)
+    ad = FakeAdapter(fview(("e1", "button", "Delete")))
+    with Env(ad, Model(tc("click", ref="e1"), tc("done", answer="ok"))) as e:
+        e.start()
+        e.status("waiting")
+        assert e.post("resume").status_code == 409
+        e.post("takeover")
+        e.status("paused")
+        assert e.post("reply", decision="allow").status_code == 409                       # resume first
+        e.post("resume")
+        e.finish()
+        assert ad.executed() == [] and e.ev("step")[0]["decision"] == "skipped" and "took over" in e.model.text(1)
+
+
+@check
+def ask_user_waits_for_text():
+    with Env(FakeAdapter(), Model(tc("ask_user", question="Which size?"), tc("done", answer="Large it is."))) as e:
+        e.start()
+        e.status("waiting")
+        assert e.ev("question")[-1]["text"] == "Which size?" and e.run_.pending["kind"] == "question"
+        assert e.post("reply", decision="allow").status_code == 409
+        assert e.post("reply", text="   ").status_code == 409
+        assert e.post("reply", text="Large").status_code == 200
+        e.finish()
+        assert "Large" in e.model.text(1) and e.end()["status"] == "done"
+        assert e.post("reply", text="again").status_code == 409                          # nothing is waiting any more
+
+
+@check
+def no_tool_call_reprompts_once():
+    cut = {"role": "assistant", "content": "<think>hmm</think>I will open the", "finish_reason": "length"}
+    with Env(FakeAdapter(), Model(cut, tc("done", answer="ok"))) as e:
+        e.start()
+        e.finish()
+        assert len(e.model.calls) == 2 and e.end()["status"] == "done"
+        msgs = e.model.calls[1]["messages"]
+        assert msgs[-1]["role"] == "user" and "Reply with exactly one tool call." in msgs[-1]["content"] and "cut off" in msgs[-1]["content"]
+        assert msgs[-2] == {"role": "assistant", "content": "I will open the"}
+        assert not any("finish_reason" in m for m in msgs)
+        assert e.ev("step")[0]["thought"] == "hmm"
+    plain = {"role": "assistant", "content": "Sure!", "finish_reason": "stop"}
+    with Env(FakeAdapter(), Model(plain, plain, tc("done", answer="ok"))) as e:
+        e.start()
+        e.finish()
+        assert "cut off" not in e.model.calls[1]["messages"][-1]["content"]
+        s = e.ev("step")[0]
+        assert s["decision"] == "error" and s["result"].startswith("Error:") and len(e.model.calls) == 3
+
+
+@check
+def unknown_tool_is_an_error_step():
+    with Env(FakeAdapter(fview(("e1", "button", "Next"))), Model(tc("fly", to="moon"), tc("click"), tc("done", answer="ok"))) as e:
+        e.start()
+        e.finish()
+        s = e.ev("step")
+        assert s[0]["result"].startswith('Error: Unknown tool "fly"') and s[0]["decision"] == "error" and 'Unknown tool "fly"' in e.model.text(1)
+        assert "missing required" in s[1]["result"] and e.adapter.executed() == []
+
+
+@check
+def shots_route_rejects_traversal():
+    ad = FakeAdapter(fview(("e1", "button", "Next")))
+    with Env(ad, Model(tc("click", ref="e1"), tc("done", answer="ok"))) as e:
+        e.start()
+        e.finish()
+        base = f"/api/agent/runs/{e.rid}"
+        r = e.c.get(f"{base}/shots/1.png")
+        assert r.status_code == 200 and r.content == PNG and r.headers["content-type"] == "image/png"
+        (app.AGENT_RUNS / "secret.png").write_bytes(PNG)
+        for bad in ("..%2Fsecret.png", "..%2F..%2Fsettings.json", "1.txt", "%2E%2E", "1.png%00", "x1.png"):
+            assert e.c.get(f"{base}/shots/{bad}").status_code == 404, bad
+        assert e.c.get("/api/agent/runs/..%2Fruns/shots/1.png").status_code == 404
+        assert e.c.get("/api/agent/runs/nothex/shots/1.png").status_code == 404
+        rows = e.c.get("/api/agent/runs").json()
+        assert rows[0]["id"] == e.rid and set(rows[0]) == {"id", "task", "status", "started"}
+        assert all(rows[i]["started"] >= rows[i + 1]["started"] for i in range(len(rows) - 1))
+        assert e.c.get(base).json()["status"] == "done"
+        assert e.c.delete(base).status_code == 200
+        assert not (app.AGENT_RUNS / e.rid).exists() and not (app.AGENT_RUNS / f"{e.rid}.json").exists()
+        assert (app.AGENT_RUNS / "secret.png").exists() and e.c.get(base).status_code == 404
+
+
+@check
+def profile_reset_refused_while_running():
+    real = app.AGENT_PROFILE
+    prof = TMP / "Profiles" / "local-studio"
+    (prof / "Default").mkdir(parents=True)
+    (prof / "Default" / "Cookies").write_text("x")
+    (TMP / "Profiles" / "other").mkdir()
+    app.AGENT_PROFILE = prof
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    try:
+        app.agent_lock.acquire()
+        try:
+            assert c.post("/api/agent/profile/reset").status_code == 409 and prof.exists()
+        finally:
+            app.agent_lock.release()
+        assert c.post("/api/agent/profile/reset").status_code == 200
+        assert not prof.exists() and (TMP / "Profiles" / "other").exists()
+        assert c.post("/api/agent/profile/reset").status_code == 200                       # nothing to delete is fine
+    finally:
+        app.AGENT_PROFILE = real
+    assert str(real).endswith("Library/Application Support/CuaDriver/BrowserProfiles/local-studio")
+
+
+@check
+def settings_validation():
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    before = app.load_settings()["agent"]
+    for bad in ({"max_steps": 0}, {"max_steps": 201}, {"max_steps": "10"}, {"max_steps": True}, {"max_steps": 3.5},
+                {"max_minutes": 0}, {"max_minutes": 121}, {"tiers": {"Mail": "nope"}}, {"tiers": ["Mail"]}, {"tiers": {"": "read"}}):
+        assert c.put("/api/agent/settings", json=bad).status_code == 400, bad
+    assert app.load_settings()["agent"] == before
+    r = c.put("/api/agent/settings", json={"max_steps": 200, "max_minutes": 1, "tiers": {"Notes": "ask", "Mail": "allowed"}})
+    assert r.status_code == 200
+    a = app.load_settings()["agent"]
+    assert a["max_steps"] == 200 and a["max_minutes"] == 1 and a["tiers"] == {"Notes": "ask", "Mail": "allowed"}
+    assert c.post("/api/agent/enable", json={"on": True}).status_code == 200 and app.load_settings()["agent"]["enabled"] is True
+    assert c.post("/api/agent/enable", json={"on": False}).status_code == 200 and app.load_settings()["agent"]["enabled"] is False
+    app.SETTINGS.unlink()
+
+
+@check
+def cuadriver_setup_routes_run_only_on_click():
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    assert c.post("/api/agent/permissions").status_code == 409                          # not installed (CUA_DRIVER is a missing path)
+    real = app.CUA_DRIVER
+    app.CUA_DRIVER = sys.executable
+    try:
+        with Stub(lambda cmd: (0, "")) as s:
+            assert c.post("/api/agent/permissions").status_code == 200
+            end = time.time() + 5
+            while not s.calls and time.time() < end:
+                time.sleep(0.01)
+            assert s.calls == [[sys.executable, "permissions", "grant"]], s.calls
+            assert c.post("/api/agent/telemetry/disable").status_code == 200
+            assert s.calls[-1] == [sys.executable, "telemetry", "disable"]
+    finally:
+        app.CUA_DRIVER = real
+
+
+@check
+def sensitive_text_redacted_in_events():
+    unk = fview(("e1", "textbox", "Code", {"sensitive_unknown": True}), ("e2", "textbox", "Password", {"input_type": "password"}))
+    ad = FakeAdapter(unk)
+    model = Model(tc("type", ref="e1", text="s3cret-1"), tc("type", ref="e2", text="s3cret-2"), tc("done", answer="ok"))
+    with Env(ad, model) as e:
+        e.start()
+        e.status("waiting")
+        ap = e.ev("approval")[0]
+        assert ap["args"]["text"] != "s3cret-1" and ap["args"]["ref"] == "e1"
+        e.post("reply", decision="allow")
+        e.finish()
+        assert ad.executed() == [("type", {"ref": "e1", "text": "s3cret-1"})]          # the real text is typed once allowed
+        blob = json.dumps(e.run_.events) + (app.AGENT_RUNS / f"{e.rid}.json").read_text()
+        assert "s3cret" not in blob, blob
+        assert "s3cret" not in e.model.text(2)
+        assert e.ev("step")[1]["decision"] == "blocked"
+
 
 
 if __name__ == "__main__":

@@ -737,11 +737,6 @@ async def _counted(gen):
         active_chats -= 1
 
 
-@app.get("/api/agent/status")
-def agent_status():
-    return {"enabled": load_settings()["agent"]["enabled"]}
-
-
 @app.get("/api/busy")
 def api_busy():
     """Read by the search service between batches: it waits while the Mac is doing user-facing work."""
@@ -2866,6 +2861,718 @@ def validate_call(name, args):
     if missing:
         return f'{name} is missing required {"argument" if len(missing) == 1 else "arguments"}: {", ".join(missing)}.'
     return None
+
+
+# -- the agent loop: one run at a time, in a thread of its own. It records events in a list that the UI reads over SSE.
+# Route handlers never touch the Adapter (it has no lock); they set flags on the run under `cond` and the loop acts on them.
+
+AGENT_PROFILE = HOME / "Library/Application Support/CuaDriver/BrowserProfiles/local-studio"   # CuaDriver's isolated browser profile for our runs
+AGENT_HEARTBEAT_S = 15                                       # SSE comment while nothing happens, so proxies and WKWebView keep the stream
+AGENT_ACTIVE = ("running", "waiting", "paused")
+AGENT_REPEAT_HINT = "That isn't working; try another way or ask_user."
+AGENT_REPROMPT = "Reply with exactly one tool call."
+AGENT_KEEP_RUNS = 20                                         # finished runs kept in memory (all of them stay on disk)
+_AGENT_LOST = ("stopped responding", "couldn't start", "didn't open its socket", "timed out after")   # McpClient's words for a daemon that is gone
+_AGENT_RID = re.compile(r"^[a-f0-9]{12}$")
+_AGENT_SHOT = re.compile(r"^\d{1,4}(?:-ask)?\.(?:png|jpg)$")
+_agent_runs: dict = {}                                       # runs started by this process, by id
+_agent_current = None                                        # the run holding agent_lock
+
+# Hooks the checks replace: where the adapter, the CuaDriver client, the model call and the clock come from.
+_agent_client = agent_client
+_agent_adapter = lambda client, session: Adapter(client, session)      # noqa: E731
+_agent_model = call_model
+_agent_now = time.time
+
+
+def _agent_engine_current(mode, m):
+    st = engine_state()
+    return st.get("mode") == mode and st.get("model_id") == m["id"] and _engine_ready(mode)
+
+
+class AgentRun:
+    """One task. The loop thread writes it; routes read events and set `stop`, `takeover`, `resume` and `reply` under `cond`."""
+
+    def __init__(self, task, model_id, rid=None):
+        self.id = rid or secrets.token_hex(6)
+        self.task, self.model_id = task, model_id
+        self.status, self.reason = "running", None
+        self.started, self.ended = time.time(), None
+        self.events: list[dict] = []
+        self.notes: list[str] = []
+        self.answer = None
+        self.cond = threading.Condition()
+        self.pending = None                                  # {"kind": "approval"|"question", "n": n} while the loop waits for the user
+        self.reply = None                                    # "allow" / "deny" for an approval, the text for a question
+        self.stop = self.takeover = self.resume = False
+        self.thread = None
+
+    @property
+    def path(self):
+        return AGENT_RUNS / f"{self.id}.json"
+
+    def emit(self, ev):
+        with self.cond:
+            ev = {"i": len(self.events), **ev}
+            self.events.append(ev)
+            self.cond.notify_all()
+        return ev
+
+    def to_dict(self):
+        with self.cond:
+            return {"id": self.id, "task": self.task, "model_id": self.model_id, "status": self.status, "reason": self.reason,
+                    "started": self.started, "ended": self.ended, "notes": list(self.notes), "answer": self.answer,
+                    "events": list(self.events)}
+
+    def save(self):
+        AGENT_RUNS.mkdir(parents=True, exist_ok=True)
+        tmp = AGENT_RUNS / f".{self.id}.tmp"                 # readers never see half a file
+        tmp.write_text(json.dumps(self.to_dict()))
+        os.replace(tmp, self.path)
+
+    def shot(self, name, data):
+        """Save a screenshot as <name>.png or .jpg (by its magic bytes); its file name, or None."""
+        ext = "jpg" if data and data[:2] == b"\xff\xd8" else "png" if data and data[:8] == b"\x89PNG\r\n\x1a\n" else None
+        if not ext:
+            return None
+        d = AGENT_RUNS / self.id
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.{ext}").write_bytes(data)
+        return f"{name}.{ext}"
+
+
+class _AgentEnd(Exception):
+    def __init__(self, status, reason=None, message=None):
+        super().__init__(message or status)
+        self.status, self.reason, self.message = status, reason, message
+
+
+def _agent_lost(e):
+    return isinstance(e, McpError) and any(w in str(e).lower() for w in _AGENT_LOST)
+
+
+def _task_domains(task):
+    """Hosts the user named in the task: URLs, bare domains (amazon.com) and e-mail domains."""
+    out = set()
+    for tok in str(task or "").split():
+        tok = re.sub(r"['’]s$", "", tok.strip("()[]{}<>\"'`.,;:!?*“”‘’")).strip("()[]{}<>\"'`.,;:!?*“”‘’")
+        if re.match(r"^(?:https?://)?(?:[^\s/@]+@)?[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}\.?(?::\d+)?(?:[/?#]\S*)?$", tok, re.I):
+            h = _host(tok)
+            if "." in h:
+                out.add(h)
+    return out
+
+
+def _agent_redact(args, facts):
+    """args with the typed text hidden when the target may be a password, code or card field."""
+    if isinstance(args, dict) and "text" in args and facts and (_sensitive_field(facts) or facts.get("sensitive_unknown")):
+        return {**args, "text": "•••"}
+    return args
+
+
+def _agent_summary(tool, args, facts):
+    """`click e14 "Add to cart"`: what was done, in one line."""
+    if not tool:
+        return "(no tool call)"
+    if not isinstance(args, dict):
+        return _clip(tool, 40)
+    if "ref" in args:
+        s = f"{_clip(tool, 40)} {_clip(args['ref'], 20)}" + (f' "{_clip(facts.get("name"), 60)}"' if facts and facts.get("name") else "")
+        if "text" in args:
+            s += f' text "{_clip(args["text"], 60)}"' + (" +Enter" if args.get("submit") is True else "")
+        return s
+    for k in ("url", "question", "text", "answer", "direction", "query", "app"):
+        if isinstance(args.get(k), str):
+            return f'{_clip(tool, 40)} "{_clip(args[k], 80)}"'
+    return _clip(tool, 40)
+
+
+def _agent_short(tool, result):
+    """The result as the history shows it: "ok" for a plain success, else its first line."""
+    if tool in ("click", "type", "scroll", "read_page") and not result.startswith(("Error", "Blocked", "The user", "Not done")):
+        return "ok"
+    return _clip(re.sub(r";\s*read the page[^\n]*", "", result.split("\n", 1)[0]), 400)
+
+
+def _agent_use_engine(run, mode, m):
+    agent_engine.update(mode=mode, model_id=m["id"])          # first: chat may use this engine from now on, nothing else may start
+    if _agent_engine_current(mode, m):
+        return
+    run.emit({"type": "x_engine", "status": "switching", "mode": mode, "model": m["name"]})
+    ensure_engine(mode, m)
+    run.emit({"type": "x_engine", "status": "ready", "mode": mode, "model": m["name"]})
+
+
+class _AgentLoop:
+    def __init__(self, run, ad, m, mode, settings):
+        self.run, self.ad, self.m, self.mode = run, ad, m, mode
+        self.max_steps, self.limit = int(settings["max_steps"]), float(settings["max_minutes"]) * 60
+        self.tiers = settings.get("tiers") or {}
+        self.task_domains = _task_domains(run.task)
+        self.names = {t["function"]["name"] for t in AGENT_TOOLS}
+        self.t0, self.waited = _agent_now(), 0.0              # time spent waiting for the user does not count toward the limit
+        self.n, self.history, self.warned, self.reuse = 0, [], set(), False
+        self.last, self.repeats = None, 0
+
+    # -- the user's controls
+    def check_stop(self):
+        if self.run.stop:
+            raise _AgentEnd("stopped")
+
+    def mcp(self, fn):
+        """fn() with one retry when CuaDriver went away (the client restarts it on the next call); gone twice ends the run."""
+        try:
+            return fn()
+        except McpError as e:
+            if not _agent_lost(e):
+                raise
+        try:
+            return fn()
+        except McpError as e:
+            if _agent_lost(e):
+                raise _AgentEnd("failed", "lost connection", "Lost connection to CuaDriver")
+            raise
+
+    def pause(self):
+        """Take over: hand the browser to the user and wait for Resume (or Stop)."""
+        run = self.run
+        with run.cond:
+            run.takeover = False
+        try:
+            self.mcp(self.ad.take_over)
+        except _AgentEnd:
+            raise
+        except Exception as e:                               # the user can still find the window themselves
+            run.emit({"type": "note", "text": f"Couldn't bring the browser to the front: {_clip(e, 200)}"})
+        with run.cond:
+            run.status = "paused"
+        run.emit({"type": "note", "text": "Paused while you take over. Press Resume when you're done."})
+        run.save()
+        with run.cond:
+            while not (run.stop or run.resume):
+                run.cond.wait(1)
+            if run.stop:
+                raise _AgentEnd("stopped")
+            run.resume, run.status = False, "running"
+        self.ad.resume()
+        run.emit({"type": "note", "text": "Resumed."})
+
+    def wait(self, kind, n):
+        """Wait for the user's answer to an approval ("allow" | "deny", or "takeover" when they took over instead) or a question."""
+        run, t = self.run, _agent_now()
+        try:
+            with run.cond:
+                run.pending, run.reply, run.status = {"kind": kind, "n": n}, None, "waiting"
+            run.save()
+            while True:
+                with run.cond:
+                    while not (run.stop or run.takeover or run.reply is not None):
+                        run.cond.wait(1)
+                    if run.stop:
+                        raise _AgentEnd("stopped")
+                    if run.reply is not None:
+                        r, run.reply, run.pending, run.status = run.reply, None, None, "running"
+                        return r
+                self.pause()
+                with run.cond:
+                    if kind == "approval":                   # the page may have changed under the user's hands: never act on the old card
+                        run.pending, run.status = None, "running"
+                        return "takeover"
+                    run.status = "waiting"
+        finally:
+            self.waited += _agent_now() - t
+
+    # -- one step
+    def boundary(self):
+        self.check_stop()
+        if self.run.takeover:
+            t = _agent_now()
+            self.pause()
+            self.waited += _agent_now() - t
+        if self.n >= self.max_steps:
+            raise _AgentEnd("failed", "step limit", f"Stopped at the step limit ({self.max_steps} steps).")
+        if _agent_now() - self.t0 - self.waited >= self.limit:
+            raise _AgentEnd("failed", "time limit", f"Stopped at the time limit ({self.limit / 60:g} minutes).")
+        agent_touch()
+
+    def look(self):
+        if self.reuse and getattr(self.ad, "view", None):      # read_page just read it (maybe with a query): don't read again
+            self.reuse = False
+            return self.ad.view
+        self.reuse = False
+        try:
+            return self.mcp(self.ad.observe)
+        except _AgentEnd:
+            raise
+        except Exception as e:                               # this page can't be read; the model can go elsewhere
+            return {"text": f"(The page could not be read: {_clip(e, 200)}. Try read_page, back or open_url.)", "refs": {},
+                    "interactive": 0, "sparse": False}
+
+    def sparse(self, view):
+        """The screenshot to send with a view that has almost nothing in it, switching an MLX run to vision once."""
+        if not view or not view.get("sparse"):
+            return None
+        if self.m.get("vision"):
+            if self.mode == "text":
+                self.mode = "vision"
+                _agent_use_engine(self.run, "vision", self.m)
+            return self.ad.screenshot()
+        key = getattr(self.ad, "url", None) or view.get("text", "")[:200]
+        if key not in self.warned:
+            self.warned.add(key)
+            self.run.emit({"type": "step", "n": None, "tool": None, "args": {}, "summary": "Can't read this page",
+                           "result": f"{self.m['name']} can't read this page: it shows almost no text. Take over to do this part "
+                                     "yourself, or run the task with a model that can read pages as images.",
+                           "decision": "info", "shot": None, "thought": ""})
+        return None
+
+    def ctx(self):
+        ad = self.ad
+        surface, app_name = getattr(ad, "surface", "browser"), getattr(ad, "app", None)
+        return {"surface": surface, "app": app_name, "tier": app_tier(app_name, self.tiers) if surface == "app" else None,
+                "domain": getattr(ad, "domain", None), "task_domains": self.task_domains,
+                "link_domains": set(getattr(ad, "link_domains", None) or ())}
+
+    def think(self, view, image):
+        msgs = agent_messages(self.run.task, list(self.run.notes), fold_history(self.history), view, image)
+        msg = _agent_model(self.mode, self.m, msgs, AGENT_TOOLS)
+        thought, content = split_thought(msg)
+        call = extract_tool_call(msg, self.names)
+        if call is None:                                     # once more, saying what is wanted (and a fresh dict: never echo finish_reason)
+            hint = ("Your reply was cut off before the tool call. " if msg.get("finish_reason") == "length" else "") + AGENT_REPROMPT
+            msg = _agent_model(self.mode, self.m, msgs + [{"role": "assistant", "content": content or "(no tool call)"},
+                                                          {"role": "user", "content": hint}], AGENT_TOOLS)
+            t2 = split_thought(msg)[0]
+            thought = "\n".join(p for p in (thought, t2) if p)
+            call = extract_tool_call(msg, self.names)
+        return call, thought
+
+    def record(self, n, tool, args, facts, result, decision, thought, shot=None):
+        key = (tool, json.dumps(args, sort_keys=True, default=str))
+        if result.startswith(("Error", "Blocked")):
+            self.repeats = self.repeats + 1 if key == self.last else 1
+            self.last = key
+        else:
+            self.last, self.repeats = None, 0
+        if self.repeats == 3:
+            result += " " + AGENT_REPEAT_HINT
+        shown = _agent_redact(args, facts)
+        summary = _agent_summary(tool, shown, facts)
+        self.history.append(f"{n}. {summary} → {_agent_short(tool, result)}")
+        self.run.emit({"type": "step", "n": n, "tool": tool, "args": shown, "summary": summary, "result": result[:2000],
+                       "decision": decision, "shot": shot, "thought": (thought or "")[:4000]})
+        self.run.save()
+        if self.repeats >= 4:
+            raise _AgentEnd("failed", "stuck", "Stopped: the agent kept repeating the same action that wasn't working.")
+
+    def step(self):
+        run, ad = self.run, self.ad
+        view = self.look()
+        image = self.sparse(view)
+        call, thought = self.think(view, image)
+        self.check_stop()                                    # Stop pressed while the model was thinking: its call is never carried out
+        self.n += 1
+        n = self.n
+        if call is None:
+            return self.record(n, None, {}, None, "Error: the reply had no tool call. " + AGENT_REPROMPT, "error", thought)
+        name, args = call
+        err = validate_call(name, args)
+        if err:
+            return self.record(n, name, args if isinstance(args, dict) else {"args": args}, None, "Error: " + err, "error", thought)
+        if name == "note":
+            with run.cond:
+                run.notes.append(_clip(args["text"], 300))
+            return self.record(n, name, args, None, "Noted.", "safe", thought)
+        if name == "ask_user":
+            run.emit({"type": "question", "n": n, "text": _clip(args["question"], 500)})
+            answer = self.wait("question", n)
+            return self.record(n, name, args, None, f"The user answered: {_clip(answer, 1000)}", "safe", thought)
+        if name == "done":
+            run.answer = str(args["answer"])
+            self.record(n, name, {"answer": _clip(args["answer"], 200)}, None, "Finished.", "safe", thought)
+            run.emit({"type": "answer", "markdown": run.answer})
+            raise _AgentEnd("done")
+        try:
+            facts = ad.facts(name, args)
+        except Exception:
+            facts = None
+        if "ref" in args and facts is None:                  # not in the newest view: nothing to judge, nothing to do
+            return self.record(n, name, args, None, f"Error: {_clip(args['ref'], 20)} is not in the current view; read_page to refresh", "error", thought)
+        ctx = self.ctx()
+        decision, reason = gate(name, args, facts, ctx)
+        if decision == "blocked":
+            return self.record(n, name, args, facts, f"Blocked: {reason}", "blocked", thought)
+        if decision == "risky":
+            run.emit({"type": "approval", "n": n, "title": approval_title(name, facts, ctx, args), "shot": run.shot(f"{n}-ask", ad.screenshot()),
+                      "box": (facts or {}).get("box"), "tool": name, "args": _agent_redact(args, facts), "reason": reason})
+            answer = self.wait("approval", n)
+            if answer == "deny":
+                return self.record(n, name, args, facts, "The user denied this action.", "denied", thought)
+            if answer != "allow":
+                return self.record(n, name, args, facts, "Not done: the user took over the browser, so the page may have changed. "
+                                                         "Look at it again before acting.", "skipped", thought)
+            decision = "allowed"
+        self.check_stop()
+        result = ad.execute(name, args)
+        self.reuse = name == "read_page" and not result.startswith("Error")
+        self.record(n, name, args, facts, result, decision, thought, run.shot(str(n), ad.screenshot()))
+
+    def loop(self):
+        while True:
+            self.boundary()
+            self.step()
+
+
+def run_agent(run, held=False):
+    """The thread body of one run. `held`: the /run route already took agent_lock for it."""
+    global _agent_current
+    if not held and not agent_lock.acquire(blocking=False):
+        with run.cond:
+            run.status, run.ended = "failed", time.time()
+        run.emit({"type": "error", "message": AGENT_BUSY_MSG})
+        run.emit({"type": "end", "status": "failed"})
+        run.save()
+        return
+    _agent_current = run
+    ad, status, reason = None, "failed", None
+    try:
+        s = load_settings()["agent"]
+        m = next((x for x in chat_models() if x["id"] == run.model_id), None)
+        if m is None:
+            raise _AgentEnd("failed", "model", "That model is no longer available.")
+        mode = "gguf" if m.get("backend") == "gguf" else "text"
+        _agent_use_engine(run, mode, m)
+        ad = _agent_adapter(_agent_client(), f"ls-{run.id}")
+        _AgentLoop(run, ad, m, mode, s).loop()
+    except _AgentEnd as e:
+        status, reason = e.status, e.reason
+        if e.message:
+            run.emit({"type": "error", "message": e.message})
+    except (McpError, RuntimeError) as e:                    # CuaDriver would not start / the engine failed: one clear line
+        run.emit({"type": "error", "message": _clip(e, 300)})
+    except Exception as e:
+        run.emit({"type": "error", "message": f"Unexpected error: {type(e).__name__}: {_clip(e, 200)}"})
+    finally:
+        if ad is not None:
+            try:
+                ad.close()                                   # ends the session, which closes the isolated browser
+            except Exception:
+                pass
+        agent_engine.update(mode=None, model_id=None)
+        with run.cond:
+            run.status, run.reason, run.pending, run.ended = status, reason, None, time.time()
+        _agent_current = None
+        agent_lock.release()                                 # before `end`, so a client that sees it can start the next run at once
+        run.emit({"type": "end", "status": status, **({"reason": reason} if reason else {})})
+        try:
+            run.save()
+        except OSError:
+            pass
+
+
+def _agent_mark_interrupted():
+    """Runs a previous process left running (Local Studio quit mid-run) are saved as interrupted."""
+    for p in AGENT_RUNS.glob("*.json"):
+        try:
+            d = json.loads(p.read_text())
+            if not isinstance(d, dict) or d.get("status") not in AGENT_ACTIVE:
+                continue
+            evs = d["events"] if isinstance(d.get("events"), list) else []
+            evs.append({"i": len(evs), "type": "end", "status": "interrupted"})
+            d.update(status="interrupted", ended=d.get("ended") or time.time(), events=evs)
+            tmp = p.with_name(f".{p.stem}.tmp")
+            tmp.write_text(json.dumps(d))
+            os.replace(tmp, p)
+        except (OSError, ValueError):
+            continue
+
+
+_agent_mark_interrupted()
+
+
+# -- agent routes (all behind LocalOnly)
+
+def _agent_saved(rid):
+    """The run as a dict: live from memory, else from its file. 404 for anything else."""
+    if not _AGENT_RID.match(rid or ""):
+        raise HTTPException(404, "No such task")
+    run = _agent_runs.get(rid)
+    if run is not None:
+        return run.to_dict()
+    try:
+        d = json.loads((AGENT_RUNS / f"{rid}.json").read_text())
+    except (OSError, ValueError):
+        raise HTTPException(404, "No such task")
+    if not isinstance(d, dict):
+        raise HTTPException(404, "No such task")
+    return d
+
+
+def _agent_active(rid):
+    run = _agent_runs.get(rid) if _AGENT_RID.match(rid or "") else None
+    if run is None or run.status not in AGENT_ACTIVE or run.thread is None or not run.thread.is_alive():
+        raise HTTPException(409, "This task isn't running.")
+    return run
+
+
+def _cua_quiet(cmd, timeout):
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+@app.get("/api/agent/status")
+def agent_status():
+    run = _agent_current
+    s = load_settings()["agent"]
+    return {"enabled": s["enabled"], "cua": cua_status(), "running": run.id if run is not None and agent_lock.locked() else None,
+            "settings": s, "tier_defaults": APP_TIERS_DEFAULT}
+
+
+@app.post("/api/agent/enable")
+def agent_enable(on: bool = Body(..., embed=True)):
+    s = load_settings()
+    s["agent"]["enabled"] = bool(on)
+    save_settings(s)
+    run = _agent_current
+    if not on and run is not None:                           # turning Agent off stops a task in progress
+        with run.cond:
+            run.stop = True
+            run.cond.notify_all()
+    return {"enabled": bool(on)}
+
+
+@app.put("/api/agent/settings")
+def agent_settings(body: dict = Body(...)):
+    s = load_settings()
+    a = dict(s["agent"])
+    for k, lo, hi in (("max_steps", 1, 200), ("max_minutes", 1, 120)):
+        if k in body:
+            v = body[k]
+            if type(v) is not int or not lo <= v <= hi:      # not bool, not float
+                raise HTTPException(400, f"{k} must be a whole number from {lo} to {hi}.")
+            a[k] = v
+    if "tiers" in body:
+        t = body["tiers"]
+        if not isinstance(t, dict) or not all(isinstance(k, str) and k.strip() and v in _TIER_NAMES for k, v in t.items()):
+            raise HTTPException(400, "tiers maps app names to read, ask or allowed.")
+        a["tiers"] = {k.strip(): v for k, v in t.items()}
+    s["agent"] = a
+    save_settings(s)
+    return a
+
+
+@app.post("/api/agent/permissions")
+def agent_permissions():
+    """Only from the user's click in Settings: CuaDriver asks macOS for Accessibility and Screen Recording."""
+    if not Path(CUA_DRIVER).exists():
+        raise HTTPException(409, "Install CuaDriver first.")
+    threading.Thread(target=_cua_quiet, args=([CUA_DRIVER, "permissions", "grant"], 600), daemon=True).start()
+    return {"status": "started"}
+
+
+@app.post("/api/agent/telemetry/disable")
+def agent_telemetry_disable():
+    if not Path(CUA_DRIVER).exists():
+        raise HTTPException(409, "Install CuaDriver first.")
+    try:
+        r = subprocess.run([CUA_DRIVER, "telemetry", "disable"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise HTTPException(500, f"cua-driver failed: {_clip(e, 200)}")
+    if r.returncode != 0:
+        raise HTTPException(500, _clip(r.stderr or r.stdout or "cua-driver failed", 200))
+    return {"telemetry": False}
+
+
+@app.post("/api/agent/run")
+def agent_run(body: dict = Body(...)):
+    global _agent_current
+    if agent_lock.locked():
+        raise HTTPException(409, "A task is already running. Stop it or wait for it to finish.")
+    task, mid = body.get("task"), body.get("model_id")
+    if not isinstance(task, str) or not task.strip():
+        raise HTTPException(409, "Describe the task first.")
+    if not load_settings()["agent"]["enabled"]:
+        raise HTTPException(409, "Turn on Agent in Settings first.")
+    cua = cua_status()
+    if not cua["installed"]:
+        raise HTTPException(409, "Install CuaDriver first (Settings → Agent).")
+    if not cua["ok_version"]:
+        raise HTTPException(409, f"CuaDriver {cua['version'] or '(unknown version)'} is too old; update it to "
+                                 f"{'.'.join(map(str, CUA_MIN))} or later.")
+    m = next((x for x in chat_models() if x["id"] == mid), None)
+    if m is None:
+        raise HTTPException(409, "Choose a chat model.")
+    if not model_installed(m):
+        raise HTTPException(409, f"Download {m['name']} first (Model library).")
+    if not agent_lock.acquire(blocking=False):
+        raise HTTPException(409, "A task is already running. Stop it or wait for it to finish.")
+    try:
+        run = AgentRun(task.strip()[:4000], m["id"])
+        for old in [r for r in _agent_runs.values() if r.status not in AGENT_ACTIVE][:-AGENT_KEEP_RUNS or None]:
+            _agent_runs.pop(old.id, None)
+        _agent_runs[run.id] = run
+        _agent_current = run
+        run.save()
+        run.thread = threading.Thread(target=run_agent, args=(run, True), daemon=True, name=f"agent-{run.id}")
+        run.thread.start()
+    except BaseException:
+        _agent_current = None
+        agent_lock.release()
+        raise
+    return {"run_id": run.id}
+
+
+@app.get("/api/agent/runs/{rid}/events")
+async def agent_events(rid: str, after: int = 0):
+    """SSE: the run's events with i >= after, then live ones until `end`. Finished runs replay from memory or disk."""
+    after = max(0, after)
+    run = _agent_runs.get(rid) if _AGENT_RID.match(rid) else None
+    headers = {"Cache-Control": "no-cache"}
+    if run is None:
+        d = await asyncio.to_thread(_agent_saved, rid)
+        evs = [e for e in d.get("events") or [] if isinstance(e, dict)]
+        if not any(e.get("type") == "end" for e in evs):     # a run cut off before it could say so
+            evs.append({"i": len(evs), "type": "end", "status": d.get("status") or "interrupted"})
+
+        async def stored():
+            for e in evs:
+                if e.get("i", 0) >= after:
+                    yield _sse(e)
+        return StreamingResponse(stored(), media_type="text/event-stream", headers=headers)
+
+    async def live():
+        i, beat = after, time.monotonic()
+        while True:
+            with run.cond:
+                evs = run.events[i:]
+                ended = bool(run.events) and run.events[-1]["type"] == "end"
+            for e in evs:
+                yield _sse(e)
+            if evs:
+                i, beat = evs[-1]["i"] + 1, time.monotonic()
+            if ended:
+                return
+            if time.monotonic() - beat >= AGENT_HEARTBEAT_S:
+                yield ": ping\n\n"
+                beat = time.monotonic()
+            await asyncio.sleep(0.2)
+    return StreamingResponse(live(), media_type="text/event-stream", headers=headers)
+
+
+@app.post("/api/agent/runs/{rid}/reply")
+def agent_reply(rid: str, body: dict = Body(...)):
+    run = _agent_active(rid)
+    d, text = body.get("decision"), body.get("text")
+    with run.cond:
+        p = run.pending
+        if d == "stop" and p:
+            run.stop = True
+        elif not p or run.status == "paused" or run.reply is not None:
+            raise HTTPException(409, "Nothing is waiting for an answer." if not p else "Resume the task first.")
+        elif p["kind"] == "approval" and d in ("allow", "deny"):
+            run.reply = d
+        elif p["kind"] == "question" and isinstance(text, str) and text.strip():
+            run.reply = text.strip()[:2000]
+        else:
+            raise HTTPException(409, "That answer doesn't fit what the agent asked.")
+        run.cond.notify_all()
+    return {"ok": True}
+
+
+@app.post("/api/agent/runs/{rid}/stop")
+def agent_stop(rid: str):
+    run = _agent_active(rid)
+    with run.cond:
+        run.stop = True
+        run.cond.notify_all()
+    return {"ok": True}
+
+
+@app.post("/api/agent/runs/{rid}/takeover")
+def agent_takeover(rid: str):
+    run = _agent_active(rid)
+    with run.cond:
+        if run.status == "paused":
+            raise HTTPException(409, "You already have the browser.")
+        run.takeover = True
+        run.cond.notify_all()
+    return {"ok": True}
+
+
+@app.post("/api/agent/runs/{rid}/resume")
+def agent_resume(rid: str):
+    run = _agent_active(rid)
+    with run.cond:
+        if run.status != "paused" and not run.takeover:
+            raise HTTPException(409, "The task isn't paused.")
+        run.resume = True
+        run.cond.notify_all()
+    return {"ok": True}
+
+
+@app.get("/api/agent/runs")
+def agent_runs():
+    out = {}
+    for p in AGENT_RUNS.glob("*.json"):
+        try:
+            d = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(d, dict) and _AGENT_RID.match(str(d.get("id") or "")):
+            out[d["id"]] = {k: d.get(k) for k in ("id", "task", "status", "started")}
+    for rid, run in list(_agent_runs.items()):
+        if (AGENT_RUNS / f"{rid}.json").exists():
+            out[rid] = {"id": rid, "task": run.task, "status": run.status, "started": run.started}
+    return sorted(out.values(), key=lambda r: r.get("started") or 0, reverse=True)
+
+
+@app.get("/api/agent/runs/{rid}")
+def agent_run_get(rid: str):
+    return _agent_saved(rid)
+
+
+@app.get("/api/agent/runs/{rid}/shots/{name}")
+def agent_shot(rid: str, name: str):
+    if not _AGENT_RID.match(rid) or not _AGENT_SHOT.match(name):
+        raise HTTPException(404)
+    folder = (AGENT_RUNS / rid).resolve()
+    p = (folder / name).resolve()
+    if p.parent != folder or not p.is_file():
+        raise HTTPException(404)
+    return FileResponse(p, media_type="image/jpeg" if name.endswith(".jpg") else "image/png")
+
+
+@app.delete("/api/agent/runs/{rid}")
+def agent_run_delete(rid: str):
+    if not _AGENT_RID.match(rid):
+        raise HTTPException(404)
+    run = _agent_runs.get(rid)
+    if run is not None and run.status in AGENT_ACTIVE:
+        raise HTTPException(409, "Stop the task first.")
+    p = AGENT_RUNS / f"{rid}.json"
+    if run is None and not p.exists():
+        raise HTTPException(404)
+    p.unlink(missing_ok=True)
+    shutil.rmtree(AGENT_RUNS / rid, ignore_errors=True)
+    _agent_runs.pop(rid, None)
+    return {"deleted": rid}
+
+
+@app.post("/api/agent/profile/reset")
+def agent_profile_reset():
+    """Delete the agent's isolated browser profile (cookies, sign-ins). Holds agent_lock so no run starts meanwhile."""
+    if not agent_lock.acquire(blocking=False):
+        raise HTTPException(409, "Stop the running task first.")
+    try:
+        if AGENT_PROFILE.is_symlink():
+            AGENT_PROFILE.unlink()
+        elif AGENT_PROFILE.exists():
+            shutil.rmtree(AGENT_PROFILE)
+    finally:
+        agent_lock.release()
+    return {"reset": True}
 
 
 # ---------------------------------------------------------------- versions & updates
