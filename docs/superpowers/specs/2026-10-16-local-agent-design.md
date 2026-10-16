@@ -63,7 +63,7 @@ with the user's OK.
 index.html ──SSE──▶ app.py  # ---- agent
  (Agent view)        ├─ agent loop + approval gate + tool adapter
                      ├─▶ chat engine (8080/8081/8082), OpenAI tool calls
-                     └─▶ cua-driver mcp --socket STATE/data/agent/cua.sock   (stdio JSON-RPC)
+                     └─▶ cua-driver mcp --socket <STATE>/data/agent/cua.sock (stdio JSON-RPC)
                               └─▶ Local Studio's own daemon (bounded + manifest)
                                     ├─ isolated Chromium, profile "local-studio"
                                     └─ Mac apps via Accessibility
@@ -93,13 +93,15 @@ If the process exits, the next call restarts it once.
 ### Our daemon
 
 Started on first agent use with
-`serve --socket data/agent/cua.sock --permission-mode bounded --capability-manifest data/agent/manifest.json --approve-capability-manifest`,
-relative paths and `cwd=STATE`, because the Mac app's `STATE` (`~/Library/Application Support/Local Studio`)
-contains spaces and would break a literal `pgrep -f` pattern (the same reason `search.py` is
-launched with relative names). `app.py` writes `manifest.json` from a constant in code before
-each start. Another daemon (for example Hermes's) is never reused, signalled or stopped.
-`_stop_agent` and `stop.sh` find ours by the literal pattern
-`serve --socket data/agent/cua.sock --permission-mode bounded`; keep the two in sync, as with search.
+`serve --socket <STATE>/data/agent/cua.sock --permission-mode bounded --capability-manifest <STATE>/data/agent/manifest.json --approve-capability-manifest`.
+The paths are absolute because option A below launches through `open -a`, which does not keep
+the working directory. The Mac app's `STATE` contains spaces, so the stop pattern is
+`cua-driver serve --socket <re.escape(socket path)>` with no `^` anchor (the `[^ ]*` prefix that
+forced `search.py` onto relative names is not used). The socket path must stay under 104 bytes.
+A development server with its own `STATE` therefore gets its own socket and pattern automatically.
+`app.py` writes `manifest.json` from a constant in code before each start. Another daemon (for
+example Hermes's) is never reused, signalled or stopped. `stop_agent_daemon` and `stop.sh` use
+the same pattern; keep the two in sync, as with search.
 
 **Permission identity (decided by the probe).** macOS grants Accessibility and Screen Recording
 per app identity, and a child process of `app.py` may run under the parent's identity rather than
@@ -112,9 +114,9 @@ per app identity, and a child process of `app.py` may run under the parent's ide
   then requests Accessibility and Screen Recording itself, and a source checkout inherits the
   terminal's.
 
-The MCP client connects with `cua-driver mcp --socket data/agent/cua.sock` (same `cwd`).
-The daemon stops after 10 idle minutes and when Local Studio stops. In development,
-`LOCAL_STUDIO_AGENT_SOCKET` and a separate `STATE` keep a dev server (port 7861) away from the
+The MCP client connects with `cua-driver mcp --socket <STATE>/data/agent/cua.sock`.
+The daemon stops after 10 idle minutes and when Local Studio stops. In development, a separate
+`STATE` (port 7861) gives the dev server its own socket, daemon and stop pattern, away from the
 running app.
 
 ### Capability manifest (the CuaDriver tools the adapter may call)
