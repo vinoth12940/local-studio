@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import os
+import queue
 import re
 import secrets
 import shutil
@@ -1485,6 +1486,264 @@ def search_choose_folder():
     except subprocess.TimeoutExpired:
         return {"path": None}
     return {"path": r.stdout.strip().rstrip("/") or None if r.returncode == 0 else None}
+
+
+# ---------------------------------------------------------------- agent
+
+AGENT_CUA_TOOLS = frozenset((
+    "start_session end_session get_session check_permissions health_report "
+    "browser_prepare get_browser_state browser_navigate browser_click browser_type browser_pointer browser_dialog browser_download "
+    "list_apps list_windows launch_app get_window_state click double_click type_text set_value press_key hotkey scroll invoke_menu zoom bring_to_front"
+).split())                                                   # everything else CuaDriver offers (kill_app, clipboard_*, set_config, ...) is never reachable
+AGENT_IDLE_S = 600                                           # stop the daemon this long after the last call when no run is active
+AGENT_SOCK_WAIT_S = 10                                       # how long to wait for a fresh daemon's socket
+
+
+class McpError(Exception):
+    pass
+
+
+class McpClient:
+    """MCP over stdio to a child process: newline-delimited JSON-RPC 2.0. Calls are serialized; a reader
+    thread routes each response to the queue of the request that is waiting for it. If the process has
+    exited, the next call starts it again (once). A call that dies mid-flight is reported, never replayed:
+    a click that may have happened must not happen twice."""
+
+    def __init__(self, argv, allowed=AGENT_CUA_TOOLS, prepare=None, touch=None):
+        self.argv, self.allowed, self.prepare, self.touch = argv, allowed, prepare, touch
+        self.proc = None
+        self.pending: dict = {}
+        self.next_id = 0
+        self.eof = True
+        self.lock = threading.RLock()
+
+    @property
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None and not self.eof
+
+    def start(self):
+        with self.lock:
+            self._start()
+
+    def _start(self):
+        self._kill()
+        if self.prepare:
+            self.prepare()
+        self.pending, self.eof = {}, False
+        try:
+            self.proc = subprocess.Popen(self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as e:
+            self.eof = True
+            raise McpError(f"Couldn't start {Path(self.argv[0]).name}: {e}")
+        threading.Thread(target=self._read, args=(self.proc, self.pending), daemon=True).start()
+        try:
+            self._request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                         "clientInfo": {"name": "local-studio", "version": APP_VERSION}}, 15)
+            self._write({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        except McpError:
+            self._kill()
+            raise
+
+    def _read(self, proc, pending):
+        for line in proc.stdout:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            q = pending.get(msg.get("id")) if isinstance(msg, dict) and "method" not in msg else None
+            if q is not None:
+                q.put(msg)
+        if proc is self.proc:
+            self.eof = True
+        for q in list(pending.values()):                      # wake every waiter: the process is gone
+            q.put(None)
+
+    def _write(self, msg):
+        try:
+            self.proc.stdin.write((json.dumps(msg) + "\n").encode())
+            self.proc.stdin.flush()
+        except (OSError, ValueError, AttributeError):
+            raise McpError("The computer-control helper stopped responding.")
+
+    def _request(self, method, params, timeout):
+        self.next_id += 1
+        rid, q = self.next_id, queue.Queue()
+        self.pending[rid] = q
+        try:
+            self._write({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+            try:
+                msg = q.get(timeout=timeout)
+            except queue.Empty:
+                raise McpError(f"{method} timed out after {timeout:g}s")
+            if msg is None:
+                raise McpError("The computer-control helper stopped responding.")
+            if "error" in msg:
+                raise McpError(str(msg["error"].get("message") or msg["error"]))
+            return msg.get("result") or {}
+        finally:
+            self.pending.pop(rid, None)
+
+    def call(self, name, args, timeout=30):
+        if name not in self.allowed:
+            raise McpError(f"{name} is not allowed")
+        with self.lock:
+            if self.touch:
+                self.touch()
+            if not self.alive:
+                self._start()
+            res = self._request("tools/call", {"name": name, "arguments": args or {}}, timeout)
+            if self.touch:
+                self.touch()
+        parts = res.get("content") or []
+        text = "\n".join(p.get("text", "") for p in parts if p.get("type") == "text")
+        data = res.get("structuredContent")
+        if data is None:
+            try:
+                data = json.loads(text)
+            except ValueError:
+                data = None
+        image = next((base64.b64decode(p["data"]) for p in parts if p.get("type") == "image" and p.get("data")), None)
+        return {"ok": not res.get("isError"), "text": text, "data": data if isinstance(data, dict) else None, "image": image}
+
+    def _kill(self):
+        proc, self.proc, self.eof = self.proc, None, True
+        if proc is not None:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+            try:
+                proc.terminate()
+                proc.wait(timeout=3)
+            except (OSError, subprocess.TimeoutExpired):
+                proc.kill()
+            try:
+                proc.stdout.close()
+            except OSError:
+                pass
+
+    def close(self):
+        with self.lock:
+            self._kill()
+
+
+def cua_status():
+    """What the Settings screen shows about the CuaDriver install."""
+    out = {"installed": False, "version": None, "ok_version": False, "telemetry": None}
+    if not Path(CUA_DRIVER).exists():
+        return out
+    out["installed"] = True
+    try:
+        head = subprocess.run([CUA_DRIVER, "--help"], capture_output=True, text=True, timeout=5).stdout
+        m = re.match(r"\s*cua-driver (\d+)\.(\d+)\.(\d+)", head)
+        if m:
+            out["version"] = ".".join(m.groups())
+            out["ok_version"] = tuple(int(x) for x in m.groups()) >= CUA_MIN
+        t = subprocess.run([CUA_DRIVER, "telemetry", "status"], capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r"Telemetry:\s*(enabled|disabled)", t)
+        out["telemetry"] = m.group(1) == "enabled" if m else None
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return out
+
+
+def agent_daemon_pattern():
+    """Matches our CuaDriver daemon (its own socket) and not another app's, such as one on the default socket.
+    No `^` anchor: the Mac app's data folder contains spaces."""
+    return "cua-driver serve --socket " + re.escape(str(AGENT_SOCK))
+
+
+def _agent_daemon_running():
+    return subprocess.run(["pgrep", "-f", agent_daemon_pattern()], capture_output=True).returncode == 0
+
+
+def start_agent_daemon():
+    """Start CuaDriver's daemon through LaunchServices, so it runs with CuaDriver's own macOS permissions
+    (not those of this app), on a socket of our own."""
+    AGENT_DIR.mkdir(parents=True, exist_ok=True)
+    if not _agent_daemon_running():                          # one that is still starting just needs its socket awaited
+        AGENT_SOCK.unlink(missing_ok=True)                   # a stale one from a daemon that died
+        if subprocess.run(["open", "-n", "-g", "-a", "CuaDriver", "--args", "serve", "--socket", str(AGENT_SOCK),
+                           "--permission-mode", "standard"], capture_output=True).returncode != 0:
+            raise McpError("Couldn't start CuaDriver. Is it installed in Applications?")
+    deadline = time.time() + AGENT_SOCK_WAIT_S
+    while time.time() < deadline:
+        if AGENT_SOCK.exists():
+            return
+        time.sleep(0.1)
+    raise McpError("CuaDriver started but didn't open its socket.")
+
+
+def stop_agent_daemon():
+    """Stop our daemon (and the isolated browser it owns, which exits with it)."""
+    global _agent_cli
+    with _agent_cli_lock:
+        if _agent_cli is not None:
+            _agent_cli.close()
+            _agent_cli = None
+    subprocess.run(["pkill", "-f", agent_daemon_pattern()])
+    for _ in range(40):
+        if not _agent_daemon_running():
+            break
+        time.sleep(0.1)
+    AGENT_SOCK.unlink(missing_ok=True)
+
+
+def _ensure_agent_daemon():
+    if not (_agent_daemon_running() and AGENT_SOCK.exists()):
+        start_agent_daemon()
+
+
+_agent_cli = None
+_agent_cli_lock = threading.Lock()
+_agent_last_use = None                                       # time of the last call, None while the daemon is not in use
+_agent_reaper = None
+
+
+def agent_touch():
+    global _agent_last_use
+    _agent_last_use = time.time()
+
+
+def agent_client():
+    """The one MCP client for our daemon. The daemon is started if needed, and again before any restart
+    of the client, so a daemon the idle reaper stopped comes back on the next use."""
+    global _agent_cli
+    with _agent_cli_lock:
+        _ensure_agent_daemon()
+        if _agent_cli is None:
+            _agent_cli = McpClient([CUA_DRIVER, "mcp", "--socket", str(AGENT_SOCK)], prepare=_ensure_agent_daemon, touch=agent_touch)
+        agent_touch()
+        _agent_reaper_start()
+        return _agent_cli
+
+
+def agent_reap(now=None):
+    """Stop the daemon once it has sat unused for AGENT_IDLE_S and no agent run is active. True if it stopped."""
+    global _agent_last_use
+    if _agent_last_use is None or agent_lock.locked():
+        return False
+    if (time.time() if now is None else now) - _agent_last_use < AGENT_IDLE_S:
+        return False
+    _agent_last_use = None
+    stop_agent_daemon()
+    return True
+
+
+def _agent_reaper_start():
+    global _agent_reaper
+    if _agent_reaper is not None:
+        return
+
+    def loop():
+        while True:
+            time.sleep(60)
+            try:
+                agent_reap()
+            except Exception:
+                pass
+    _agent_reaper = threading.Thread(target=loop, daemon=True)
+    _agent_reaper.start()
 
 
 # ---------------------------------------------------------------- versions & updates

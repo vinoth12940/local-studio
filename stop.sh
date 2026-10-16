@@ -13,6 +13,7 @@ pkill -f "^[^ ]*python[^ ]* -m mlx_vlm server" 2>/dev/null
 pkill -f "^[^ ]*llama-server .*--port 8082" 2>/dev/null
 pkill -f "^[^ ]*uv run .*python search.py --port 8083" 2>/dev/null
 pkill -f "^[^ ]*python[^ ]* search.py --port 8083" 2>/dev/null
+pkill -f "cua-driver serve --socket $STATE/data/agent/cua.sock" 2>/dev/null
 pkill -f "^[^ ]*uv run .*uvicorn app:app .*--port 7860" 2>/dev/null
 pkill -f "^[^ ]*python[^ ]* [^ ]*uvicorn app:app .*--port 7860" 2>/dev/null
 pkill -f "^[^ ]*python[^ ]* [^ ]*mflux-generate-" 2>/dev/null

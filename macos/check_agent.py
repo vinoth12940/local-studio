@@ -2,9 +2,62 @@
 
     uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_agent.py [check_name ...]
 """
+import json
 import os
 import sys
+
+
+def _fake_cua(script_path):
+    """A stand-in for `cua-driver mcp`: newline-delimited JSON-RPC on stdio, driven by a JSON script:
+    {"log": path to append received lines to, "die_after_calls": N (exit after answering the Nth tools/call),
+     "die_without_reply": true (exit on the first tools/call without answering),
+     "max_spawns": N (the Nth+1 start exits at once, never answering), "tools": {name: result}}.
+    Built in: echo (returns its arguments as JSON text) and hang (never answers)."""
+    script = json.load(open(script_path))
+    spawn_file = script_path + ".spawns"
+    spawns = int(open(spawn_file).read()) + 1 if os.path.exists(spawn_file) else 1
+    open(spawn_file, "w").write(str(spawns))
+    if spawns > script.get("max_spawns", 10 ** 9):
+        sys.exit(1)
+    calls = 0
+    for line in sys.stdin:
+        if script.get("log"):
+            open(script["log"], "a").write(line)
+        msg = json.loads(line)
+        if "id" not in msg:
+            continue
+        method, params = msg["method"], msg.get("params") or {}
+        if method == "initialize":
+            result = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "fake-cua", "version": "0"}}
+        elif method == "tools/list":
+            result = {"tools": []}
+        elif method == "tools/call":
+            calls += 1
+            if script.get("die_without_reply"):
+                sys.exit(1)
+            name = params["name"]
+            if name == "hang":
+                continue
+            if name == "echo":
+                result = {"content": [{"type": "text", "text": json.dumps(params.get("arguments") or {})}]}
+            else:
+                result = script["tools"][name]
+        else:
+            print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": "no such method"}}), flush=True)
+            continue
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}), flush=True)
+        if script.get("die_after_calls") and method == "tools/call" and calls >= script["die_after_calls"]:
+            sys.stdout.close()
+            sys.exit(0)
+
+
+if "--fake-cua" in sys.argv:
+    _fake_cua(sys.argv[sys.argv.index("--fake-cua") + 1])
+    sys.exit()
+
+import re
 import tempfile
+import time
 from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp())
@@ -13,6 +66,7 @@ os.environ["HF_HUB_CACHE"] = str(TMP / "hub")             # a Mac with no models
 (TMP / "state").mkdir()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app  # noqa: E402
+import base64  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 CHECKS = []
@@ -56,6 +110,263 @@ def agent_routes_are_local_only():
     c = TestClient(app.app, base_url="http://127.0.0.1:7860")
     assert c.get("/api/agent/status", headers={"origin": "https://evil.example"}).status_code == 403
     assert c.get("/api/agent/status").json() == {"enabled": False}
+
+
+def fake_client(script, **kw):
+    """A McpClient on the fake server; `script` is the dict described in _fake_cua."""
+    path = TMP / f"fake-{len(list(TMP.glob('fake-*.json')))}.json"
+    script = {"log": str(path) + ".log", **script}
+    path.write_text(json.dumps(script))
+    c = app.McpClient([sys.executable, __file__, "--fake-cua", str(path)],
+                      allowed=app.AGENT_CUA_TOOLS | {"echo", "hang", "boom", "shot", "kill_app_probe"}, **kw)
+    c.log = Path(script["log"])
+    return c
+
+
+def wait_dead(c, secs=5):
+    end = time.time() + secs
+    while c.alive and time.time() < end:
+        time.sleep(0.02)
+    assert not c.alive, "the fake server should have exited"
+
+
+@check
+def mcp_roundtrip():
+    c = fake_client({})
+    try:
+        r = c.call("echo", {"a": 1})
+        assert r["ok"] is True and r["data"] == {"a": 1} and r["image"] is None, r
+        assert r["text"] == '{"a": 1}'
+        init = [json.loads(l) for l in c.log.read_text().splitlines()]
+        assert [m["method"] for m in init][:2] == ["initialize", "notifications/initialized"], init
+        assert init[0]["params"]["protocolVersion"] == "2025-06-18" and init[0]["params"]["clientInfo"] == {"name": "local-studio", "version": app.APP_VERSION}
+        assert "id" not in init[1]
+    finally:
+        c.close()
+    assert not c.alive
+
+
+@check
+def mcp_error_and_image():
+    png = b"\x89PNG fake"
+    c = fake_client({"tools": {
+        "boom": {"content": [{"type": "text", "text": "nope"}], "isError": True},
+        "shot": {"content": [{"type": "text", "text": "a"}, {"type": "image", "data": base64.b64encode(png).decode(), "mimeType": "image/png"},
+                             {"type": "text", "text": "b"}], "structuredContent": {"w": 3}}}})
+    try:
+        r = c.call("boom", {})
+        assert r["ok"] is False and r["text"] == "nope" and r["data"] is None, r
+        r = c.call("shot", {})
+        assert r["ok"] is True and r["image"] == png and r["text"] == "a\nb" and r["data"] == {"w": 3}, r
+    finally:
+        c.close()
+
+
+@check
+def mcp_restarts_once():
+    c = fake_client({"die_after_calls": 1, "max_spawns": 2})
+    try:
+        assert c.call("echo", {"n": 1})["data"] == {"n": 1}
+        wait_dead(c)
+        assert c.call("echo", {"n": 2})["data"] == {"n": 2}          # restarted
+        wait_dead(c)
+        try:
+            c.call("echo", {"n": 3})                                  # the third start never answers
+        except app.McpError:
+            pass
+        else:
+            raise AssertionError("expected McpError")
+    finally:
+        c.close()
+    c = fake_client({"die_without_reply": True})                      # dies mid-call: reported, not replayed
+    try:
+        try:
+            c.call("echo", {})
+        except app.McpError:
+            pass
+        else:
+            raise AssertionError("expected McpError")
+        assert c.log.read_text().count('"tools/call"') == 1
+    finally:
+        c.close()
+
+
+@check
+def mcp_timeout():
+    c = fake_client({})
+    try:
+        t0 = time.time()
+        try:
+            c.call("hang", {}, timeout=0.5)
+        except app.McpError as e:
+            assert "timed out" in str(e), e
+        else:
+            raise AssertionError("expected McpError")
+        assert time.time() - t0 < 3
+        assert c.call("echo", {"ok": 1})["data"] == {"ok": 1}          # still usable afterwards
+    finally:
+        c.close()
+
+
+@check
+def mcp_allowlist():
+    c = fake_client({})
+    try:
+        c.start()
+        for name in ("kill_app", "clipboard_read", "set_config"):
+            try:
+                c.call(name, {})
+            except app.McpError as e:
+                assert f"{name} is not allowed" in str(e), e
+            else:
+                raise AssertionError("expected McpError")
+        time.sleep(0.2)
+        assert "tools/call" not in c.log.read_text()
+    finally:
+        c.close()
+
+
+@check
+def daemon_pattern_is_ours_only():
+    pat = app.agent_daemon_pattern()
+    assert re.search(pat, f"/Applications/CuaDriver.app/Contents/MacOS/cua-driver serve --socket {app.AGENT_SOCK} --permission-mode standard")
+    assert not re.search(pat, "/Applications/CuaDriver.app/Contents/MacOS/cua-driver serve")      # Hermes's daemon, default socket
+    assert not re.search(pat, "cua-driver serve --socket /Users/x/Library/Caches/cua-driver/cua-driver.sock")
+    assert {"kill_app", "clipboard_read", "clipboard_write", "set_config", "get_desktop_state", "browser_set_input_files"}.isdisjoint(app.AGENT_CUA_TOOLS)
+    assert len(app.AGENT_CUA_TOOLS) == 27 and {"start_session", "get_window_state", "bring_to_front"} <= app.AGENT_CUA_TOOLS
+    # a path with spaces (the Mac app's STATE) still matches, and pgrep accepts the pattern
+    spaced = "/Users/x/Library/Application Support/Local Studio/data/agent/cua.sock"
+    assert re.search("cua-driver serve --socket " + re.escape(spaced), f"cua-driver serve --socket {spaced} --permission-mode standard")
+    import subprocess as sp
+    assert sp.run(["pgrep", "-f", pat], capture_output=True).returncode == 1        # read-only: nothing of ours is running
+
+
+class Stub:
+    """Replace app.subprocess.run (and the daemon-running probe) for the duration of a check."""
+
+    def __init__(self, responder):
+        self.calls, self.responder = [], responder
+
+    def __enter__(self):
+        self.real = app.subprocess.run
+        app.subprocess.run = self
+        return self
+
+    def __exit__(self, *exc):
+        app.subprocess.run = self.real
+
+    def __call__(self, cmd, **kw):
+        self.calls.append(cmd)
+        out = self.responder(cmd)
+        return type("R", (), {"returncode": out[0], "stdout": out[1], "stderr": ""})()
+
+
+@check
+def cua_status_parses_the_cli():
+    def cli(cmd):
+        return (0, "cua-driver 0.28.2 \u2014 cross-platform computer-use automation driver\nUSAGE: ...") if "--help" in cmd else (0, "Telemetry: enabled (source: default)\n")
+    real = app.CUA_DRIVER
+    app.CUA_DRIVER = sys.executable                         # any file that exists
+    try:
+        with Stub(cli) as s:
+            assert app.cua_status() == {"installed": True, "version": "0.28.2", "ok_version": True, "telemetry": True}
+            assert all(c[0] == sys.executable for c in s.calls) and len(s.calls) == 2
+        with Stub(lambda cmd: (0, "cua-driver 0.28.1 \u2014 x") if "--help" in cmd else (0, "Telemetry: disabled (source: config)")):
+            assert app.cua_status() == {"installed": True, "version": "0.28.1", "ok_version": False, "telemetry": False}
+        app.CUA_DRIVER = str(TMP / "missing-cua-driver")
+        with Stub(lambda cmd: (_ for _ in ()).throw(AssertionError("must not run a missing binary"))):
+            assert app.cua_status() == {"installed": False, "version": None, "ok_version": False, "telemetry": None}
+    finally:
+        app.CUA_DRIVER = real
+
+
+@check
+def daemon_start_and_stop_use_open_and_pkill():
+    import threading as th
+    app.AGENT_DIR.mkdir(parents=True, exist_ok=True)
+    app.AGENT_SOCK.unlink(missing_ok=True)
+    state = {"up": False}
+
+    def responder(cmd):
+        if cmd[0] == "open":
+            state["up"] = True
+            th.Timer(0.3, app.AGENT_SOCK.touch).start()             # the daemon creates its socket a moment later
+            return 0, ""
+        if cmd[0] == "pgrep":
+            return (0 if state["up"] else 1), ""
+        if cmd[0] == "pkill":
+            state["up"] = False
+            return 0, ""
+        raise AssertionError(cmd)
+    with Stub(responder) as s:
+        assert app._agent_daemon_running() is False
+        app.start_agent_daemon()
+        assert app.AGENT_SOCK.exists() and app._agent_daemon_running() is True
+        assert ["open", "-n", "-g", "-a", "CuaDriver", "--args", "serve", "--socket", str(app.AGENT_SOCK), "--permission-mode", "standard"] in s.calls
+        n = len(s.calls)
+        app.start_agent_daemon()                                    # already running: no second launch
+        assert not any(c[0] == "open" for c in s.calls[n:])
+        app.stop_agent_daemon()
+        assert ["pkill", "-f", app.agent_daemon_pattern()] in s.calls
+        assert not app.AGENT_SOCK.exists() and app._agent_daemon_running() is False
+    # a daemon that never makes its socket is an error, not a hang
+    real = app.AGENT_SOCK_WAIT_S
+    app.AGENT_SOCK_WAIT_S = 0.3
+    try:
+        with Stub(lambda cmd: (0, "") if cmd[0] == "open" else (1, "")):
+            try:
+                app.start_agent_daemon()
+            except app.McpError as e:
+                assert "socket" in str(e), e
+            else:
+                raise AssertionError("expected McpError")
+    finally:
+        app.AGENT_SOCK_WAIT_S = real
+
+
+@check
+def idle_reaper_stops_only_idle_daemons():
+    stopped = []
+    real_stop, real_last = app.stop_agent_daemon, app._agent_last_use
+    app.stop_agent_daemon = lambda: stopped.append(1)
+    try:
+        app._agent_last_use = None
+        assert app.agent_reap(now=10 ** 9) is False and not stopped                       # never used
+        app._agent_last_use = 1000.0
+        assert app.agent_reap(now=1000.0 + app.AGENT_IDLE_S - 1) is False and not stopped  # recently used
+        app.agent_lock.acquire()
+        try:
+            assert app.agent_reap(now=1000.0 + app.AGENT_IDLE_S + 1) is False and not stopped   # a run is active
+        finally:
+            app.agent_lock.release()
+        assert app.agent_reap(now=1000.0 + app.AGENT_IDLE_S + 1) is True and stopped == [1]
+        assert app._agent_last_use is None and app.agent_reap(now=10 ** 9) is False
+        t = time.time(); app.agent_touch()
+        assert t <= app._agent_last_use <= time.time()
+    finally:
+        app.stop_agent_daemon, app._agent_last_use = real_stop, real_last
+
+
+@check
+def agent_client_is_a_singleton_that_ensures_the_daemon():
+    made, started = [], []
+    saved = (app.McpClient, app._agent_daemon_running, app.start_agent_daemon, app._agent_reaper_start, app._agent_cli)
+    class Rec:
+        def __init__(self, argv, **kw):
+            made.append((argv, kw)); self.alive = True
+        def close(self):
+            self.alive = False
+    app.McpClient, app._agent_cli = Rec, None
+    app._agent_daemon_running = lambda: False
+    app.start_agent_daemon = lambda: started.append(1)
+    app._agent_reaper_start = lambda: None
+    try:
+        a = app.agent_client(); b = app.agent_client()
+        assert a is b and len(made) == 1 and len(started) == 2
+        assert made[0][0] == [app.CUA_DRIVER, "mcp", "--socket", str(app.AGENT_SOCK)]
+        assert made[0][1]["prepare"] is app._ensure_agent_daemon and made[0][1]["touch"] is app.agent_touch
+    finally:
+        app.McpClient, app._agent_daemon_running, app.start_agent_daemon, app._agent_reaper_start, app._agent_cli = saved
 
 
 if __name__ == "__main__":
