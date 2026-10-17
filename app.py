@@ -24,7 +24,7 @@ import time
 import unicodedata
 import uuid
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, unquote_plus, urlsplit
+from urllib.parse import unquote, unquote_plus, urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -2282,20 +2282,20 @@ def _search_ok(url, host):
         return False
     try:
         parts = _split_url(url)
-        q = parse_qs(parts.query, keep_blank_values=True)
     except ValueError:
         return False
     path = parts.path.lower()
-    if "%" in path or "\\" in url:
+    if "%" in path or "\\" in url or ";" in parts.query:          # DuckDuckGo's backend splits on `;` too: x=1;q=!g would hide a bang
         return False
-    qs = [_norm_label(v) for k, vs in q.items() if k.lower() == "q" for v in vs]   # fullwidth ！ / ＼ and a ZWSP before \ count
+    qs = [_norm_label(unquote_plus(kv.partition("=")[2])) for kv in re.split(r"[&;]", parts.query)
+          if unquote_plus(kv.partition("=")[0]).lower() == "q"]    # every q, decoded; fullwidth ！ / ＼ and a ZWSP before \ count
     if host != "google.com" and any("!" in v or v.startswith("\\") for v in qs):
         return False
-    if host == "google.com":                                        # btnI anywhere, also after a `;` parse_qs does not split on
+    if host == "google.com":                                        # btnI anywhere in the query
         return path == "/search" and "btni" not in unquote(parts.query).lower()
     if host == "bing.com":
         return path == "/search"
-    return (path in ("", "/") and any(qs)) or path in ("/html", "/html/")
+    return path in ("", "/", "/html", "/html/") and any(qs)
 
 
 def _ipv4_num(p):
@@ -2533,6 +2533,32 @@ def _card_host(h):
     return _md_escape(h if len(h) <= keep else "…" + h[-keep:])
 
 
+def _typed_text(tool, facts, args):
+    """What the card says will be typed: the text, quoted, clipped, with invisible and control characters spelled out and
+    markdown escaped; for type_app each new line (a Return press) shows as ↵. Never the text of a field that may hold a password,
+    code or card number, or of a target that could not be identified (the same rule as the run's own redaction)."""
+    text = args.get("text")
+    if not isinstance(text, str):
+        return ""
+    if not facts or _sensitive_field(facts) or facts.get("sensitive_unknown"):
+        return "the text you can't see "
+    if tool == "type_app":
+        text = " ↵ ".join(x for x in text.replace("\r\n", "\n").replace("\r", "\n").split("\n") if x)
+    return f"“{_md_escape(_clip(_visible(text), 80))}” "
+
+
+def _typed_keys(tool, args):
+    """" and press Enter" / " and press Return N×" when typing also submits, exactly when the gate says it does."""
+    text = args.get("text")
+    if tool == "type_app" and isinstance(text, str):
+        n = text.replace("\r\n", "\n").replace("\r", "\n").count("\n")
+        if n:
+            return f" and press Return {n}×"
+    if args.get("submit") or (isinstance(text, str) and _CTRL_RE.search(text)):
+        return " and press Enter"
+    return ""
+
+
 def approval_title(tool, facts, ctx, args=None):
     """One line for the approval card, in the user's terms. Labels come from the facts, not from the model; everything a
     page or app controls is cleaned (_norm_label) and markdown-escaped so it cannot rewrite the card."""
@@ -2547,11 +2573,11 @@ def approval_title(tool, facts, ctx, args=None):
     if tool == "click_app":
         return f"Click **{label()}** {where_app}".rstrip()
     if tool == "type":
-        return f"Type into **{label()}** {where_web}"
+        return f"Type {_typed_text(tool, facts, args)}into **{label()}** {where_web}{_typed_keys(tool, args)}"
     if tool == "type_app":
         if f.get("role") in _SETTABLE:
             return f"Choose **{esc(args.get('text'))}** in **{label()}** {where_app}".rstrip()
-        return f"Type into **{label()}** {where_app}".rstrip()
+        return f"Type {_typed_text(tool, facts, args)}into **{label()}** {where_app}".rstrip() + _typed_keys(tool, args)
     if tool == "open_app":
         return f"Open **{esc((ctx.get('target') or {}).get('name') or args.get('name') or 'an app')}**"
     if tool == "download":
@@ -3067,33 +3093,49 @@ class Adapter:
         self.found = "\n".join(head + out)
         return self.found
 
-    @staticmethod
-    def _sig(hit):
-        f = hit["facts"]
-        return (f.get("role"), f.get("name"), f.get("input_type"))
+    def _where(self):
+        """Where an action lands: the page's domain, or the Mac app (by name and bundle id)."""
+        if self.surface == "app":
+            return ("app", _tier_key(self.app or ""), str(self.bundle_id or "").casefold())
+        return ("browser", self.domain)
 
-    def _same_ref(self, args, sig):
-        """The CuaDriver ref for args["ref"] in the current view, only if it is still the control the gate judged: after a
-        re-bind and re-read eN may be a different element."""
+    def _strictness(self, tool, args, hit):
+        """How strictly the gate judges this control from its facts alone (0 safe, 1 risky, 2 blocked). The context is the same
+        fixed one before and after a retry (the app's tier is the loop's business), so only the facts and the target matter."""
+        ctx = {"surface": self.surface, "app": self.app, "tier": "allowed" if self.surface == "app" else None, "domain": self.domain}
+        return ("safe", "risky", "blocked").index(gate(tool, args, hit["facts"], ctx)[0])
+
+    def _judged(self, tool, args, hit):
+        """What was judged when the step was decided (the view the model and the gate saw): the control, where it is, how strict."""
+        f = hit["facts"]
+        return (f.get("role"), f.get("name"), f.get("input_type")), self._where(), self._strictness(tool, args, hit)
+
+    def _same_ref(self, tool, args, judged):
+        """The CuaDriver ref for args["ref"] in the current view, only if it is still what the gate judged: after a re-bind and
+        re-read eN may be a different element, on another page (a redirect during a long approval), or the same name on a
+        control the gate would now judge more strictly (a submit, a possibly sensitive field)."""
         hit = self._ref(args)[1]
-        if self._sig(hit) != sig:
+        sig, where, strict = judged
+        f = hit["facts"]
+        if ((f.get("role"), f.get("name"), f.get("input_type")) != sig or self._where() != where
+                or self._strictness(tool, args, hit) > strict):
             raise McpError("the app changed and its refs were renumbered; use the newest view" if self.surface == "app"
                            else "the page changed; read_page to refresh")
         return hit["ref"]
 
     def _click(self, args):
         short, hit = self._ref(args)
-        sig = self._sig(hit)
-        self._act(lambda: ("browser_click", {**self._ids(), "ref": self._same_ref(args, sig), "input_route": "dom_event"}))
+        judged = self._judged("click", args, hit)
+        self._act(lambda: ("browser_click", {**self._ids(), "ref": self._same_ref("click", args, judged), "input_route": "dom_event"}))
         return f"Clicked {_clip(hit['facts']['name'], 60) or short}; read the page to see the result."
 
     def _type(self, args):
         short, hit = self._ref(args)
         if args.get("text") is None:
             raise McpError("text is needed")
-        text, sig, submit = str(args["text"]), self._sig(hit), args.get("submit") is True
+        text, judged, submit = str(args["text"]), self._judged("type", args, hit), args.get("submit") is True
         try:
-            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref(args, sig), "text": text, "replace": True}))
+            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref("type", args, judged), "text": text, "replace": True}))
         except McpError as e:
             if "replace=true could not select" not in str(e).lower():
                 raise
@@ -3105,10 +3147,10 @@ class Adapter:
             if val != "":
                 held = f'it holds "{_clip(val, 40)}"' if val else "it holds text that is not shown"
                 raise McpError(f"this field's text can't be replaced automatically ({held}). Use Take over to clear it, or ask_user.")
-            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref(args, sig), "text": text}))
+            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref("type", args, judged), "text": text}))
         self._typed.add(short)
         if submit:                                           # Enter as a key press; an inserted "\n" would not submit
-            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref(args, sig), "text": "\n", "mode": "keystrokes"}))
+            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref("type", args, judged), "text": "\n", "mode": "keystrokes"}))
         return f"Typed into {_clip(hit['facts']['name'], 60) or short}" + (" and pressed Enter" if submit else "") + "; read the page to see the result."
 
     def _scroll(self, args):
@@ -3305,8 +3347,8 @@ class Adapter:
 
     def _click_app(self, args):
         short, hit = self._ref(args)
-        sig = self._sig(hit)
-        self._app_act(lambda: ("click", {"element_token": self._token(self._same_ref(args, sig))}))
+        judged = self._judged("click_app", args, hit)
+        self._app_act(lambda: ("click", {"element_token": self._token(self._same_ref("click_app", args, judged))}))
         return f"Clicked {_clip(hit['facts']['name'], 60) or short}; read the app to see the result."
 
     def _type_app(self, args):
@@ -3319,13 +3361,14 @@ class Adapter:
         lines = str(args["text"]).replace("\r\n", "\n").replace("\r", "\n").split("\n")
         if len(lines) > AGENT_TYPE_LINES:
             raise McpError(f"the text has more than {AGENT_TYPE_LINES} lines; type less at once")
-        sig, settable = self._sig(hit), role in _SETTABLE
+        judged, settable = self._judged("type_app", args, hit), role in _SETTABLE
+        same = lambda: self._token(self._same_ref("type_app", args, judged))          # noqa: E731
         for i, line in enumerate(lines):                     # type_text has no special keys: each new line is a Return key press
             if line:
-                self._app_act(lambda: ("set_value", {"pid": self.app_pid, "value": line, "element_token": self._token(self._same_ref(args, sig))}) if settable
-                              else ("type_text", {"text": line, "element_token": self._token(self._same_ref(args, sig))}))
+                self._app_act(lambda: ("set_value", {"pid": self.app_pid, "value": line, "element_token": same()}) if settable
+                              else ("type_text", {"text": line, "element_token": same()}))
             if i < len(lines) - 1:
-                self._app_act(lambda: ("press_key", {"key": "return", "pid": self.app_pid, "element_token": self._token(self._same_ref(args, sig))}))
+                self._app_act(lambda: ("press_key", {"key": "return", "pid": self.app_pid, "element_token": same()}))
         return (f"Typed into {_clip(hit['facts']['name'], 60) or short}" + (f" and pressed Return {len(lines) - 1}x" if len(lines) > 1 else "")
                 + "; read the app to see the result.")
 

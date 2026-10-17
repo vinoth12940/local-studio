@@ -835,7 +835,18 @@ def gate_table():
         ('ddg dot segment 9', "open_url", {"url": 'https://google.com/%73earch?q=x'}, None, _gc(task_domains=set(), domain=None), "risky"),
         ('ddg dot segment 10', "open_url", {"url": 'https://bing.com/search/../ck/a?u=x'}, None, _gc(task_domains=set(), domain=None), "risky"),
         ('ddg dot segment 11', "open_url", {"url": 'https://duckduckgo.com/html//../l/?uddg=https%3A%2F%2Fevil.net%2F%3Fd%3DSECRET'}, None, _gc(task_domains=set(), domain=None), "risky"),
-        ('ddg /html exact', "open_url", {"url": 'https://duckduckgo.com/html'}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ('ddg /html with no query', "open_url", {"url": 'https://duckduckgo.com/html'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg /html/ with no query', "open_url", {"url": 'https://duckduckgo.com/html/'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg /html/ empty q', "open_url", {"url": 'https://duckduckgo.com/html/?q='}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg /html/ other key only', "open_url", {"url": 'https://duckduckgo.com/html/?x=1'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg semicolon bang (ledger)', "open_url", {"url": 'https://duckduckgo.com/html/?x=1;q=!g%20foo'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg semicolon ducky', "open_url", {"url": 'https://duckduckgo.com/?q=cats;q=%5Cevil'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg semicolon plain', "open_url", {"url": 'https://duckduckgo.com/html/?q=cats;kl=us-en'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('google semicolon', "open_url", {"url": 'https://www.google.com/search?q=x;y'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('bing semicolon', "open_url", {"url": 'https://www.bing.com/search?q=x;q=!g'}, None, _gc(task_domains=set(), domain=None), "risky"),
+        ('ddg encoded semicolon is text', "open_url", {"url": 'https://duckduckgo.com/html/?q=a%3Bb'}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ('ddg plus-joined words', "open_url", {"url": 'https://duckduckgo.com/html/?q=best+laptops+2026'}, None, _gc(task_domains=set(), domain=None), "safe"),
+        ('ddg second q bang', "open_url", {"url": 'https://duckduckgo.com/html/?q=cats&q=!g'}, None, _gc(task_domains=set(), domain=None), "risky"),
         ('ddg /html/ exact', "open_url", {"url": 'https://duckduckgo.com/html/?q=cats'}, None, _gc(task_domains=set(), domain=None), "safe"),
         ('ddg /HTML/ case', "open_url", {"url": 'https://DuckDuckGo.com/HTML/?q=cats'}, None, _gc(task_domains=set(), domain=None), "safe"),
         ('ddg / with q', "open_url", {"url": 'https://duckduckgo.com/?q=cats+dogs'}, None, _gc(task_domains=set(), domain=None), "safe"),
@@ -1044,12 +1055,39 @@ def gate_never_vouches_for_this_mac():
     assert G("click", {"ref": "e1"}, _gf("link", "Next", href="https://example.com/2"), _gc())[0] == "safe"
 
 
+def app_title_html_safe(t):
+    """Only the label's own ** pair is unescaped: the typed text cannot open bold or a link on the card."""
+    return t.replace("\\*", "").count("**") == 2
+
+
 @check
 def approval_titles():
     T = app.approval_title
     assert T("click", _gf("link", "Place order"), _gc(domain="shop.example.com")) == "Click **Place order** on shop.example.com"
     assert T("click", _gf("button", ""), _gc()) == "Click **button** on example.com"
     assert T("type", _gf("textbox", "Message"), _gc()) == "Type into **Message** on example.com"
+    # typing shows what will be typed and whether Enter follows (I3)
+    A = lambda **kw: {"ref": "e2", **kw}                        # noqa: E731
+    assert T("type", _gf("textbox", "Comment"), _gc(domain="forum.example"), A(text="hello there", submit=True)) == \
+        "Type \u201chello there\u201d into **Comment** on forum.example and press Enter"
+    assert T("type", _gf("textbox", "Message"), _gc(), A(text="hi\n")) == "Type \u201chi\u2039U+000A\u203a\u201d into **Message** on example.com and press Enter"
+    assert T("type", _gf("textbox", "Message"), _gc(), A(text="hi", submit=False)) == "Type \u201chi\u201d into **Message** on example.com"
+    t = T("type", _gf("textbox", "Message"), _gc(), A(text="**Send** ![x](https://evil.net/t.png) `c` a\u200bb", submit=True))
+    assert t == ("Type \u201c\\*\\*Send\\*\\* \\!\\[x\\]\\(https\\://evil.net/t.png\\) \\`c\\` a\u2039U+200B\u203ab\u201d into **Message** "
+                 "on example.com and press Enter"), t
+    assert app_title_html_safe(t)
+    t = T("type", _gf("textbox", "Message"), _gc(), A(text="x" * 300, submit=True))
+    assert t.startswith("Type \u201c" + "x" * 70) and "\u2026\u201d into **Message**" in t and len(t) < 160, t
+    # never the text of a field that may hold a secret, or of a target nobody could identify
+    for f in (_gf("textbox", "Code", sensitive_unknown=True), _gf("textbox", "Password", input_type="password"),
+              _gf("textbox", "Card", autocomplete="cc-number"), None):
+        t = T("type", f, _gc(), A(text="hunter2-secret", submit=True))
+        assert "hunter2" not in t and t.startswith("Type the text you can't see into **") and t.endswith(" on example.com and press Enter"), t
+    assert T("type_app", _gf("textfield", "Body"), _ac("ask", "Mail"), A(text="Hi Ann")) == "Type \u201cHi Ann\u201d into **Body** in Mail"
+    assert T("type_app", _gf("textfield", "Body"), _ac("ask", "Mail"), A(text="Hi\r\nBye\n")) == \
+        "Type \u201cHi \u21b5 Bye\u201d into **Body** in Mail and press Return 2\u00d7"
+    assert T("type_app", _gf("textfield", "To"), _ac("ask", "Mail"), A(text="\n")) == "Type \u201c\u201d into **To** in Mail and press Return 1\u00d7"
+    assert T("type_app", _gf("popupbutton", "Folder"), _ac("ask", "Mail"), A(text="Archive")) == "Choose **Archive** in **Folder** in Mail"
     assert T("type_app", _gf("textfield", "Body"), _ac("ask", "Mail")) == "Type into **Body** in Mail"
     assert T("click_app", _gf("button", "Send"), _ac("ask", "Mail")) == "Click **Send** in Mail"
     assert T("download", _gf("link", "Report.pdf"), _gc()) == "Download **Report.pdf** on example.com"
@@ -1843,6 +1881,107 @@ def stale_retry_never_hits_another_control():
     out = a.execute("type", {"ref": "e1", "text": "x", "submit": True})
     assert out == "Error: the page changed; read_page to refresh" and len(c.of("browser_type")) == 2, (out, c.of("browser_type"))
     # an unchanged control is retried as before (stale_binding_rebinds covers the success path)
+
+
+@check
+def stale_retry_rechecks_the_gate():
+    """A retry after a stale or wrong-target refusal acts only on what was judged: the same domain, and a control the gate
+    would not now judge more strictly (a submit, a possibly sensitive field). An unchanged control is retried as before."""
+    where = {"url": "https://github.com/login", "submit": False}
+
+    def state(args):
+        if "pid" in args:
+            return _tr(_fx("browser_bind"))
+        if args.get("snapshot_format") == "semantic_v2":
+            sem = copy.deepcopy(_fx("browser_semantic_login"))
+            sem["page"]["url"] = where["url"]
+            return _tr(sem)
+        return _tr(dict(_fx("browser_domrefs_login"), url=where["url"]))
+
+    real_view = app.browser_view
+
+    def view(*a, **kw):                                      # the page's script turned the control into a submit, same name
+        v = real_view(*a, **kw)
+        if where["submit"]:
+            for r in v["refs"].values():
+                if r["facts"]["name"] == "Terms":
+                    r["facts"] = {**r["facts"], "is_submit": True}
+        return v
+
+    app.browser_view = view
+    try:
+        c, a = web_adapter(get_browser_state=state)
+        a.execute("open_url", {"url": "https://github.com/login"})
+        v = a.observe()
+        ref = next(k for k, r in v["refs"].items() if r["facts"]["name"] == "Terms")
+        assert app.gate("click", {"ref": ref}, v["refs"][ref]["facts"], _gc(domain="github.com"))[0] == "safe"
+
+        def stale_then(change):
+            def f(args):
+                change()
+                c.script["browser_click"] = _tr(_fx("browser_click_dom_result"))
+                return STALE
+            return f
+        # 1. same name, now a submit: refused, and only the first click was ever sent
+        c.script["browser_click"] = stale_then(lambda: where.update(submit=True))
+        n = len(c.of("browser_click"))
+        out = a.execute("click", {"ref": ref})
+        assert out == "Error: the page changed; read_page to refresh", out
+        assert len(c.of("browser_click")) == n + 1, c.of("browser_click")[n:]
+        # 2. same controls on another site after a redirect: refused
+        where.update(submit=False)
+        v = a.observe()
+        c.script["browser_click"] = stale_then(lambda: where.update(url="https://evil.example/login"))
+        n = len(c.of("browser_click"))
+        out = a.execute("click", {"ref": ref})
+        assert out == "Error: the page changed; read_page to refresh" and len(c.of("browser_click")) == n + 1, (out, c.of("browser_click")[n:])
+        # typing: the same field now asks for a one-time code (blocked, where it was only risky) is refused too
+        where.update(url="https://github.com/login")
+        v = a.observe()
+        user = next(k for k, r in v["refs"].items() if r["facts"]["name"] == "Username or email address")
+        def sensitive(*a_, **kw):
+            out_ = real_view(*a_, **kw)
+            if where.get("sens"):
+                for r in out_["refs"].values():
+                    if r["facts"]["name"] == "Username or email address":
+                        r["facts"] = {**r["facts"], "autocomplete": "one-time-code"}
+            return out_
+        app.browser_view = sensitive
+        c.script["browser_type"] = [STALE, _tr(_fx("browser_type_result"))]
+        where["sens"] = True
+        n = len(c.of("browser_type"))
+        out = a.execute("type", {"ref": user, "text": "me@example.com"})
+        assert out == "Error: the page changed; read_page to refresh" and len(c.of("browser_type")) == n + 1, (out, c.of("browser_type")[n:])
+        # 3. nothing changed: the retry clicks
+        where["sens"] = False
+        v = a.observe()
+        c.script["browser_click"] = stale_then(lambda: None)
+        n = len(c.of("browser_click"))
+        out = a.execute("click", {"ref": ref})
+        assert out.startswith("Clicked") and len(c.of("browser_click")) == n + 2, (out, c.of("browser_click")[n:])
+    finally:
+        app.browser_view = real_view
+    # apps: the same rule, keyed by the app
+    real_app_view = app.app_view
+    flip = {"on": False}
+
+    def aview(*a_, **kw):
+        out_ = real_app_view(*a_, **kw)
+        if flip["on"]:
+            for r in out_["refs"].values():
+                r["facts"] = {**r["facts"], "is_submit": True}
+        return out_
+    app.app_view = aview
+    try:
+        c2, a2, v2 = _opened()
+        e2 = _aref(v2, 150)
+        assert app.gate("click_app", {"ref": e2}, v2["refs"][e2]["facts"], _ac())[0] == "safe", v2["refs"][e2]["facts"]
+        c2.st.n += 1                                         # the tree moved on: one re-read, and now the control submits
+        flip["on"] = True
+        out = a2.execute("click_app", {"ref": e2})
+        assert out == "Error: the app changed and its refs were renumbered; use the newest view" and len(c2.of("click")) == 1, (out, c2.names())
+    finally:
+        app.app_view = real_app_view
 
 
 WRONG_TEXT = ("refused (browser_wrong_target_refused): CDP window no longer has an exact geometry or singleton-cardinality "
@@ -3794,7 +3933,7 @@ def ask_app_pauses_on_type():
         e.start("Write hello in Mail")
         e.status("waiting")
         ap = e.ev("approval")[-1]
-        assert ap["n"] == 2 and ap["tool"] == "type_app" and ap["title"] == "Type into **Text 54** in Mail" and "Mail" in ap["reason"], ap
+        assert ap["n"] == 2 and ap["tool"] == "type_app" and ap["title"] == "Type \u201cHello\u201d into **Text 54** in Mail" and "Mail" in ap["reason"], ap
         assert ap["shot"] == "2-ask.png" and (app.AGENT_RUNS / e.rid / "2-ask.png").read_bytes() == PNG and ap["box"]
         assert not c.of("type_text")                                                    # nothing happens before the user answers
         assert c.calls[-1][0] == "get_window_state" and c.calls[-1][1].get("max_elements") == 400    # the card used the read's own picture: no new snapshot after it
@@ -3878,7 +4017,7 @@ def settable_values_are_judged():
     assert app.gate("type_app", {"ref": "e1", "text": "Date"}, _lf("Sort By"), _ac("ask"))[0] == "risky"
     T = app.approval_title
     assert T("type_app", _lf("Action"), ctx, {"text": "Delete All"}) == "Choose **Delete All** in **Action** in Notes"
-    assert T("type_app", _lf("Title", "textfield"), ctx, {"text": "x"}) == "Type into **Title** in Notes"
+    assert T("type_app", _lf("Title", "textfield"), ctx, {"text": "x"}) == "Type \u201cx\u201d into **Title** in Notes"
     # through a run: the pull-down choice waits for the user, and nothing is set before the answer
     c = app_client()[0]
     pop = _aref(app.app_view({**NOTES, "elements": NOTES["elements"] + [{"element_index": 900, "role": "AXPopUpButton", "label": "Sort By", "actions": ["AXPress"], "frame": {"x": 1, "y": 1, "w": 5, "h": 5}}]}), 900)
