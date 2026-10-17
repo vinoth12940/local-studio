@@ -3476,7 +3476,7 @@ class Adapter:
                 self._app_act(lambda: ("set_value", {"pid": self.app_pid, "value": line, "element_token": same()}) if settable
                               else ("type_text", {"text": line, "element_token": same()}))
             if i < len(lines) - 1:
-                self._app_act(lambda: ("press_key", {"key": "return", "pid": self.app_pid, "element_token": same()}))
+                self._app_act(lambda: ("press_key", {"key": "return", "pid": self.app_pid, "window_id": self.app_window, "element_token": same()}))
         return (f"Typed into {_clip(hit['facts']['name'], 60) or short}" + (f" and pressed Return {len(lines) - 1}x" if len(lines) > 1 else "")
                 + "; read the app to see the result.")
 
@@ -3503,8 +3503,8 @@ class Adapter:
         if bad is not None:                                  # only keys the gate has a name for are ever sent
             raise McpError(f"unknown key {_clip(bad, 20)!r}")
         if len(toks) == 1:
-            self._app_once("press_key", {"key": toks[0], "pid": self.app_pid})
-        else:
+            self._app_once("press_key", {"key": toks[0], "pid": self.app_pid, "window_id": self.app_window})
+        else:                                                # always the bound window: a pid alone is ambiguous_window_target in an app with several
             self._app_once("hotkey", {"keys": toks, "pid": self.app_pid, "window_id": self.app_window})
         return f"Pressed {_clip('+'.join(toks), 60)}; read the app to see the result."
 

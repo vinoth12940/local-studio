@@ -3987,9 +3987,9 @@ def type_app_newline_presses_return():
     assert out.startswith("Typed into") and "Return" in out, out
     calls = [(n, x) for n, x in c.calls if n in ("type_text", "press_key", "set_value")]
     assert calls == [("type_text", {"text": "Line one", "element_token": tok, "session": "ls-abc123"}),
-                     ("press_key", {"key": "return", "pid": 12282, "element_token": tok, "session": "ls-abc123"}),
+                     ("press_key", {"key": "return", "pid": 12282, "window_id": 480, "element_token": tok, "session": "ls-abc123"}),
                      ("type_text", {"text": "Line two", "element_token": tok, "session": "ls-abc123"}),
-                     ("press_key", {"key": "return", "pid": 12282, "element_token": tok, "session": "ls-abc123"})], calls
+                     ("press_key", {"key": "return", "pid": 12282, "window_id": 480, "element_token": tok, "session": "ls-abc123"})], calls
     c.calls.clear()
     a.execute("type_app", {"ref": e, "text": "Plain"})
     assert c.names() == ["type_text"] and c.calls[0][1]["text"] == "Plain"
@@ -4017,14 +4017,14 @@ def menu_maps_to_invoke_menu():
     c.script["invoke_menu"] = _tr({"status": "refused", "refusal": {"message": "menu item not found: New Notez"}}, ok=False)
     assert a.execute("menu", {"app": "Notes", "path": ["File", "New Notez"]}) == "Error: menu item not found: New Notez"
     assert len(c.of("get_window_state")) == 1                                          # a menu is not retried through a re-read
-    # hotkey: the open app's pid; a lone key is a key press
+    # hotkey: the open app's pid and window (an app with several windows refuses a pid alone: ambiguous_window_target); a lone key is a key press
     c.calls.clear()
     assert a.execute("hotkey", {"keys": ["cmd", "n"]}).startswith("Pressed cmd+n")
     a.execute("hotkey", {"keys": ["Cmd+Shift+4"]})
     a.execute("hotkey", {"keys": ["Return"]})
     assert c.calls == [("hotkey", {"keys": ["cmd", "n"], "pid": 12282, "window_id": 480, "session": "ls-abc123"}),
                        ("hotkey", {"keys": ["cmd", "shift", "4"], "pid": 12282, "window_id": 480, "session": "ls-abc123"}),
-                       ("press_key", {"key": "return", "pid": 12282, "session": "ls-abc123"})], c.calls
+                       ("press_key", {"key": "return", "pid": 12282, "window_id": 480, "session": "ls-abc123"})], c.calls
     assert a.execute("hotkey", {"keys": []}).startswith("Error: keys must be a list")
 
 
