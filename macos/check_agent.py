@@ -68,6 +68,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app  # noqa: E402
 import base64  # noqa: E402
 
+REAL_PROFILE = app.AGENT_PROFILE
+app.AGENT_PROFILE = TMP / "NoProfile" / "local-studio"     # no check may read or write the real browser profile
 app.CUA_DRIVER = str(TMP / "no-cua-driver")               # the real one is installed on this Mac: no check may run it
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -2447,8 +2449,76 @@ def shots_route_rejects_traversal():
 
 
 @check
+def profile_crash_flag_repaired_before_prepare():
+    real = app.AGENT_PROFILE
+    prof = TMP / "CrashProfile" / "local-studio"
+    (prof / "Default").mkdir(parents=True)
+    prefs = prof / "Default" / "Preferences"
+    prefs.write_text(json.dumps({"profile": {"exit_type": "Crashed", "exited_cleanly": False, "name": "Me"}, "other": [1, 2]}))
+    app.AGENT_PROFILE = prof
+    try:
+        seen = []
+        c, a = web_adapter(browser_prepare=lambda args: (seen.append(json.loads(prefs.read_text())["profile"]["exit_type"]), _tr(_fx("browser_prepare")))[1])
+        assert not a.execute("open_url", {"url": "https://example.com"}).startswith("Error")
+        assert seen == ["Normal"], seen                                      # fixed before Chrome was launched
+        d = json.loads(prefs.read_text())
+        assert d == {"profile": {"exit_type": "Normal", "exited_cleanly": True, "name": "Me"}, "other": [1, 2]}, d
+        assert [p.name for p in prefs.parent.iterdir()] == ["Preferences"]      # no temp file left behind
+        # a missing or broken file is skipped silently
+        prefs.write_text("{not json")
+        c2, a2 = web_adapter()
+        assert not a2.execute("open_url", {"url": "https://example.com"}).startswith("Error") and prefs.read_text() == "{not json"
+        prefs.unlink()
+        c3, a3 = web_adapter()
+        assert not a3.execute("open_url", {"url": "https://example.com"}).startswith("Error") and not prefs.exists()
+        # a Chrome that is still using the profile is left alone
+        prefs.write_text(json.dumps({"profile": {"exit_type": "Crashed"}}))
+        orig = app.subprocess.run
+        app.subprocess.run = lambda *x, **k: type("R", (), {"stdout": b"123\n", "returncode": 0})()
+        try:
+            c4, a4 = web_adapter()
+            a4.execute("open_url", {"url": "https://example.com"})
+        finally:
+            app.subprocess.run = orig
+        assert json.loads(prefs.read_text())["profile"]["exit_type"] == "Crashed"
+    finally:
+        app.AGENT_PROFILE = real
+
+
+def _quality(by_window):
+    """get_browser_state script: the bind result of window_id -> (binding_quality, mutation_allowed)."""
+    def state(args):
+        if "pid" in args:
+            q, m = by_window[args["window_id"]]
+            return _tr({**BIND, "binding_quality": q, "mutation_allowed": m})
+        return _tr(_fx("browser_domrefs_login")) if args.get("snapshot_format") == "dom_refs_v1" else _tr(_fx("browser_semantic_login"))
+    return state
+
+
+@check
+def heuristic_bind_tries_other_windows():
+    wins = _tr({"windows": [{"pid": 47601, "window_id": w, "is_on_screen": True, "bounds": {"x": 0, "y": 0, "width": wd, "height": h}}
+                            for w, wd, h in ((7, 1081, 881), (8, 900, 700), (9, 1, 1), (10, 1200, 200))]})
+    c, a = web_adapter(list_windows=wins, get_browser_state=_quality({7: ("heuristic", False), 8: ("exact", True)}))
+    out = a.execute("open_url", {"url": "https://example.com"})
+    assert not out.startswith("Error"), out
+    assert [x["window_id"] for x in c.of("get_browser_state") if "window_id" in x] == [7, 8], c.of("get_browser_state")   # largest first; tiny ones never tried
+    assert a.window_id == 8 and len(c.of("browser_navigate")) == 1
+
+
+@check
+def heuristic_bind_everywhere_errors_clearly():
+    wins = _wins((47601, 7, True, 800), (47601, 8, True, 700))
+    c, a = web_adapter(list_windows=wins, get_browser_state=_quality({7: ("heuristic", False), 8: ("exact", False)}))
+    out = a.execute("open_url", {"url": "https://example.com"})
+    assert out == "Error: " + app.AGENT_INEXACT_BIND and "Close any dialogs" in out and "reset the browser profile in Settings" in out, out
+    assert "browser_navigate" not in c.names() and len(c.of("get_browser_state")) == 2, c.names()
+
+
+@check
 def profile_reset_refused_while_running():
     real = app.AGENT_PROFILE
+    assert str(REAL_PROFILE).endswith("Library/Application Support/CuaDriver/BrowserProfiles/local-studio")
     prof = TMP / "Profiles" / "local-studio"
     (prof / "Default").mkdir(parents=True)
     (prof / "Default" / "Cookies").write_text("x")
@@ -2466,7 +2536,6 @@ def profile_reset_refused_while_running():
         assert c.post("/api/agent/profile/reset").status_code == 200                       # nothing to delete is fine
     finally:
         app.AGENT_PROFILE = real
-    assert str(real).endswith("Library/Application Support/CuaDriver/BrowserProfiles/local-studio")
 
 
 @check

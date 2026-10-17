@@ -2439,6 +2439,9 @@ AGENT_TOOLS = [
     _tool_schema("done", "Finish the task and give the user the answer.", {"answer": {"type": "string", "description": "What you found or did"}}, ["answer"]),
 ]
 
+AGENT_MIN_WINDOW = 300                                       # a window smaller than this (either side) is a bubble or a helper, never the page
+AGENT_INEXACT_BIND = ("Couldn't attach to the agent's browser window exactly. Close any dialogs in it (Take over), "
+                      "or reset the browser profile in Settings.")
 AGENT_BIND_TRIES = 10                                        # list_windows polls for the isolated browser's window (0.5 s apart)
 AGENT_SCROLL_PX = 600
 AGENT_VIEWPORT = (600, 400)                                  # where a scroll is aimed when the snapshot did not give the viewport size
@@ -2526,6 +2529,28 @@ def _match_app(apps, name):
     return sorted(hits, key=lambda a: not a["running"])[0], None
 
 
+def _repair_agent_profile():
+    """If no Chrome is using the agent's profile, clear the crash flag an abrupt close left in its Preferences, so the next launch
+    does not open a "Restore pages?" bubble (which makes CuaDriver bind only heuristically). Touches that one file and nothing else."""
+    prefs = AGENT_PROFILE / "Default" / "Preferences"
+    try:
+        if not prefs.is_file() or subprocess.run(["pgrep", "-f", re.escape(str(AGENT_PROFILE))], capture_output=True).stdout.strip():
+            return
+        data = json.loads(prefs.read_text(encoding="utf-8"))
+        prof = data.get("profile") if isinstance(data, dict) else None
+        if not isinstance(data, dict) or (prof is not None and not isinstance(prof, dict)):
+            return
+        prof = data.setdefault("profile", {})
+        if prof.get("exit_type") == "Normal" and prof.get("exited_cleanly") is True:
+            return
+        prof["exit_type"], prof["exited_cleanly"] = "Normal", True
+        tmp = prefs.with_name(prefs.name + ".ls-tmp")
+        tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, prefs)
+    except (OSError, ValueError):
+        pass                                                 # missing or unreadable: leave it to Chrome
+
+
 class Adapter:
     """What the agent loop talks to for a web run. One CuaDriver session (`session`) for the whole run; the isolated
     browser lives until close(). Short refs (e1..) belong to the last view this adapter read: observe() and read_page
@@ -2559,31 +2584,45 @@ class Adapter:
     def _bind(self):
         for fresh in (self.pid is None, True):               # a known pid whose window is gone is prepared once more
             if self.pid is None:
+                _repair_agent_profile()                      # a crash flag makes Chrome open "Restore pages?" and bind only heuristically
                 res = self._call("browser_prepare", {"allow_launch": True, "profile": {"mode": "isolated_named", "name": "local-studio"}})
                 pid = (res.get("data") or {}).get("prepared_pid")
                 if _cua_problem(res) or not isinstance(pid, int):
                     raise McpError(_cua_problem(res) or "the browser did not start")
                 self.pid = pid
-            win = None
+            wins = []
             for i in range(AGENT_BIND_TRIES):
                 res = self._call("list_windows", {"pid": self.pid})
-                win = next((w for w in (res.get("data") or {}).get("windows") or []
-                            if w.get("pid") == self.pid and w.get("is_on_screen") and ((w.get("bounds") or {}).get("height") or 0) > 300), None)
-                if win:
+                wins = [w for w in (res.get("data") or {}).get("windows") or []
+                        if w.get("pid") == self.pid and w.get("is_on_screen")
+                        and ((w.get("bounds") or {}).get("height") or 0) >= AGENT_MIN_WINDOW
+                        and ((w.get("bounds") or {}).get("width") or 0) >= AGENT_MIN_WINDOW]
+                if wins:
                     break
                 if i < AGENT_BIND_TRIES - 1:
                     _agent_sleep(0.5)
-            if win:
+            if wins:
                 break
             if fresh:
                 raise McpError("the browser window did not appear")
             self.pid = None
-        res = self._call("get_browser_state", {"pid": self.pid, "window_id": win["window_id"]})
-        d = res.get("data") or {}
-        tab = next((t.get("tab_id") for t in d.get("tabs") or [] if t.get("tab_id")), None)
-        if _cua_problem(res) or not d.get("target_id") or not tab:
-            raise McpError(_cua_problem(res) or "could not attach to the browser tab")
-        self.window_id, self.target, self.tab, self._rebind_due = win["window_id"], d["target_id"], tab, False
+        area = lambda w: ((w.get("bounds") or {}).get("width") or 0) * ((w.get("bounds") or {}).get("height") or 0)   # noqa: E731
+        first_problem, inexact = None, False
+        for win in sorted(wins, key=area, reverse=True):     # largest first; only an exact binding may be used to act
+            res = self._call("get_browser_state", {"pid": self.pid, "window_id": win["window_id"]})
+            d = res.get("data") or {}
+            tab = next((t.get("tab_id") for t in d.get("tabs") or [] if t.get("tab_id")), None)
+            if _cua_problem(res) or not d.get("target_id") or not tab:
+                first_problem = first_problem or _cua_problem(res) or "could not attach to the browser tab"
+                continue
+            if d.get("mutation_allowed") is False or d.get("binding_quality") not in (None, "exact"):
+                inexact = True
+                continue
+            self.window_id, self.target, self.tab, self._rebind_due = win["window_id"], d["target_id"], tab, False
+            return
+        if inexact:
+            raise McpError(AGENT_INEXACT_BIND)
+        raise McpError(first_problem)
 
     def _ids(self):
         if self.target is None:
