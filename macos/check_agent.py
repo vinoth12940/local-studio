@@ -59,6 +59,7 @@ if "--fake-cua" in sys.argv:
 import re
 import tempfile
 import time
+import types
 from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp(dir="/tmp"))                  # short: the state's socket path must stay under 104 bytes, whatever TMPDIR is
@@ -648,7 +649,7 @@ def app_tiers():
     assert t("Keychain Access", {}) == "read" and t("System Settings", {}) == "read" and t("iTerm2", {}) == "read"
     assert t("1Password", {}) == "read" and t("Terminal.app", {}) == "read"
     assert t("Mail", {}) == "ask" and t("Slack", {}) == "ask" and t("finder", {}) == "ask"
-    assert t("Notes", {}) == "allowed" and t("Safari", {}) == "allowed"
+    assert t("Notes", {}) == "allowed" and t("Safari", {}) == "ask"          # the user's own browser holds their sign-ins
     assert t("Mail", {"Mail": "allowed"}) == "allowed" and t("Notes", {"Notes": "ask"}) == "ask"
     assert t("Chase Bank", {"Chase Bank": "allowed"}) == "allowed"
     for n in ("Chase", "PayPal", "Coinbase", "Robinhood", "LastPass", "Dashlane", "Ghostty", "kitty", "Alacritty", "WezTerm",
@@ -671,6 +672,30 @@ def app_tiers():
     assert t("Zoom Pay", {"Zoom Pay": "ask"}) == "ask"                 # an override still wins
     assert t("Mail", {"Mail": "bogus"}) == "ask"                       # a junk override is ignored
     assert app.RISKY_WORDS.search("Place order") and not app.RISKY_WORDS.search("Bold")
+
+
+@check
+def own_app_and_users_browsers_have_default_tiers():
+    """Local Studio itself is look-only; the user's own browsers (their sign-ins, saved cards) ask first, by name and by bundle id
+    (a localized or renamed app still matches). The agent's isolated Chrome is the browser surface, which has no app tier."""
+    t = app.app_tier
+    assert t("Local Studio", {}) == "read" and t("Local Studio.app", {}) == "read" and t("Studio", {}, "com.localstudio.app") == "read"
+    browsers = {"Safari": "com.apple.Safari", "Google Chrome": "com.google.Chrome", "Firefox": "org.mozilla.firefox",
+                "Arc": "company.thebrowser.Browser", "Microsoft Edge": "com.microsoft.edgemac", "Brave": "com.brave.Browser",
+                "Opera": "com.operasoftware.Opera", "Vivaldi": "com.vivaldi.Vivaldi"}
+    for name, bid in browsers.items():
+        assert t(name, {}) == "ask", name
+        assert t("Navigateur", {}, bid) == "ask", bid                   # by bundle id alone
+        assert t(name, {name: "allowed"}) == "allowed", name            # the user can still allow it
+    assert t("Brave Browser", {}) == "ask" and t("Google Chrome Canary", {}) == "ask"
+    assert t("Local Studio", {"Local Studio": "allowed"}) == "allowed"
+    # the agent's own browser: the browser surface carries no tier, so a page click is judged as before
+    ad = types.SimpleNamespace(surface="browser", app=None, bundle_id=None, domain="example.com", link_domains={"docs.other.org"})
+    loop = types.SimpleNamespace(ad=ad, tiers={}, task_domains={"example.com"})
+    ctx = app._AgentLoop.ctx(loop, {"text": "x", "refs": {}})
+    assert ctx["surface"] == "browser" and ctx["tier"] is None, ctx
+    assert app.gate("click", {"ref": "e1"}, _gf("link", "Docs"), ctx)[0] == "safe"
+    assert app.gate("open_url", {"url": "https://example.com/a"}, None, ctx)[0] == "safe"
 
 
 @check

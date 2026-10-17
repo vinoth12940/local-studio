@@ -2235,19 +2235,24 @@ APP_TIERS_DEFAULT = {
         "E*TRADE", "Binance", "Kraken", "Quicken", "YNAB",
         "LastPass", "Dashlane", "Keeper", "Enpass", "KeePassXC", "Proton Pass",
         "Ghostty", "kitty", "Alacritty", "WezTerm", "Hyper", "Tabby",
-        "Shortcuts", "Script Editor", "Automator")},
+        "Shortcuts", "Script Editor", "Automator",
+        "Local Studio")},                                    # the agent never drives the app that runs it
     **{n: "ask" for n in (
         "Mail", "Messages", "WhatsApp", "Slack", "Calendar", "Finder",
-        "Telegram", "Discord", "Signal", "Microsoft Teams", "Skype", "LINE", "WeChat", "Zoom", "zoom.us", "Outlook", "Microsoft Outlook")},
+        "Telegram", "Discord", "Signal", "Microsoft Teams", "Skype", "LINE", "WeChat", "Zoom", "zoom.us", "Outlook", "Microsoft Outlook",
+        # the user's own browsers hold their sign-ins and saved cards; the agent browses in its own isolated Chrome (the browser surface)
+        "Safari", "Google Chrome", "Firefox", "Arc", "Microsoft Edge", "Brave", "Opera", "Vivaldi")},
 }
 APP_TIERS_BUNDLE_DEFAULT = {                                  # the same defaults by bundle id, which a localized macOS ("Systemeinstellungen") does not change
     **{b: "read" for b in (
         "com.apple.systempreferences", "com.apple.keychainaccess", "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
         "com.mitchellh.ghostty", "com.apple.ScriptEditor2", "com.apple.Automator", "com.apple.shortcuts", "com.1password.1password",
-        "com.bitwarden.desktop", "com.apple.Passwords")},
+        "com.bitwarden.desktop", "com.apple.Passwords", "com.localstudio.app")},
     **{b: "ask" for b in (
         "com.apple.mail", "com.apple.MobileSMS", "net.whatsapp.WhatsApp", "com.tinyspeck.slackmacgap", "com.apple.iCal", "com.apple.finder",
-        "ru.keepcoder.Telegram", "com.hnc.Discord", "org.whispersystems.signal-desktop", "com.microsoft.teams2", "com.microsoft.Outlook", "us.zoom.xos")},
+        "ru.keepcoder.Telegram", "com.hnc.Discord", "org.whispersystems.signal-desktop", "com.microsoft.teams2", "com.microsoft.Outlook", "us.zoom.xos",
+        "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox", "company.thebrowser.Browser", "com.microsoft.edgemac",
+        "com.brave.Browser", "com.operasoftware.Opera", "com.vivaldi.Vivaldi")},
 }
 READ_ONLY_NAME = re.compile(r"bank|banking|finance|wallet|password|crypto|invest|broker|trading|pay\b", re.I)
 SEARCH_DOMAINS = frozenset(("duckduckgo.com", "google.com", "bing.com"))     # open_url may go to a search on exactly these hosts (_search_ok)
