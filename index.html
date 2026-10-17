@@ -942,8 +942,8 @@ function safeMd(s) {
     .replace(/^(\s{0,3}\[[^\]]+\]:\s*)(\S+)/gm, (m, a, u) => /^(https?:|mailto:|#)/i.test(u.replace(/^</, "")) ? m : a + "#");
 }
 // Answers from the Agent are page-steered text: they never carry an image into a chat (a same-origin one would load on every open).
-function agNoImages(s) {
-  return String(s || "").replace(/!\[([^\]]*)\]\(((?:[^()]|\([^()]*\))*)\)/g, "$1").replace(/!\[([^\]]*)\](?:\[[^\]]*\])?/g, "$1");
+function agNoImages(s) {                                     // a "!" before "[" is what makes an image: without it every form is a link or plain text, in one pass and again on any later one
+  return String(s || "").replace(/!+(?=\[)/g, "");
 }
 const agAnswerMd = (s) => safeMd(agNoImages(s));
 function md(s) {
@@ -1572,8 +1572,10 @@ function chSwapTurn(chat, m, prefer) {
   const old = (prefer && prefer.isConnected ? prefer : null) || $("thread").querySelector(`.turn.bot[data-i="${i}"]`);
   const tmp = document.createElement("div"); tmp.innerHTML = turnHTML(m, i);
   const el = tmp.firstElementChild;
-  if (old) old.replaceWith(el); else if (!streaming) renderThread();
-  return el;
+  if (old) { old.replaceWith(el); return el; }
+  if (streaming) return null;
+  renderThread();
+  return $("thread").querySelector(`.turn.bot[data-i="${i}"]`);                // the element now in the page
 }
 async function chEnded(c) {
   if (chRun !== c) return;
