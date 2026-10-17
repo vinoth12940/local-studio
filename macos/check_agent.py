@@ -4302,8 +4302,10 @@ def _degraded(st, how="reason"):
         if args.get("include_accessibility_tree") is False or not r.get("ok"):
             return r
         d = dict(r["data"])
-        if how == "reason":
+        if how in ("reason", "error"):
             d.update(degraded=True, degraded_reason="ax_window_unresolved: no AXWindow matches window 480")
+            if how == "error":                               # the same data on a result marked failed: still the reopen message
+                return _tr(d, ok=False, text="ax_window_unresolved")
         else:
             d.update(degraded=True, degraded_reason="other", background_input={"exact_window": {"status": "ax_unresolved"}})
         return _tr(d, image=PNG)
@@ -4318,7 +4320,7 @@ AX_MSG = ("Notes isn't exposing its window to the agent right now (macOS accessi
 def unresolved_app_window_asks_for_a_reopen():
     """A degraded get_window_state (ax_window_unresolved, or exact_window ax_unresolved) is a clear error, and click_app, type_app,
     menu and hotkey are refused without reaching CuaDriver until the app is read cleanly again (read_app / open_app)."""
-    for how in ("reason", "exact"):
+    for how in ("reason", "exact", "error"):
         c, a = app_client()
         c.script["get_window_state"] = _degraded(c.st, how)
         assert a.execute("open_app", {"name": "Notes"}).startswith("Opened Notes")

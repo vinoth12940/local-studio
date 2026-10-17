@@ -3448,8 +3448,8 @@ class Adapter:
                 self.app_window = self._app_main_window(self.app_pid, self.app or "the app", 3)["window_id"]
                 self._app_rebind_due = False
             res = self._call("get_window_state", {"pid": self.app_pid, "window_id": self.app_window, "max_elements": 400})
-            if _cua_problem(res) is None and res.get("data"):
-                break
+            if _ax_unresolved(res.get("data")) or _cua_problem(res) is None and res.get("data"):
+                break                                        # degraded (even on a failed result) is handled below, never retried
             if attempt:
                 raise McpError(_cua_problem(res) or "the app window could not be read")
         d = res["data"]
