@@ -61,7 +61,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TMP = Path(tempfile.mkdtemp())
+TMP = Path(tempfile.mkdtemp(dir="/tmp"))                  # short: the state's socket path must stay under 104 bytes, whatever TMPDIR is
 os.environ["LOCAL_STUDIO_HOME"] = str(TMP / "state")      # never touch real user data
 os.environ["HF_HUB_CACHE"] = str(TMP / "hub")             # a Mac with no models downloaded
 (TMP / "state").mkdir()
@@ -351,6 +351,20 @@ def daemon_start_and_stop_use_open_and_pkill():
                 raise AssertionError("expected McpError")
     finally:
         app.AGENT_SOCK_WAIT_S = real
+    # a socket path a unix socket can't hold is a clear error before anything is started
+    real_sock = app.AGENT_SOCK
+    app.AGENT_SOCK = TMP / ("x" * 90) / "cua.sock"
+    try:
+        with Stub(lambda cmd: (1, "")) as s:
+            try:
+                app.start_agent_daemon()
+            except app.McpError as e:
+                assert "104" in str(e) and "too long" in str(e), e
+            else:
+                raise AssertionError("expected McpError")
+            assert not any(c[0] == "open" for c in s.calls), s.calls
+    finally:
+        app.AGENT_SOCK = real_sock
 
 
 @check
@@ -1061,6 +1075,21 @@ def app_title_html_safe(t):
 
 
 @check
+def task_domains_are_web_hosts_only():
+    """Only URL hosts and bare domains on a common web TLD vouch; file names (invoice.zip, Notes.app, report.pdf) never do."""
+    D = app._task_domains
+    assert D("Unzip invoice.zip and summarise it") == set()
+    assert D("Open Notes.app and add a note") == set()
+    assert D("Read report.pdf, then movie.mov and data.csv") == set()
+    assert D("Compare prices on amazon.com and bestbuy.com.") == {"amazon.com", "bestbuy.com"}
+    assert D("Check bbc.co.uk and news.ycombinator.com, then Wikipedia's page") == {"bbc.co.uk", "news.ycombinator.com"}
+    assert D("Look at https://files.example.zip/a and http://shop.example/x") == {"files.example.zip", "shop.example"}
+    assert D("Email bob@gmail.com about perplexity.ai and the github.io page of x.github.io") == {"gmail.com", "perplexity.ai", "github.io", "x.github.io"}
+    assert D("Open www.Example.org's pricing") == {"example.org"}
+    assert D("Visit 127.0.0.1:7860 or localhost") == set()
+
+
+@check
 def approval_titles():
     T = app.approval_title
     assert T("click", _gf("link", "Place order"), _gc(domain="shop.example.com")) == "Click **Place order** on shop.example.com"
@@ -1256,7 +1285,7 @@ def first_open_url_prepares_and_binds():
     assert not out.startswith("Error"), out
     assert c.names() == ["browser_prepare", "list_windows", "list_windows", "get_browser_state", "browser_navigate"], c.names()
     assert all(args["session"] == "ls-abc123" for _, args in c.calls)
-    assert c.of("browser_prepare")[0] == {"allow_launch": True, "profile": {"mode": "isolated_named", "name": "local-studio"}, "session": "ls-abc123"}
+    assert c.of("browser_prepare")[0] == {"allow_launch": True, "profile": {"mode": "isolated_named", "name": app.AGENT_PROFILE_NAME}, "session": "ls-abc123"}
     assert c.of("list_windows")[0] == {"pid": 47601, "session": "ls-abc123"} and SLEPT == [0.5], SLEPT
     assert c.of("get_browser_state")[0] == {"pid": 47601, "window_id": 7, "session": "ls-abc123"}
     tab, tgt = BIND["tabs"][0]["tab_id"], BIND["target_id"]
@@ -1795,7 +1824,7 @@ def read_page_matches_words_across_parts():
     model = Model(tc("open_url", url=LONG), tc("read_page", query="MacBook Pro M4 price"), tc("click", ref=e), tc("done", answer="ok"))
     c5, _, _ = paged_adapter(4, extra)
     with Env(model=model, client=c5) as env:
-        env.start("Find the MacBook Pro M4 price on news.example")
+        env.start("Find the MacBook Pro M4 price on https://news.example")
         env.finish()
         assert "MacBook Pro M4 costs" in env.model.text(2) and "Lines matching" in env.model.text(2), env.model.text(2)
         assert "MacBook Pro M4 costs" not in env.model.text(3)                                 # one step only, then the page again
@@ -2358,7 +2387,7 @@ def system_prompt_marks_page_text_untrusted():
     assert "<<<VIEW" in s and "VIEW>>>" in s
     assert "click(\"e12\")" in s and "done(" in s
     budget = app.est_tokens(s) + app.est_tokens(json.dumps(app.AGENT_TOOLS))
-    assert budget < 2000, budget
+    assert budget < 2300, budget                          # ~2.3k in the spec's context budget (14k in all)
 
 
 class _Resp:
@@ -2556,6 +2585,7 @@ class Env:
         app.model_installed = lambda m: True
         app.cua_status = lambda: dict(CUA_OK)
         app._cua_cache.clear()
+        app._cua_perm.clear()
         s = app.load_settings()
         s["agent"].update({"enabled": True, "max_steps": 40, "max_minutes": 15, "tiers": {}, **self.agent})
         app.SETTINGS.parent.mkdir(parents=True, exist_ok=True)
@@ -2573,6 +2603,7 @@ class Env:
         for k, v in self.saved.items():
             setattr(app, k, v)
         app._cua_cache.clear()
+        app._cua_perm.clear()
         if self.settings is None:
             app.SETTINGS.unlink(missing_ok=True)
         else:
@@ -2580,7 +2611,7 @@ class Env:
         assert not app.agent_lock.locked(), "a run left the agent lock held"
         assert app.agent_engine == {"mode": None, "model_id": None}, app.agent_engine
 
-    def start(self, task="Look around shop.example", model_id=TEXT_MLX):
+    def start(self, task="Look around https://shop.example", model_id=TEXT_MLX):
         r = self.c.post("/api/agent/run", json={"task": task, "model_id": model_id})
         assert r.status_code == 200, r.text
         self.rid = r.json()["run_id"]
@@ -3037,7 +3068,7 @@ def sparse_view_switches_to_vision_once():
     sparse = fview(("e1", "button", "Go"), url="https://canvas.example/", sparse=True)
     steps = [tc("open_url", url="https://canvas.example/"), tc("read_page"), tc("scroll", direction="down"), tc("done", answer="ok")]
     with Env(FakeAdapter(None, sparse), Model(*steps), current=("text",)) as e:
-        e.start("Look at canvas.example", VISION_MLX)
+        e.start("Look at https://canvas.example", VISION_MLX)
         e.finish()
         sw = [x for x in e.ev("x_engine") if x["status"] == "switching"]
         assert len(sw) == 1 and sw[0]["mode"] == "vision" and e.engines == [("vision", VISION_MLX)], (sw, e.engines)
@@ -3049,14 +3080,14 @@ def sparse_view_switches_to_vision_once():
         assert e.end()["status"] == "done"
     # a text-only model cannot read it: one step says so (once per page) and nothing switches
     with Env(FakeAdapter(None, sparse), Model(*steps)) as e:
-        e.start("Look at canvas.example", TEXT_MLX)
+        e.start("Look at https://canvas.example", TEXT_MLX)
         e.finish()
         info = [s for s in e.ev("step") if "can't read this page" in s["result"]]
         assert len(info) == 1 and "Take over" in info[0]["result"] and e.ev("x_engine") == [] and e.engines == []
         assert all(isinstance(x["messages"][1]["content"], str) for x in e.model.calls)
     # GGUF with an mmproj never switches but sends the image
     with Env(FakeAdapter(None, sparse), Model(*steps)) as e:
-        e.start("Look at canvas.example", VISION_GGUF)
+        e.start("Look at https://canvas.example", VISION_GGUF)
         e.finish()
         assert e.ev("x_engine") == [] and [x["mode"] for x in e.model.calls] == ["gguf"] * 4
         assert isinstance(e.model.calls[1]["messages"][1]["content"], list)
@@ -3081,6 +3112,60 @@ def second_run_is_409():
         e.status("waiting")
         e.post("stop")
         e.finish()
+
+
+class PermClient:
+    """A CuaDriver client that only answers check_permissions."""
+
+    def __init__(self, acc=True, scr=True):
+        self.acc, self.scr, self.calls = acc, scr, 0
+
+    def call(self, name, args, timeout=30):
+        assert name == "check_permissions", name
+        self.calls += 1
+        return {"ok": True, "text": "", "data": {"accessibility": self.acc, "screen_recording": self.scr}, "image": None}
+
+
+@check
+def permissions_are_checked_once_and_block_runs():
+    P = app._parse_permissions
+    both = lambda a, s_: {"accessibility": a, "screen_recording": s_}                        # noqa: E731
+    assert P({"data": {"accessibility": True, "screen_recording": False}}) == both(True, False)
+    assert P({"data": {"accessibility": {"granted": True}, "screenRecording": {"granted": True}}}) == both(True, True)
+    assert P({"data": {"permissions": {"accessibility": "granted", "screen_capture": "denied"}}}) == both(True, False)
+    assert P({"data": None, "text": "Accessibility: granted\nScreen Recording: not granted"}) == both(True, False)
+    assert P({"data": None, "text": "something else entirely"}) == both(None, None)
+    assert P({"data": {"accessibility": "maybe"}}) == both(None, None)                    # anything unclear is unknown, and unknown never blocks
+    msg = "Grant Accessibility and Screen Recording to CuaDriver first (Settings \u2192 Agent)."
+    assert app.AGENT_PERM_MSG == msg
+    with Env(FakeAdapter(), Model(tc("done", answer="ok"), tc("done", answer="ok"))) as e:
+        def no_daemon():
+            raise AssertionError("the status route must never start CuaDriver")
+        app._agent_client = no_daemon
+        assert e.c.get("/api/agent/status").json()["permissions"] == both(None, None)
+        cl = PermClient(scr=False)
+        app._agent_client = lambda: cl
+        # the first run looks once (with the daemon it starts), finds Screen Recording missing and ends with the message
+        e.start()
+        e.finish()
+        assert e.end()["status"] == "failed" and any(ev.get("message") == msg for ev in e.ev("error")), e.run_.events
+        assert cl.calls == 1 and e.model.calls == [] and e.c.get("/api/agent/status").json()["permissions"] == both(True, False)
+        # the next one is refused up front, after one fresh look
+        r = e.c.post("/api/agent/run", json={"task": "find x", "model_id": TEXT_MLX})
+        assert r.status_code == 409 and r.json()["detail"] == msg and cl.calls == 2, (r.text, cl.calls)
+        # granted in System Settings meanwhile: the fresh look lets it run, and the run does not ask again
+        cl.scr = True
+        e.start()
+        e.finish()
+        assert e.end()["status"] == "done" and cl.calls == 3, (e.run_.events, cl.calls)
+    # the cache is forgotten when the daemon stops, and when a grant finishes
+    app._cua_perm.update(both(True, False))
+    with Stub(lambda cmd: (1, "")):
+        app.stop_agent_daemon()
+    assert app._cua_perm == {}
+    app._cua_perm.update(both(True, False))
+    app._cua_quiet([sys.executable, "-c", "pass"], 10)
+    assert app._cua_perm == {}
 
 
 @check
@@ -3385,7 +3470,8 @@ def heuristic_bind_everywhere_errors_clearly():
 @check
 def profile_reset_refused_while_running():
     real = app.AGENT_PROFILE
-    assert str(REAL_PROFILE).endswith("Library/Application Support/CuaDriver/BrowserProfiles/local-studio")
+    assert str(REAL_PROFILE.parent).endswith("Library/Application Support/CuaDriver/BrowserProfiles")
+    assert REAL_PROFILE.name == app.AGENT_PROFILE_NAME
     prof = TMP / "Profiles" / "local-studio"
     (prof / "Default").mkdir(parents=True)
     (prof / "Default" / "Cookies").write_text("x")
@@ -3401,8 +3487,31 @@ def profile_reset_refused_while_running():
         assert c.post("/api/agent/profile/reset").status_code == 200
         assert not prof.exists() and (TMP / "Profiles" / "other").exists()
         assert c.post("/api/agent/profile/reset").status_code == 200                       # nothing to delete is fine
+        # a Chrome still using the profile (a run just ended, or another Local Studio): refused, nothing deleted
+        (prof / "Default").mkdir(parents=True)
+        real_use = app._agent_profile_in_use
+        app._agent_profile_in_use = lambda: True
+        try:
+            r = c.post("/api/agent/profile/reset")
+            assert r.status_code == 409 and prof.exists() and "browser" in r.json()["detail"], r.text
+        finally:
+            app._agent_profile_in_use = real_use
     finally:
         app.AGENT_PROFILE = real
+
+
+@check
+def browser_profile_is_per_state():
+    """The Mac app's data folder keeps the profile named local-studio; any other STATE (a dev server on 7861, a checkout) gets
+    its own, so two Local Studios never drive, lock or reset each other's sign-ins."""
+    N = app._agent_profile_name
+    assert N(app.APP_SUPPORT) == "local-studio" and N(str(app.APP_SUPPORT) + "/") == "local-studio"
+    other = N(TMP / "state")
+    assert re.fullmatch(r"local-studio-[0-9a-f]{8}", other) and other == N(str(TMP / "state")) and other != N(TMP / "state2"), other
+    assert app.AGENT_PROFILE_NAME == other                                 # these checks run with a temp STATE
+    c, a = web_adapter()
+    a.execute("open_url", {"url": "https://example.com"})
+    assert c.of("browser_prepare")[0]["profile"] == {"mode": "isolated_named", "name": other}
 
 
 @check
@@ -3553,8 +3662,43 @@ def thought_never_shows_redacted_text():
         st = e.ev("step")
         assert st[0]["thought"] == "The code is •••, so I type •••.", st[0]
         assert st[1]["thought"] == "" and "ab" not in json.dumps(st[1]["args"])        # too short to find: the reasoning goes
-        assert st[2]["args"]["text"] == "•••" and st[2]["thought"] == "use ••• for e9" and st[2]["decision"] == "error"
+        # an earlier secret ("ab") is too short to find, so every later thought goes too
+        assert st[2]["args"]["text"] == "•••" and st[2]["thought"] == "" and st[2]["decision"] == "error"
         assert all("s3cret" not in _text_of(c["messages"][1]) for c in model.calls)
+
+
+@check
+def secrets_never_reappear_in_later_steps():
+    """Text typed into a field that may hold a secret is scrubbed from every later step too: thoughts, typed args, the ask_user
+    question, notes, an approval card's title and the done answer (and the saved run)."""
+    v = fview(("e1", "textbox", "Code", {"sensitive_unknown": True}), ("e3", "button", "Next"), ("e4", "textbox", "Comment"))
+
+    def said(r, thought):
+        r["reasoning_content"] = thought
+        return r
+    model = Model(tc("type", ref="e1", text="s3cret-1"),
+                  said(tc("click", ref="e3"), "I typed s3cret-1 into the code field."),
+                  tc("type", ref="e4", text="copy s3cret-1"),
+                  tc("ask_user", question="Is s3cret-1 the right code?"),
+                  tc("note", text="the code is s3cret-1"),
+                  tc("type", ref="e4", text="posting s3cret-1", submit=True),
+                  tc("done", answer="Done. The code was s3cret-1."))
+    with Env(FakeAdapter(v), model) as e:
+        run = e.start()
+        e.until(lambda: (run.pending or {}).get("n") == 1)
+        e.post("reply", decision="allow")
+        e.until(lambda: (run.pending or {}).get("n") == 4)
+        e.post("reply", text="yes")
+        e.until(lambda: (run.pending or {}).get("n") == 6)
+        card = e.ev("approval")[-1]
+        assert "s3cret" not in card["title"] and "\u2022\u2022\u2022" in card["title"], card
+        e.post("reply", decision="allow")
+        e.finish()
+        assert e.end()["status"] == "done", run.events
+        blob = json.dumps(run.events) + (app.AGENT_RUNS / f"{e.rid}.json").read_text()
+        assert "s3cret" not in blob, blob
+        assert "s3cret" not in (run.answer or "") and e.ev("answer")[0]["markdown"] == "Done. The code was \u2022\u2022\u2022."
+        assert e.ev("question")[0]["text"] == "Is \u2022\u2022\u2022 the right code?"
 
 
 @check
@@ -4455,6 +4599,36 @@ def chat_gets_agent_note_only_when_enabled():
             app.SETTINGS.unlink(missing_ok=True)
         else:
             app.SETTINGS.write_text(settings)
+
+
+@check
+def deleting_a_chat_forgets_its_agent_context():
+    """A chat-started run keeps the chat's last turns as context; deleting the chat clears that context from its runs (on disk
+    and in memory), and leaves other runs alone."""
+    cid, other = "0123456789abcdef", "fedcba9876543210"
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    app.CHATS.mkdir(parents=True, exist_ok=True)
+    (app.CHATS / f"{cid}.json").write_text(json.dumps({"id": cid, "messages": []}))
+    live = app.AgentRun("task", TEXT_MLX, context="User: my address is 1 Main St", chat_id=cid)
+    live.status = "done"
+    live.save()
+    app._agent_runs[live.id] = live
+    disk = app.AgentRun("task", TEXT_MLX, context="User: secret plans", chat_id=cid)
+    disk.status = "done"
+    disk.save()
+    keep = app.AgentRun("task", TEXT_MLX, context="User: other chat", chat_id=other)
+    keep.status = "done"
+    keep.save()
+    try:
+        assert c.delete(f"/api/chats/{cid}").json() == {"ok": True}
+        assert live.context is None and json.loads(live.path.read_text())["context"] is None
+        assert json.loads(disk.path.read_text())["context"] is None
+        assert json.loads(keep.path.read_text())["context"] == "User: other chat"
+        assert not (app.CHATS / f"{cid}.json").exists()
+    finally:
+        app._agent_runs.pop(live.id, None)
+        for r in (live, disk, keep):
+            r.path.unlink(missing_ok=True)
 
 
 @check

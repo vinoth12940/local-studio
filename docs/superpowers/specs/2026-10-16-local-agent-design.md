@@ -191,7 +191,7 @@ Each step:
 
 ### Context budget (fixed 32k `CONTEXT`)
 
-System prompt and tools ~2k; task and scratchpad ~1k; step history ~3k (oldest steps fold into
+System prompt and tools ~2.3k; task and scratchpad ~1k; step history ~3k (oldest steps fold into
 one summary line); current view ≤6k; reply ≤2k. About 14k total, leaving room for thinking
 models and a ~1.2k screenshot. Older views are always dropped.
 

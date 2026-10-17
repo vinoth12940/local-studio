@@ -1117,6 +1117,7 @@ def put_chat(cid: str, chat: dict = Body(...)):
 @app.delete("/api/chats/{cid}")
 def delete_chat(cid: str):
     _chat_path(cid).unlink(missing_ok=True)
+    _forget_chat_context(cid)                                # the chat's turns also went to its agent runs as context
     return {"ok": True}
 
 # ---------------------------------------------------------------- image jobs
@@ -1547,6 +1548,8 @@ AGENT_CUA_TOOLS = frozenset((
     "browser_prepare get_browser_state browser_navigate browser_click browser_type browser_pointer browser_dialog browser_download "
     "list_apps list_windows launch_app get_window_state click double_click type_text set_value press_key hotkey scroll invoke_menu zoom bring_to_front"
 ).split())                                                   # everything else CuaDriver offers (kill_app, clipboard_*, set_config, ...) is never reachable
+AGENT_PERM_MSG = "Grant Accessibility and Screen Recording to CuaDriver first (Settings → Agent)."
+_cua_perm: dict = {}                                         # check_permissions of the running daemon: {accessibility, screen_recording}; {} = not looked yet
 AGENT_IDLE_S = 600                                           # stop the daemon this long after the last call when no run is active
 AGENT_SOCK_WAIT_S = 10                                       # how long to wait for a fresh daemon's socket
 
@@ -1712,8 +1715,11 @@ def _agent_daemon_running():
 def start_agent_daemon():
     """Start CuaDriver's daemon through LaunchServices, so it runs with CuaDriver's own macOS permissions
     (not those of this app), on a socket of our own."""
+    if len(str(AGENT_SOCK).encode()) >= 104:                 # sun_path holds 104 bytes on macOS, the terminating NUL included
+        raise McpError(f"The agent's socket path is too long for macOS (104 bytes at most): {AGENT_SOCK}. Use a shorter data folder.")
     AGENT_DIR.mkdir(parents=True, exist_ok=True)
     if not _agent_daemon_running():                          # one that is still starting just needs its socket awaited
+        _cua_perm.clear()                                    # a new daemon: look at its permissions again
         AGENT_SOCK.unlink(missing_ok=True)                   # a stale one from a daemon that died
         if subprocess.run(["open", "-n", "-g", "-a", "CuaDriver", "--args", "serve", "--socket", str(AGENT_SOCK),
                            "--permission-mode", "standard"], capture_output=True).returncode != 0:
@@ -1734,11 +1740,67 @@ def stop_agent_daemon():
             _agent_cli.close()
             _agent_cli = None
     subprocess.run(["pkill", "-f", agent_daemon_pattern()])
+    _cua_perm.clear()
     for _ in range(40):
         if not _agent_daemon_running():
             break
         time.sleep(0.1)
     AGENT_SOCK.unlink(missing_ok=True)
+
+
+def _perm_value(v):
+    """True / False for a permission CuaDriver reports as granted / not granted; None for anything else."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, dict):
+        return next((_perm_value(v[k]) for k in ("granted", "authorized", "enabled", "status", "state") if k in v), None)
+    if isinstance(v, str):
+        t = v.strip().lower().replace("_", " ")
+        if t in ("granted", "authorized", "allowed", "yes", "true", "enabled", "on"):
+            return True
+        if t in ("denied", "not granted", "not authorized", "missing", "no", "false", "not determined", "disabled", "off", "revoked"):
+            return False
+    return None
+
+
+def _parse_permissions(res):
+    """{accessibility, screen_recording} from CuaDriver's check_permissions: True, False, or None when the reply doesn't say
+    clearly (its shape is not verified live, and None never blocks a run)."""
+    out = {"accessibility": None, "screen_recording": None}
+    d = res.get("data") if isinstance(res, dict) else None
+    if isinstance(d, dict):
+        for src in (d, d.get("permissions") if isinstance(d.get("permissions"), dict) else {}):
+            for k, v in src.items():
+                key = re.sub(r"[^a-z]", "", str(k).lower())
+                field = "accessibility" if key == "accessibility" else "screen_recording" if key in ("screenrecording", "screencapture") else None
+                if field and _perm_value(v) is not None:
+                    out[field] = _perm_value(v)
+    for line in str((res or {}).get("text") or "").splitlines():
+        low = line.lower()
+        field = "accessibility" if "accessibility" in low else "screen_recording" if re.search(r"screen\s*(?:recording|capture)", low) else None
+        if not field or out[field] is not None:
+            continue
+        if re.search(r"not granted|denied|missing|not authori[sz]ed|\bfalse\b|\bno\b|✗|❌", low):
+            out[field] = False
+        elif re.search(r"granted|authori[sz]ed|\btrue\b|\byes\b|✓|✅", low):
+            out[field] = True
+    return out
+
+
+def agent_check_permissions(client):
+    """CuaDriver's permissions, asked once per daemon start (the cache is cleared when a daemon starts or stops, and after a
+    grant). A reply that can't be read is cached as unknown."""
+    if not _cua_perm:
+        try:
+            got = _parse_permissions(client.call("check_permissions", {}))
+        except Exception:
+            got = {"accessibility": None, "screen_recording": None}
+        _cua_perm.update(got)
+    return dict(_cua_perm)
+
+
+def _perm_missing(p):
+    return False in ((p or {}).get("accessibility"), (p or {}).get("screen_recording"))
 
 
 def _ensure_agent_daemon():
@@ -2850,7 +2912,7 @@ class Adapter:
         for fresh in (self.pid is None, True):               # a known pid whose window is gone is prepared once more
             if self.pid is None:
                 _repair_agent_profile()                      # a crash flag makes Chrome open "Restore pages?" and bind only heuristically
-                res = self._call("browser_prepare", {"allow_launch": True, "profile": {"mode": "isolated_named", "name": "local-studio"}})
+                res = self._call("browser_prepare", {"allow_launch": True, "profile": {"mode": "isolated_named", "name": AGENT_PROFILE_NAME}})
                 pid = (res.get("data") or {}).get("prepared_pid")
                 if _cua_problem(res) or not isinstance(pid, int):
                     raise McpError(_cua_problem(res) or "the browser did not start")
@@ -3654,7 +3716,17 @@ def validate_call(name, args):
 # -- the agent loop: one run at a time, in a thread of its own. It records events in a list that the UI reads over SSE.
 # Route handlers never touch the Adapter (it has no lock); they set flags on the run under `cond` and the loop acts on them.
 
-AGENT_PROFILE = HOME / "Library/Application Support/CuaDriver/BrowserProfiles/local-studio"   # CuaDriver's isolated browser profile for our runs
+def _agent_profile_name(state):
+    """The isolated browser profile of a data folder: `local-studio` for the Mac app's own, `local-studio-<8 hex>` (from the
+    absolute path) for any other, so a dev server or a checkout never drives, locks or resets the app's sign-ins."""
+    path = os.path.abspath(str(state))
+    if path == os.path.abspath(str(APP_SUPPORT)):
+        return "local-studio"
+    return "local-studio-" + hashlib.sha256(path.encode()).hexdigest()[:8]
+
+
+AGENT_PROFILE_NAME = _agent_profile_name(STATE)
+AGENT_PROFILE = HOME / "Library/Application Support/CuaDriver/BrowserProfiles" / AGENT_PROFILE_NAME   # CuaDriver's isolated browser profile for our runs
 AGENT_HEARTBEAT_S = 15                                       # SSE comment while nothing happens, so proxies and WKWebView keep the stream
 AGENT_ACTIVE = ("running", "waiting", "paused")
 AGENT_REPEAT_HINT = "That isn't working; try another way or ask_user."
@@ -3742,14 +3814,20 @@ def _agent_lost(e):
     return isinstance(e, McpError) and any(w in str(e).lower() for w in _AGENT_LOST)
 
 
+_WEB_TLDS = frozenset("com org net edu gov io ai co uk de fr in jp ca au us info app dev me tv".split())
+_FILE_EXTS = DOWNLOAD_EXT | frozenset("app txt md json html htm png jpg jpeg gif heic webp svg key pages numbers log".split())
+
+
 def _task_domains(task):
-    """Hosts the user named in the task: URLs, bare domains (amazon.com) and e-mail domains."""
+    """Hosts the user named in the task: hosts of URLs with a scheme, and bare domains (amazon.com) and e-mail domains whose last
+    label is a common web TLD and not a common file extension ("invoice.zip", "Notes.app" and "report.pdf" never vouch)."""
     out = set()
     for tok in str(task or "").split():
         tok = re.sub(r"['’]s$", "", tok.strip("()[]{}<>\"'`.,;:!?*“”‘’")).strip("()[]{}<>\"'`.,;:!?*“”‘’")
         if re.match(r"^(?:https?://)?(?:[^\s/@]+@)?[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}\.?(?::\d+)?(?:[/?#]\S*)?$", tok, re.I):
             h = _host(tok)
-            if "." in h:
+            tld = h.rsplit(".", 1)[-1]
+            if "." in h and not _local_kind(h) and (re.match(r"^https?://", tok, re.I) or (tld in _WEB_TLDS and tld not in _FILE_EXTS)):
                 out.add(h)
     return out
 
@@ -3981,6 +4059,15 @@ class _AgentLoop:
                 self.run.notes.append(text)
         return text
 
+    def scrub(self, text, drop_if_short=False):
+        """text with everything this run typed into a sensitive field replaced by •••."""
+        for secret in self.secrets:
+            text = _agent_scrub(text, secret, drop_if_short)
+        return text
+
+    def scrub_args(self, args):
+        return {k: self.scrub(v) if isinstance(v, str) else v for k, v in args.items()} if isinstance(args, dict) else args
+
     def record(self, n, tool, args, facts, result, decision, thought, shot=None):
         key = (tool, json.dumps(args, sort_keys=True, default=str))
         if result.startswith(("Error", "Blocked")):
@@ -3994,9 +4081,10 @@ class _AgentLoop:
         secret = args.get("text") if shown is not args else None          # the model's own reasoning may repeat what it typed
         if secret is not None:
             self.secrets.append(secret)
-        summary = _agent_scrub(_agent_summary(tool, shown, facts), secret)
-        result = _agent_scrub(result, secret)
-        thought = _agent_scrub(thought or "", secret, drop_if_short=True)
+        shown = self.scrub_args(shown)                                    # every secret of the run, not just this step's
+        summary = self.scrub(_agent_summary(tool, shown, facts))
+        result = self.scrub(result)
+        thought = self.scrub(thought or "", drop_if_short=True)
         self.history.append(f"{n}. {summary} → {_agent_short(tool, result)}")
         self.run.emit({"type": "step", "n": n, "tool": tool, "args": shown, "summary": summary, "result": result[:2000],
                        "decision": decision, "shot": None if secret is not None else shot, "thought": thought[:4000],
@@ -4029,11 +4117,11 @@ class _AgentLoop:
             self.keep_note(args["text"], 300)
             return self.record(n, name, args, None, "Noted.", "safe", thought)
         if name == "ask_user":
-            answer = self.wait("question", n, {"type": "question", "n": n, "text": _clip(args["question"], 500)})
+            answer = self.wait("question", n, {"type": "question", "n": n, "text": self.scrub(_clip(args["question"], 500))})
             return self.record(n, name, args, None, f"The user answered: {_clip(answer, 1000)}", "safe", thought)
         if name == "done":
-            run.answer = str(args["answer"])
-            self.record(n, name, {"answer": _clip(args["answer"], 200)}, None, "Finished.", "safe", thought)
+            run.answer = self.scrub(str(args["answer"]))                  # never drop-if-short: a 3-character PIN must not wipe the answer
+            self.record(n, name, {"answer": _clip(run.answer, 200)}, None, "Finished.", "safe", thought)
             run.emit({"type": "answer", "markdown": run.answer})
             raise _AgentEnd("done")
         try:
@@ -4056,9 +4144,9 @@ class _AgentLoop:
             return self.record(n, name, args, facts, f"Blocked: {reason}", "blocked", thought)
         hidden = _agent_redact(name, args, facts) is not args          # typing into a sensitive field: no screenshots of it
         if decision == "risky":
-            card = {"type": "approval", "n": n, "title": approval_title(name, facts, ctx, args),
+            card = {"type": "approval", "n": n, "title": self.scrub(approval_title(name, facts, ctx, self.scrub_args(args))),
                     "shot": None if hidden else run.shot(f"{n}-ask", ad.screenshot()),
-                    "box": (facts or {}).get("box"), "tool": name, "args": _agent_redact(name, args, facts), "reason": reason}
+                    "box": (facts or {}).get("box"), "tool": name, "args": self.scrub_args(_agent_redact(name, args, facts)), "reason": reason}
             try:
                 answer = self.wait("approval", n, card)
             except _AgentEnd as e:
@@ -4101,8 +4189,11 @@ def run_agent(run, held=False):
         if m is None:
             raise _AgentEnd("failed", "model", "That model is no longer available.")
         mode = "gguf" if m.get("backend") == "gguf" else "text"
+        client = _agent_client()                             # before the engine: a run CuaDriver can't serve never switches models
+        if _perm_missing(agent_check_permissions(client)):
+            raise _AgentEnd("failed", "permissions", AGENT_PERM_MSG)
         _agent_use_engine(run, mode, m)
-        ad = _agent_adapter(_agent_client(), f"ls-{run.id}")
+        ad = _agent_adapter(client, f"ls-{run.id}")
         _AgentLoop(run, ad, m, mode, s).loop()
     except _AgentEnd as e:
         status, reason = e.status, e.reason
@@ -4128,6 +4219,31 @@ def run_agent(run, held=False):
             run.save()
         except OSError:
             pass
+
+
+def _forget_chat_context(cid):
+    """Clear the chat turns (context) that agent runs started from chat `cid` (every chat when None) copied; the runs stay."""
+    for run in list(_agent_runs.values()):
+        if run.chat_id and (cid is None or run.chat_id == cid):
+            with run.cond:
+                run.context = None
+            try:
+                run.save()
+            except OSError:
+                pass
+    for p in AGENT_RUNS.glob("*.json"):
+        try:
+            d = json.loads(p.read_text())
+            if not isinstance(d, dict) or not d.get("chat_id") or d.get("context") is None or (cid is not None and d["chat_id"] != cid):
+                continue
+            if d.get("id") in _agent_runs:                   # its own save() above wrote it
+                continue
+            d["context"] = None
+            tmp = p.with_name(f".{p.stem}.tmp")
+            tmp.write_text(json.dumps(d))
+            os.replace(tmp, p)
+        except (OSError, ValueError):
+            continue
 
 
 def _agent_mark_interrupted():
@@ -4182,6 +4298,7 @@ def _cua_quiet(cmd, timeout):
         pass
     finally:
         _cua_cache.clear()                                   # the permissions may have changed
+        _cua_perm.clear()
 
 
 _cua_cache: dict = {}                                        # {"t": monotonic time, "v": cua_status()}; clear() forgets it
@@ -4207,7 +4324,8 @@ def agent_status():
     run = _agent_current
     s = load_settings()["agent"]
     return {"enabled": s["enabled"], "cua": cua_status_cached(), "running": run.id if run is not None and agent_lock.locked() else None,
-            "settings": s, "tier_defaults": APP_TIERS_DEFAULT}
+            "settings": s, "tier_defaults": APP_TIERS_DEFAULT,
+            "permissions": {k: _cua_perm.get(k) for k in ("accessibility", "screen_recording")}}   # from the cache only: never starts CuaDriver
 
 
 @app.post("/api/agent/enable")
@@ -4295,6 +4413,14 @@ def agent_run(body: dict = Body(...)):
     if not cua["ok_version"]:
         raise HTTPException(409, f"CuaDriver {cua['version'] or '(unknown version)'} is too old; update it to "
                                  f"{'.'.join(map(str, CUA_MIN))} or later.")
+    if _perm_missing(_cua_perm):                             # known missing: one fresh look (granted in System Settings since?)
+        _cua_perm.clear()
+        try:
+            agent_check_permissions(_agent_client())
+        except Exception:
+            pass
+        if _perm_missing(_cua_perm):
+            raise HTTPException(409, AGENT_PERM_MSG)
     m = next((x for x in chat_models() if x["id"] == mid), None)
     if m is None:
         raise HTTPException(409, "Choose a chat model.")
@@ -4469,6 +4595,8 @@ def agent_profile_reset():
     if not agent_lock.acquire(blocking=False):
         raise HTTPException(409, "Stop the running task first.")
     try:
+        if _agent_profile_in_use():                          # its Chrome is still closing (or another Local Studio uses it)
+            raise HTTPException(409, "The agent's browser is still open. Wait a moment and try again.")
         if AGENT_PROFILE.is_symlink():
             AGENT_PROFILE.unlink()
         elif AGENT_PROFILE.exists():
@@ -4570,6 +4698,7 @@ def clear_storage(what: str = Body(..., embed=True)):
     elif what == "chats":
         for p in CHATS.glob("*.json"):
             p.unlink(missing_ok=True)
+        _forget_chat_context(None)
     elif what == "logs":
         for p in LOGS.glob("*.log"):
             p.write_text("")                    # truncate: running servers still hold them open
