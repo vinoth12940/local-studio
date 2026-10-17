@@ -245,7 +245,7 @@ def foreign_pages_cannot_drive_search():
     assert c.post("/api/search/start", headers={"origin": "null"}).status_code == 403
     assert c.post("/api/search/start", headers={"host": "evil.example:7860"}).status_code == 403, "DNS rebinding"
     assert c.post("/api/chat", json={"messages": []}, headers={"origin": "https://evil.example"}).status_code == 403
-    assert c.get("/api/busy", headers={"origin": "https://evil.example"}).status_code == 200, "routes without file contents are unchanged"
+    assert c.get("/api/busy", headers={"origin": "https://evil.example"}).status_code == 403, "every route is the app's own (wave 2)"
 
 
 @check
@@ -267,7 +267,42 @@ def private_data_routes_are_local_only():
             assert c.get(path, headers={"sec-fetch-site": site}).status_code == 403, (site, path)
     assert c.get("/api/search/status", headers={"sec-fetch-site": "same-site"}).status_code == 403, "a page on another local port"
     assert c.get("/api/agent/status", headers={"sec-fetch-site": "cross-site"}).status_code == 403
-    assert c.get("/api/busy", headers={"sec-fetch-site": "cross-site"}).status_code == 200, "routes without user data are unchanged"
+    assert c.get("/api/busy", headers={"sec-fetch-site": "cross-site"}).status_code == 403, "every route is the app's own (wave 2)"
+
+
+@check
+def every_route_is_local_only():
+    """Public DNS names that resolve to 127.0.0.1 (127.0.0.1.nip.io, localtest.me, lvh.me) must not reach any route: the page, storage,
+    uninstall, model delete, settings and the gallery all answer 403 to a non-loopback Host or a cross-site/same-site fetch. The app's
+    own page and local scripts (loopback Host, no or loopback Origin, Sec-Fetch-Site absent/none/same-origin) still work."""
+    from fastapi.testclient import TestClient
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    app.GALLERY.mkdir(parents=True, exist_ok=True)
+    (app.GALLERY / "x.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    ran, real = [], app.subprocess.Popen
+    app.subprocess.Popen = lambda *a, **k: ran.append(a)              # nothing here may ever start uninstall.sh
+    try:
+        for host in ("127.0.0.1.nip.io:7860", "localtest.me:7860", "lvh.me", "evil.example:7860", "192.168.1.10:7860"):
+            h = {"host": host}
+            for method, path in (("GET", "/"), ("GET", "/api/storage"), ("POST", "/api/storage/clear"), ("POST", "/api/uninstall"),
+                                 ("DELETE", "/api/models"), ("GET", "/gallery/x.png"), ("GET", "/api/system"),
+                                 ("GET", "/api/busy"), ("POST", "/api/models/active"), ("GET", "/no/such/route")):
+                r = c.request(method, path, headers=h)
+                assert r.status_code == 403, (host, method, path, r.status_code)
+        for site in ("cross-site", "same-site"):
+            for method, path in (("GET", "/"), ("GET", "/api/storage"), ("POST", "/api/uninstall"), ("GET", "/gallery/x.png")):
+                assert c.request(method, path, headers={"sec-fetch-site": site}).status_code == 403, (site, path)
+        assert c.post("/api/uninstall", headers={"origin": "https://evil.example"}).status_code == 403
+        assert ran == [], ran
+        for host in ("127.0.0.1:7860", "localhost:7860", "[::1]:7860"):
+            for site in (None, "none", "same-origin"):
+                h = {"host": host, **({"sec-fetch-site": site} if site else {})}
+                r = c.get("/", headers=h)
+                assert r.status_code == 200 and "<html" in r.text.lower(), (host, site, r.status_code)
+                assert c.get("/gallery/x.png", headers=h).status_code == 200, (host, site)
+                assert c.get("/api/busy", headers={**h, "origin": f"http://{host}"}).status_code == 200, (host, site)
+    finally:
+        app.subprocess.Popen = real
 
 
 @check
