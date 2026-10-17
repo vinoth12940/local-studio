@@ -197,8 +197,8 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .composer { max-width: 768px; margin: 0 auto; background: var(--raised); border: 1px solid var(--line); border-radius: 26px; box-shadow: var(--shadow); padding: 12px 12px 10px 20px; }
 .composer textarea { width: 100%; border: 0; outline: 0; resize: none; background: transparent; color: var(--ink); font: inherit; font-size: 15.5px; line-height: 1.5; max-height: 240px; padding: 4px 0 10px; }
 .composer textarea::placeholder { color: var(--muted); }
-.crow { display: flex; align-items: center; gap: 6px; margin-left: -8px; }
-.pillbtn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink-2); cursor: pointer; font-size: 13px; }
+.crow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: -8px; }
+.pillbtn { display: inline-flex; align-items: center; flex: none; white-space: nowrap; gap: 6px; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink-2); cursor: pointer; font-size: 13px; }
 .pillbtn:hover { background: var(--hover); }
 .pillbtn.on { background: color-mix(in srgb, var(--ok) 12%, transparent); border-color: color-mix(in srgb, var(--ok) 40%, transparent); color: var(--ok); }
 .pillbtn svg { width: 16px; height: 16px; }
@@ -241,7 +241,7 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .prompt-card textarea { width: 100%; border: 0; outline: 0; resize: none; background: transparent; color: var(--ink); font: inherit; font-size: 15.5px; min-height: 52px; max-height: 200px; }
 .prompt-card textarea::placeholder { color: var(--muted); }
 .opts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: -6px; margin-top: 6px; }
-.sel { position: relative; }
+.sel { position: relative; flex: none; }
 .sel select { appearance: none; height: 34px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink-2); padding: 0 30px 0 12px; font: inherit; font-size: 13px; cursor: pointer; outline: 0; }
 .sel select:hover { background: var(--hover); }
 .sel::after { content: ""; position: absolute; right: 13px; top: 13px; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); pointer-events: none; }
@@ -500,6 +500,10 @@ dialog::backdrop { background: var(--overlay); }
 .toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
 .scrim { display: none; }
 
+@media (max-width: 480px) {
+  .crow .pillbtn:has(.pl) { width: 34px; padding: 0; justify-content: center; }
+  .crow .pl { display: none; }
+}
 @media (max-width: 820px) {
   .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 50; box-shadow: var(--shadow); }
   .app.collapsed .sidebar { margin-left: -280px; }
@@ -640,8 +644,8 @@ dialog::backdrop { background: var(--overlay); }
             <input type="file" id="fileInput" multiple hidden accept="image/*,.pdf,.docx,.xlsx,.xlsm,.txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.css,.js,.ts,.tsx,.jsx,.py,.rb,.go,.rs,.java,.kt,.swift,.c,.h,.cpp,.hpp,.cs,.php,.sh,.zsh,.sql,.toml,.ini,.cfg,.log,.r,.scala,.lua,.dart,.vue,.svelte">
             <button class="pillbtn on" id="thinkPill"><svg class="i"><use href="#i-bulb"/></svg>Think</button>
             <div class="sel"><select id="effortSel" title="Effort"><option value="">Auto effort</option><option value="low">Low effort</option><option value="high">High effort</option><option value="xhigh">Max effort</option></select></div>
-            <button class="pillbtn" id="filesPill"><svg class="i"><use href="#i-file"/></svg>My files</button>
-            <button class="pillbtn" id="agentPill" hidden><svg class="i"><use href="#i-agent"/></svg>Agent</button>
+            <button class="pillbtn" id="filesPill" aria-label="My files"><svg class="i"><use href="#i-file"/></svg><span class="pl">My files</span></button>
+            <button class="pillbtn" id="agentPill" aria-label="Agent" hidden><svg class="i"><use href="#i-agent"/></svg><span class="pl">Agent</span></button>
             <div class="grow"></div>
             <button class="sendbtn" id="send" title="Send"><svg class="i"><use href="#i-up" id="sendIcon"/></svg></button>
           </div>
