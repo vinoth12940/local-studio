@@ -378,3 +378,97 @@ the agent's time limit counts only time the Mac is awake (`time.monotonic`).
 - **Profile per data folder.** The isolated profile is `local-studio` only for the Mac app's data
   folder; any other `STATE` (a dev server, a checkout) uses `local-studio-<8 hex of its path>`, so
   two Local Studios never share sign-ins. Reset refuses while a Chrome still uses the profile.
+
+## Amendment: completion review (17 Oct 2026)
+
+Live validation used temporary `LOCAL_STUDIO_HOME` folders with their own CuaDriver sockets,
+sessions and browser profiles. The installed app, Claude's development server and the existing
+model engine were left running; the validation harness refused engine switches.
+
+| Check | Result |
+|---|---|
+| Native click targeting | Found a real failure: token-only `click` was rejected by CuaDriver 0.28.2 with `Missing required integer field: pid`. Click, type and set-value calls now include the bound process and window alongside the snapshot token. The fake daemon now enforces the process requirement. |
+| Calculator actions | Passed after the fix: open, All Clear, 2, Add, 2, Equals. The captured window displayed `2+2` and `4`. These were adapter-driven actions, not an autonomous model acceptance run. |
+| TextEdit scratch document | CuaDriver refused background typing because the process had several eligible windows. The adapter now explains Take over/Resume instead of returning a truncated driver error. It never forces foreground typing or changes the target. The scratch documents were closed without saving. |
+| Browser reading | A Qwen3.8-27B run read IANA's example-domains page and finished in five steps with the correct heading and a sourced sentence. It exposed paragraph truncation at 160 characters; browser prose is now split into bounded chunks so paragraph tails remain readable and searchable within the same 6k-token view budget. The same task passed in two steps after the fix, without an engine switch or approval. |
+| Interface | An isolated server with scripted model/driver fixtures passed approval, reload and reattachment, user question, and final answer. No JavaScript console errors. The 800px viewport stacked into one column without horizontal overflow; wide, light and dark layouts were inspected. |
+| Final build | `TMPDIR=/tmp macos/build.sh` passed 147 agent, 17 backend and 33 search checks, UI startup and Python syntax checks, Swift compilation and code-signature verification. The bundled backend and UI match the final sources. |
+| Installation | Replaced the installed 1.3.0 app with 1.4.0 and kept the previous bundle under `build/`. Post-launch verification exposed Python adding `__pycache__` inside the sealed bundle; `start.sh` now disables bytecode writes. The corrected app was rebuilt and reinstalled; the live API and code signature were checked after launch. |
+
+The automated guards cover native target IDs, stale snapshots, background-refusal guidance,
+paragraph-tail search, unchanged control identities and view budgets. The full release acceptance
+matrix (research, current store hours, user-selected form/cart targets and model-driven Notes
+creation) is still outstanding. Calculator's display is absent from its accessibility tree, and
+multi-window background typing depends on CuaDriver; native app control remains experimental.
+
+## Amendment: actions are part of chat (17 Oct 2026, user correction; 1.4.1)
+
+This replaces the Agent-pill interaction. A normal chat message can become an action when the
+local model selects the native `use_computer` tool; ordinary conversation uses prose or the
+`reply` tool. A greeting must never need computer access. Only native tool calls are dispatchable:
+JSON and code examples in an ordinary answer are never executed. The task comes from the real
+latest user turn, with earlier turns and documents fenced as background, not model-written
+arguments. The existing allowlist, approvals, app tiers and blocked fields still apply.
+
+There is no Agent pill or visible Agent sidebar item. Progress, screenshots, approvals, questions,
+Stop, Take over/Resume and the result live in the chat. Saved step details expand in that same
+conversation. If access is off, chat offers Enable computer access and continue; Settings calls
+the permission control Computer access. Image-attachment actions remain unsupported and say so.
+
+Verified with the loaded LFM2.5-24B model: a short greeting answered normally with no computer
+run, and “Open Calculator on my Mac now” created a run and opened Calculator. A fixture-backed
+browser check passed inline enable-and-continue, action approval, reload/reattachment, a question,
+the final chat answer, and inline step history. The automated suite also covers fragmented tool
+calls, preserved chat context, unsupported tool names and inert JSON/code examples.
+The final 1.4.1 build passed 201 checks and was installed in Applications. The running app's
+version, chat UI, source contents and signature were verified after launch. Computer access
+was already enabled in the installed app's retained settings.
+
+### Amendment: evidence tools in chat (1.4.2)
+
+The initial chat routing was too coarse: factual and local-file questions went straight to a
+computer task or a model-only answer. Chat now offers a real clock, public search/page reading,
+and indexed local-file search/reading. A bounded native-tool loop feeds each result back to the
+same model. The model chooses the tools and sources; after a successful web search, another
+search is withheld until it tries reading a result, preventing LFM's reworded-search loop.
+Progress and source links are saved in the conversation. Computer actions retain their gates.
+
+Newest-file searches match I94/I-94 consistently, compare labeled entry dates, and expose date
+precision and evidence. Copy timestamps and I94 expiry dates cannot substitute for entry dates;
+filename-only dates remain explicitly uncertain. Public-page reads validate and pin public DNS
+destinations and recheck redirects. Search snippets are leads, never proof of availability.
+
+Live Qwen3.8 27B and LFM2.5 24B-A2B checks exercised the real clock, a controlled 2024/2025 I94
+comparison, an unavailable-product fixture, and actual Apple public pages. The local index was
+also checked for date metadata and includes 2025 candidates. The fixture browser verified saved
+inline progress, file/web source links and reopening the conversation with zero console errors.
+These checks do not establish every model answer as correct or complete the broader shopping,
+form and Notes acceptance tasks above.
+
+Public-page excerpts are capped at 6,000 characters with an explicit truncation flag to bound
+Qwen's prefill cost; article headers and publication/modification metadata remain available.
+The model stream ends on its `[DONE]` marker. The final build passed 213 checks, and signed
+1.4.2 was installed while idle with a backup of the previous app. Installed sources, signature,
+retained Search setting and Qwen selection were verified after launch. A clock question through
+the installed chat called `get_current_datetime` and correctly answered October 17, 2026 in CDT.
+
+### Amendment: scanned documents and filled fields (1.4.3)
+
+A real follow-up exposed gaps the earlier text-only fixtures missed: My files still restricted
+answers to a few retrieved snippets, scanned PDFs had image embeddings but no readable text,
+and PDF text extraction omitted filled form values. The snippet injection is removed from chat;
+My files now asks the model to search and read each requested document type. The bundled native
+DocumentReader uses PDFKit and on-device Vision OCR to read actual indexed PDFs/images, keeping
+filled values, page numbers and pagination. Missing extraction is an explicit error, not evidence
+of a blank form. Prompts distinguish the requested person's I94 Admit Until Date from an OMB/form
+expiration and passport Date of Expiry from visa dates, and avoid inferring legal status.
+Synthetic native-reader tests cover scanned dates, filled form fields and page ranges. No private
+document values are stored in repository fixtures.
+
+The signed 1.4.3 build passed 218 checks and was installed while idle. Source contents and both
+executable signatures were verified after launch. The exact reported question, with My files and
+thinking enabled, searched separately for the two document types and read the actual scanned
+records through the installed service. Both expiry date fields matched independent visual review.
+Search candidates are compact leads; source chips are emitted for actual reads. The model still
+added some unrequested commentary despite the narrower prompt, so this validates document/date
+retrieval, not legal interpretation or perfect answer scope.

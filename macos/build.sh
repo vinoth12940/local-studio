@@ -23,6 +23,10 @@ $UV run -q --no-project --python 3.12 --with fastapi --with httpx --with python-
 echo "==> Compiling"
 xcrun swiftc -O -target arm64-apple-macos14.0 -framework Cocoa -framework WebKit \
   "$HERE/main.swift" -o "$APP/Contents/MacOS/LocalStudio"
+xcrun swiftc -O -target arm64-apple-macos14.0 -framework AppKit -framework PDFKit -framework Vision \
+  "$HERE/document_reader.swift" -o "$APP/Contents/MacOS/DocumentReader"
+cp "$APP/Contents/MacOS/DocumentReader" "$ROOT/build/DocumentReader"
+$UV run -q --no-project --python 3.12 --with reportlab --with pillow python "$HERE/check_document.py" "$APP/Contents/MacOS/DocumentReader"
 
 echo "==> Bundling code"
 for f in app.py index.html catalog.json search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh; do

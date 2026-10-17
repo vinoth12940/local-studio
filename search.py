@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +31,7 @@ SETTINGS = STATE / "data" / "settings.json"
 INDEX_DIR = STATE / "data" / "search"
 HF_HUB = Path(os.environ.get("HF_HUB_CACHE", HOME / ".cache/huggingface/hub"))
 MODEL_REPO = "mlx-community/embeddinggemma-2-8bit"
+DOCUMENT_READER = (ROOT.parent.parent / "MacOS" / "DocumentReader") if (ROOT.parent.parent / "MacOS" / "DocumentReader").exists() else ROOT / "build" / "DocumentReader"
 DIM = 768
 APP_URL = "http://127.0.0.1:7860"
 
@@ -462,6 +464,26 @@ class Store:
         return {i: {"path": p, "name": n, "kind": k, "mtime": m}
                 for i, p, n, k, m in self._in("SELECT id, path, name, kind, mtime FROM files WHERE id IN (%s)", ids)}
 
+    def name_matches(self, query, limit=200):
+        # I-94 and I94 must match the same identifier, including on older FTS indexes.
+        query = re.sub(r"\b([a-z]{1,3})[- ](\d{2,4}[a-z]?)\b", r"\1\2", query.casefold())
+        tokens = [t for t in keyword_tokens(query) if t not in {"latest", "recent", "newest", "most", "find"}]
+        if not tokens: return []
+        compact = "lower(replace(replace(replace(name, '-', ''), '_', ''), ' ', ''))"
+        where = " AND ".join(f"{compact} LIKE ? ESCAPE '\\'" for _ in tokens)
+        values = ["%" + t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for t in tokens]
+        with self.lock:
+            return [row[0] for row in self.db.execute(f"SELECT id FROM files WHERE {where} ORDER BY mtime DESC LIMIT ?", (*values, limit))]
+
+    def text_evidence(self, file_id, max_chars=20000):
+        info = self.file_info([file_id]).get(file_id)
+        if info is None: return None
+        with self.lock:
+            rows = self.db.execute("SELECT text, locator FROM chunks WHERE file_id=? AND kind='text' ORDER BY ord LIMIT 30", (file_id,)).fetchall()
+        text = "\n\n".join((f"[{loc}]\n" if loc else "") + (content or "") for content, loc in rows)
+        return {"file_id": file_id, **info, "text": text[:max_chars], "truncated": len(text) > max_chars or len(rows) == 30,
+                **document_date(info["name"], text), "note": "Indexed document text. mtime is a filesystem date, not a document/arrival date."}
+
     def context(self, chunk_id):
         """A chunk with the text just before and after it in the same file, or None."""
         with self.lock:
@@ -569,16 +591,73 @@ def fuse(vec_hits, kw_rowids, chunk_file):
     return out
 
 
+
+def document_date(name, text):
+    """Return explicit document-date evidence, never an expiry or arbitrary maximum year."""
+    is_i94 = "i94" in re.sub(r"[^a-z0-9]", "", name.casefold()) or bool(re.search(r"\bi[- ]?94\b", text, re.I))
+    labels = (r"most recent date of entry|date of entry|arrival(?:/issued)? date|date of arrival" if is_i94
+              else r"document date|date of issue|issue date|issued on|issued|date")
+    formats = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m-%d-%Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y", "%Y %B %d", "%Y %b %d")
+    date_pattern = r"(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{4}\s+[A-Za-z]{3,9}\s+\d{1,2})"
+    matches = []
+    normalized = " ".join(text.split())
+    for match in re.finditer(r"\b(" + labels + r")\s*[:\-]?\s*(" + date_pattern + r")", normalized, re.I):
+        if match[1].casefold() == "date" and re.search(r"\b(expiry|expiration|expired?|due|birth|admit until|valid until)\s*$", normalized[:match.start()], re.I):
+            continue
+        raw = " ".join(match[2].split())
+        for fmt in formats:
+            try:
+                date = datetime.strptime(raw, fmt).date().isoformat()
+                matches.append((date, f"{match[1]}: {raw}"))
+                break
+            except ValueError: pass
+    if matches:
+        date, evidence = max(matches)
+        return {"document_date": date, "date_precision": "day", "date_source": "document_text", "date_evidence": evidence}
+    for match in re.finditer(r"(?<!\d)((?:19|20)\d{2})[-_ .]?([01]\d)[-_ .]?([0-3]\d)(?!\d)", name):
+        try:
+            date = datetime(int(match[1]), int(match[2]), int(match[3])).date().isoformat()
+            return {"document_date": date, "date_precision": "day", "date_source": "filename", "date_evidence": match[0]}
+        except ValueError: pass
+    years = re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", name)
+    if years:
+        return {"document_date": max(years), "date_precision": "year", "date_source": "filename", "date_evidence": max(years)}
+    return {"document_date": None, "date_precision": None, "date_source": None, "date_evidence": None}
+
+
+def read_file_evidence(store, file_id, start_page=1, max_pages=2):
+    evidence = store.text_evidence(file_id)
+    if evidence is None: return None
+    path = Path(evidence["path"])
+    if path.suffix.casefold() not in {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".heic", ".webp"}:
+        return evidence
+    if not path.is_file() or path.is_symlink(): raise ValueError("The indexed file is missing or changed; search again")
+    if not DOCUMENT_READER.is_file(): raise ValueError("The on-device document reader is unavailable; scanned pages and filled fields have NOT been verified")
+    result = subprocess.run([str(DOCUMENT_READER), str(path), str(start_page), str(max_pages)], capture_output=True, text=True, timeout=45)
+    try: document = json.loads(result.stdout)
+    except ValueError: raise ValueError("The document could not be read; this does not mean its fields are blank")
+    if result.returncode or document.get("error"): raise ValueError(document.get("error") or "Document reader failed")
+    pages = document.get("pages", [])
+    text = "\n\n".join(f"[p{page['page']}, {page['method']}]\n{page['text']}" for page in pages)
+    if not text.strip() or not any(page.get("text", "").strip() for page in pages):
+        raise ValueError("No readable text was recognized on these pages. This does NOT establish that the document or field is blank")
+    return {**evidence, "text": text[:16000], "truncated": len(text) > 16000 or document["has_more_pages"],
+            **document_date(evidence["name"], text), "pages_total": document["pages_total"], "start_page": start_page,
+            "pages_read": len(pages), "has_more_pages": document["has_more_pages"],
+            "next_page": start_page + len(pages) if document["has_more_pages"] else None,
+            "read_method": sorted({page["method"] for page in pages}),
+            "note": "Read from the actual local file, including scanned pages and filled PDF values. OCR may contain errors; check labels and person. I94 personal expiry is Admit Until Date, NEVER the OMB/form expiration. Passport expiry is Date of Expiry, not a visa date. Read further pages/other candidates before claiming a field is absent. Do not infer legal status from these dates."}
+
 class Searcher:
     def __init__(self, store, embedder):
         self.store, self.embedder = store, embedder
 
-    def search(self, query, kind=None, folder=None, limit=RESULT_LIMIT):
+    def search(self, query, kind=None, folder=None, limit=RESULT_LIMIT, sort="relevance"):
         query = (query or "").strip()
         if not query:
             return []
         vec = self.store.vector_top(self.embedder.embed_query(query), POOL, file_kind=kind)
-        kw = self.store.keyword_top(keyword_tokens(query), POOL)
+        kw = list(dict.fromkeys([-fid for fid in self.store.name_matches(query, POOL)] + self.store.keyword_top(keyword_tokens(query), POOL)))
         chunks = self.store.chunk_info([h[0] for h in vec] + [r for r in kw if r > 0])
         chunk_file = {c: i["file_id"] for c, i in chunks.items()}
         files = self.store.file_info(set(chunk_file.values()) | {-r for r in kw if r < 0})
@@ -586,6 +665,10 @@ class Searcher:
             kw = [r for r in kw if files.get(-r if r < 0 else chunk_file.get(r), {}).get("kind") == kind]
         out = []
         for r in fuse(vec, kw, chunk_file):
+            # Once there are literal matches, recency must compare those candidates. A semantic
+            # near-match with a newer date must not outrank the document actually requested.
+            if sort == "newest" and kw and not r["kw"]:
+                continue
             f = files.get(r["file_id"])
             if f is None or (folder and not _under(f["path"], folder)):
                 continue
@@ -593,9 +676,14 @@ class Searcher:
             out.append({"file_id": r["file_id"], "chunk_id": r["chunk"], "path": f["path"], "name": f["name"], "kind": f["kind"],
                         "score": round(r["vec"], 3) if r["vec"] is not None else None,
                         "snippet": c.get("text") or "", "locator": c.get("locator") or "", "mtime": f["mtime"]})
-            if len(out) == limit:
+            if sort == "newest":
+                evidence = self.store.text_evidence(r["file_id"])
+                out[-1].update({k: evidence[k] for k in ("document_date", "date_precision", "date_source", "date_evidence")})
+            if sort != "newest" and len(out) == limit:
                 break
-        return out
+        if sort == "newest":
+            out.sort(key=lambda row: (row.get("document_date") or "", row.get("mtime") or 0), reverse=True)
+        return out[:limit]
 
     def passages(self, query, limit=6, max_chars=12000):
         """The best text chunks for a question, ungrouped, for "My files" in chat."""
@@ -1135,7 +1223,9 @@ def make_app(store, embedder, indexer, searcher):
         if indexer.error:
             raise HTTPException(503, indexer.error)
         limit = max(1, min(int(body.get("limit") or RESULT_LIMIT), 100))
-        return {"results": searcher.search(body.get("query"), body.get("kind") or None, body.get("folder") or None, limit)}
+        sort = body.get("sort", "relevance")
+        if sort not in ("relevance", "newest"): raise HTTPException(400, "sort must be relevance or newest")
+        return {"results": searcher.search(body.get("query"), body.get("kind") or None, body.get("folder") or None, limit, sort)}
 
     @api.post("/passages")
     def passages(body: dict = Body(...)):
@@ -1158,6 +1248,14 @@ def make_app(store, embedder, indexer, searcher):
         if not f:
             raise HTTPException(404, "not in the index")
         return f
+
+    @api.get("/text/{file_id}")
+    def text(file_id: int, start_page: int = 1, max_pages: int = 2):
+        if start_page < 1 or not 1 <= max_pages <= 4: raise HTTPException(400, "Use start_page>=1 and max_pages between 1 and 4")
+        try: evidence = read_file_evidence(store, file_id, start_page, max_pages)
+        except (ValueError, OSError, subprocess.TimeoutExpired) as error: raise HTTPException(422, str(error))
+        if evidence is None: raise HTTPException(404, "not in the index")
+        return evidence
 
     @api.get("/preview/{file_id}")
     def preview(file_id: int, chunk_id: int | None = None):

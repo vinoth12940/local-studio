@@ -172,67 +172,24 @@ def open_requires_matching_path():
 
 
 @check
-def file_passages():
-    class Resp:
-        status_code = 200
+def my_files_uses_tools_without_rewriting_the_question():
+    messages = [{"role": "system", "content": "be brief"}, {"role": "user", "content": "earlier question"},
+                {"role": "assistant", "content": "earlier answer"}, {"role": "user", "content": "When is the I94 and passport expiring?"}]
+    import copy
+    original = copy.deepcopy(messages)
+    result = app._with_agent_note(messages, "America/Chicago", use_files=True)
+    assert messages == original and result[1:] == original[1:]
+    assert app.FILES_PROMPT in result[0]["content"]
+    assert "search_files and read_file" in result[0]["content"] and "does not prove" in result[0]["content"]
+    assert "Answer using these excerpts" not in result[0]["content"]
 
-        def __init__(self, passages):
-            self._p = passages
-
-        def json(self):
-            return {"passages": self._p}
-
-    found = [{"file_id": 3, "name": "lease.pdf", "path": "/r/lease.pdf", "locator": "p2", "text": "Rent is 2,450 dollars per month."},
-             {"file_id": 4, "name": "notes.txt", "path": "/r/notes.txt", "locator": "", "text": "Bond is four weeks' rent."}]
-    calls = []
-    real = app.httpx.post
-    try:
-        app.httpx.post = lambda url, **kw: calls.append((url, kw["json"])) or Resp(found)
-        msgs = [{"role": "system", "content": "be brief"}, {"role": "user", "content": "earlier question"},
-                {"role": "assistant", "content": "earlier answer"}, {"role": "user", "content": "what is my rent?"}]
-        sources = app._add_file_passages(msgs)
-        assert calls == [(app.SEARCH_URL + "/passages", {"query": "what is my rent?", "limit": 6, "max_chars": 12000})]
-        assert sources == [{"file_id": 3, "name": "lease.pdf", "path": "/r/lease.pdf", "locator": "p2"},
-                           {"file_id": 4, "name": "notes.txt", "path": "/r/notes.txt", "locator": ""}]
-        text = msgs[-1]["content"]
-        assert text.startswith(app.FILES_PROMPT) and text.endswith("Question: what is my rent?")
-        assert "[1] lease.pdf (p2)\nRent is 2,450 dollars per month." in text and "[2] notes.txt\nBond is four weeks' rent." in text
-        assert msgs[1]["content"] == "earlier question", "only the latest user message is changed"
-
-        app.httpx.post = lambda url, **kw: Resp([])                         # nothing matched
-        msgs = [{"role": "user", "content": "hello"}]
-        assert app._add_file_passages(msgs) == [] and msgs[0]["content"] == "hello"
-
-        def down(url, **kw):
-            raise app.httpx.ConnectError("refused")
-
-        app.httpx.post = down                                               # Search is not running
-        assert app._add_file_passages(msgs) == [] and msgs[0]["content"] == "hello"
-        assert app._add_file_passages([{"role": "assistant", "content": "no user turn"}]) == []
-    finally:
-        app.httpx.post = real
-
-
-# ---- checks added by the final review (each written to fail before its fix)
 
 @check
-def my_files_uses_only_the_latest_turn():
-    class Resp:
-        status_code = 200
-
-        def json(self):
-            return {"passages": [{"file_id": 1, "name": "lease.pdf", "path": "/r/lease.pdf", "locator": "", "text": "Rent is 2,450."}]}
-
-    posts, real = [], app.httpx.post
-    app.httpx.post = lambda url, **kw: posts.append(kw["json"]["query"]) or Resp()
-    try:
-        msgs = [{"role": "user", "content": "what is my rent?"}, {"role": "assistant", "content": "2,450 dollars."},
-                {"role": "user", "content": "", "attachments": ["0123456789abcdef"]}]      # a photo sent with no text
-        assert app._add_file_passages(msgs) == [] and posts == [], "an attachment-only turn must not search with an older question"
-        assert msgs[0]["content"] == "what is my rent?", "an earlier turn is never rewritten"
-        assert app._add_file_passages([{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]) == [] and posts == []
-    finally:
-        app.httpx.post = real
+def my_files_preserves_attachment_only_turns():
+    messages = [{"role": "user", "content": "old question"}, {"role": "assistant", "content": "old answer"},
+                {"role": "user", "content": "", "attachments": ["0123456789abcdef"]}]
+    result = app._with_agent_note(messages, use_files=True)
+    assert result[-1] == messages[-1] and result[1:]==messages
 
 
 @check

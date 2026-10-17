@@ -7,6 +7,8 @@
 CODE="${0:A:h}"
 STATE="${LOCAL_STUDIO_HOME:-$CODE}"
 export LOCAL_STUDIO_HOME="$STATE"
+# Runtime imports must not add __pycache__ files inside the signed app bundle.
+export PYTHONDONTWRITEBYTECODE=1
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 mkdir -p "$STATE/logs"
 cd "$CODE"

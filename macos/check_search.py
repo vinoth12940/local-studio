@@ -895,6 +895,78 @@ def a_better_reader_redoes_only_that_kind():
             search.EXTRACT_VERSION, search.REDO_KINDS = real[0], real[1]
 
 
+@check
+def newest_i94_uses_entry_date_not_copy_time_or_expiry():
+    with tempfile.TemporaryDirectory() as d:
+        st = search.Store(Path(d) / "index.db")
+        emb = FakeEmbedder()
+        st.sync([("/docs/I-94 2024.pdf", 1, 1900000000.0, "document"),
+                 ("/docs/I94 2025.pdf", 1, 1700000000.0, "document"),
+                 ("/docs/unrelated 2026.pdf", 1, 1900000001.0, "document")])
+        files = {f["name"]: f for f in st.pending()}
+        for name, year in (("I-94 2024.pdf", 2024), ("I94 2025.pdf", 2025)):
+            text = f"I-94 Arrival Record. Most Recent Date of Entry: 03/15/{year}\nAdmit Until Date: 03/15/2028"
+            st.replace_chunks(files[name]["id"], [("text", text, "p1", emb.embed_texts([text])[0])])
+        text = "Document Date: 10/17/2026. Unrelated record."
+        st.replace_chunks(files["unrelated 2026.pdf"]["id"], [("text", text, "p1", emb.embed_texts([text])[0])])
+        # Even a spurious strong semantic hit must not become the newest literal I94 match.
+        original_top = st.vector_top
+        unrelated = st.first_chunk(files["unrelated 2026.pdf"]["id"])
+        st.vector_top = lambda *args, **kwargs: [(unrelated, .9, 8)] + original_top(*args, **kwargs)
+        service = search.Searcher(st, emb)
+        for query in ("I94", "I-94"):
+            result = service.search(query, limit=1, sort="newest")
+            assert result[0]["name"] == "I94 2025.pdf", result
+            assert result[0]["document_date"] == "2025-03-15" and result[0]["date_source"] == "document_text"
+            assert "2028" not in result[0]["date_evidence"]
+        evidence = st.text_evidence(files["I94 2025.pdf"]["id"])
+        assert evidence["document_date"] == "2025-03-15" and "03/15/2028" in evidence["text"]
+        assert st.text_evidence(99999) is None
+        st.db.close()
+
+
+@check
+def read_file_uses_the_actual_scanned_or_filled_document():
+    with tempfile.TemporaryDirectory() as d:
+        path=Path(d)/"I94 2029.pdf"; path.write_bytes(b"synthetic PDF stub")
+        st=search.Store(Path(d)/"index.db")
+        st.sync([(str(path),path.stat().st_size,1.0,"document")])
+        fid=st.pending()[0]["id"]
+        reader, run=search.DOCUMENT_READER, search.subprocess.run
+        search.DOCUMENT_READER=path
+        calls=[]
+        def native(args, **kw):
+            calls.append(args)
+            value={"pages_total":3,"has_more_pages":True,"pages":[{"page":1,"method":"on_device_ocr","text":"Arrival/Issued Date: 2029 June 29\nAdmit Until Date: 2030 April 10\nOMB Expiration Date: 01/31/2024"}]}
+            return types.SimpleNamespace(returncode=0,stdout=json.dumps(value))
+        search.subprocess.run=native
+        try:
+            evidence=search.read_file_evidence(st,fid,1,1)
+            assert calls[0]==[str(path),str(path),"1","1"]
+            assert evidence["document_date"]=="2029-06-29" and evidence["next_page"]==2
+            assert evidence["truncated"] and evidence["read_method"]==["on_device_ocr"]
+            assert "Admit Until" in evidence["text"] and "NEVER the OMB" in evidence["note"]
+            search.subprocess.run=lambda *a,**kw:types.SimpleNamespace(returncode=0,stdout=json.dumps({"pages_total":1,"has_more_pages":False,"pages":[{"page":1,"method":"on_device_ocr","text":""}]}))
+            try: search.read_file_evidence(st,fid)
+            except ValueError as e: assert "does NOT establish" in str(e)
+            else: raise AssertionError("Empty OCR must not silently become a blank-document claim")
+        finally:
+            search.DOCUMENT_READER,search.subprocess.run=reader,run
+            st.db.close()
+
+
+@check
+def document_dates_keep_their_evidence_and_uncertainty():
+    assert search.document_date("I94.pdf", "Admit Until Date: 03/15/2028")["document_date"] is None
+    assert search.document_date("record.pdf", "Issued on: 03/15/2025. Expiration Date: 03/15/2028")["document_date"] == "2025-03-15"
+    assert search.document_date("record.pdf", "Birth Date: 01/01/2000. Expiry Date: 03/15/2028")["document_date"] is None
+    assert search.document_date("I94.pdf", "Most Recent Date of Entry:\n2025 March 15")["document_date"] == "2025-03-15"
+    year = search.document_date("I94 2025.pdf", "scanned page without recognized dates")
+    assert year["document_date"] == "2025" and year["date_precision"] == "year" and year["date_source"] == "filename"
+    explicit = search.document_date("invoice 20251017.pdf", "")
+    assert explicit["document_date"] == "2025-10-17" and explicit["date_source"] == "filename"
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

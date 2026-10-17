@@ -437,8 +437,44 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .agres:empty { display: none; }
 .agans { border-color: var(--line-2); background: var(--bg); }
 .agans .agcardh { color: var(--ink-2); }
-.agans .sources a.chip { text-decoration: none; }
-.agans .agact { margin-top: 14px; }
+.sources a.chip { text-decoration: none; }
+.chround { margin-bottom: 12px; }
+.chround .thought { margin-bottom: 6px; }
+.chround-note { font-size: 14px; color: var(--ink-2); margin: 4px 0 8px; line-height: 1.55; }
+.chround-note p { margin: 0 0 6px; }
+.chround-note p:last-child { margin-bottom: 0; }
+.chround-note[hidden] { display: none; }
+.chattoolsteps { display:flex; flex-direction:column; gap:6px; margin: 4px 0 12px; }
+.chattoolsteps:empty { display: none; }
+.chattoolstep { border: 1px solid var(--line); border-radius: 8px; background: var(--raised); overflow: hidden; }
+.chattoolstep summary { list-style: none; cursor: pointer; padding: 4px 8px; }
+.chattoolstep summary::-webkit-details-marker { display: none; }
+.chattoolstep summary .sub { display: inline-flex; align-items: center; gap: 6px; }
+.chattoolstep[open] summary { border-bottom: 1px solid var(--line); }
+.chtdetail { margin: 0; padding: 8px 10px; font-size: 11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 220px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; background: var(--soft); color: var(--ink-2); }
+.undo-btn { margin-left: 8px; font-size: 11.5px; text-decoration: underline; color: var(--warn); cursor: pointer; border: 0; background: none; }
+.undo-btn:hover { color: var(--ink); }
+.undo-done { margin-left: 8px; font-size: 11.5px; color: var(--muted); }
+.chplan { border: 1px solid var(--line); border-radius: 10px; background: var(--raised); padding: 8px 12px; margin: 4px 0 10px; }
+.chplan-hdr { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: 6px; }
+.chplan-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.chplan-item { font-size: 13px; display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.chplan-item.completed { color: var(--muted); text-decoration: line-through; }
+.chplan-item.in_progress { color: var(--ink); font-weight: 500; }
+.chplan-ico { font-size: 12px; width: 14px; text-align: center; }
+.chhcard { border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line)); background: color-mix(in srgb, var(--warn) 6%, var(--bg)); border-radius: 12px; padding: 12px 14px; margin: 8px 0; }
+.chhcard.question { border-color: color-mix(in srgb, var(--ink) 35%, var(--line)); background: var(--raised); }
+.chhcard-hdr { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.chhcard-tag { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--warn); }
+.chhcard.question .chhcard-tag { color: var(--ink-2); }
+.chhcard-title { font-size: 13.5px; font-weight: 500; color: var(--ink); }
+.chhcard-reason { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+.chhcard-preview { margin: 6px 0 10px; padding: 8px 10px; font-size: 11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; background: var(--soft); border: 1px solid var(--line); border-radius: 6px; }
+.chhcard-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.chhcard-opts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.chhcard-input-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.chhcard-inp { flex: 1; min-width: 140px; height: 32px; border: 1px solid var(--line-2); border-radius: 6px; padding: 0 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; outline: 0; }
+.chhcard-inp:focus { border-color: var(--ink-2); }
 .agchat { border: 1px solid var(--line); border-radius: 14px; background: var(--raised); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
 .agchst { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink-2); }
 .agchshot { width: 240px; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; line-height: 0; cursor: zoom-in; }
@@ -551,6 +587,7 @@ dialog::backdrop { background: var(--overlay); }
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-agent" viewBox="0 0 24 24"><path d="M5 3l15 7-6.5 2.5L11 20z"/></symbol>
   <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
 </svg>
 
 <div class="app" id="app">
@@ -645,7 +682,7 @@ dialog::backdrop { background: var(--overlay); }
             <button class="pillbtn on" id="thinkPill"><svg class="i"><use href="#i-bulb"/></svg>Think</button>
             <div class="sel"><select id="effortSel" title="Effort"><option value="">Auto effort</option><option value="low">Low effort</option><option value="high">High effort</option><option value="xhigh">Max effort</option></select></div>
             <button class="pillbtn" id="filesPill" aria-label="My files"><svg class="i"><use href="#i-file"/></svg><span class="pl">My files</span></button>
-            <button class="pillbtn" id="agentPill" aria-label="Agent" hidden><svg class="i"><use href="#i-agent"/></svg><span class="pl">Agent</span></button>
+            <button class="pillbtn" id="wsPill" aria-label="Workspace folder" title="Set active workspace folder for file & shell tools"><svg class="i"><use href="#i-folder"/></svg><span class="pl" id="wsTxt">Workspace</span><span id="wsClear" style="display:none;margin-left:4px;opacity:0.6">&times;</span></button>
             <div class="grow"></div>
             <button class="sendbtn" id="send" title="Send"><svg class="i"><use href="#i-up" id="sendIcon"/></svg></button>
           </div>
@@ -825,7 +862,7 @@ dialog::backdrop { background: var(--overlay); }
         </div>
 
         <div class="section" id="agSet">
-          <div class="sh"><div><h3>Agent</h3><p id="agSetSum">–</p></div>
+          <div class="sh"><div><h3>Computer access</h3><p id="agSetSum">–</p></div>
             <label class="switch"><input type="checkbox" id="agEnable"><span></span></label></div>
           <div class="row" id="agCua"></div>
           <div id="agSetBody" style="display:none">
@@ -1122,15 +1159,58 @@ async function openChat(id) {
 function newChat() { if (streaming) return; chDetach(); current = null; showView("chat"); renderThread(); }
 $("newChat").onclick = newChat;
 document.addEventListener("keydown", (e) => { if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); newChat(); } });
+function updateWorkspaceUI() {
+  const ws = current?.workspace;
+  const pill = $("wsPill");
+  if (!pill) return;
+  const txt = $("wsTxt");
+  const clear = $("wsClear");
+  if (ws) {
+    pill.classList.add("on");
+    const name = ws.split("/").filter(Boolean).pop() || ws;
+    if (txt) txt.textContent = name.length > 16 ? name.slice(0, 14) + "…" : name;
+    pill.title = `Active workspace: ${ws} (click to change, or × to clear)`;
+    if (clear) clear.style.display = "inline";
+  } else {
+    pill.classList.remove("on");
+    if (txt) txt.textContent = "Workspace";
+    pill.title = "Set active workspace folder for file & shell tools";
+    if (clear) clear.style.display = "none";
+  }
+}
+$("wsPill").onclick = async (e) => {
+  if (e.target.id === "wsClear" || e.target.closest("#wsClear")) {
+    if (current) {
+      delete current.workspace;
+      updateWorkspaceUI();
+      await saveChat(current);
+      toast("Workspace cleared");
+    }
+    return;
+  }
+  try {
+    const r = await jpost("/api/search/choose-folder");
+    if (r && r.path) {
+      if (!current) current = { id: newId(), title: "New chat", messages: [] };
+      current.workspace = r.path;
+      updateWorkspaceUI();
+      await saveChat(current);
+      toast(`Workspace: ${r.path}`);
+    }
+  } catch (err) {
+    toast(err.message || "Could not choose folder");
+  }
+};
 async function saveChat(chat = current) {
   if (!chat) return;
-  const msgs = chat.messages.map(({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources, agent_run, agentLink }) => ({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources, agent_run, agentLink }));
-  await jpost(`/api/chats/${chat.id}`, { title: chat.title, messages: msgs }, "PUT");
+  const msgs = chat.messages.map(({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources, agent_run, computerSetup, tool_steps, web_sources, plan, rounds }) => ({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources, agent_run, computerSetup, tool_steps, web_sources, plan, rounds }));
+  await jpost(`/api/chats/${chat.id}`, { title: chat.title, messages: msgs, ...(chat.workspace ? { workspace: chat.workspace } : {}) }, "PUT");
   loadChats();
 }
 
 const STARTERS = [["i-code", "Write code", "Write a Python script that finds duplicate photos in a folder"], ["i-book", "Explain", "Explain how speculative decoding keeps output identical"], ["i-pencil2", "Draft", "Draft a polite follow-up email after a job interview"], ["i-spark", "Brainstorm", "Brainstorm names for a privacy-first note-taking app"]];
 function renderThread() {
+  updateWorkspaceUI();
   const scroll = $("chatScroll"), wrap = $("composerWrap");
   let w = document.querySelector("#v-chat .welcome");
   if (!current || !current.messages.length) {
@@ -1214,6 +1294,83 @@ function sourcesHTML(m) {
   const seen = new Set();                                    // one chip per file, however many passages it gave
   return `<div class="sources">${m.sources.filter((s) => !seen.has(s.path) && seen.add(s.path)).map((s) => `<button class="chip" data-open="${s.file_id}" data-path="${esc(s.path)}" title="${esc(srHome(s.path))}">${icon("i-file", "width:14px;height:14px")}${esc(s.name)}</button>`).join("")}</div>`;
 }
+function chToolStepsInner(steps, openIds) {
+  return (steps || []).map((step) => {
+    const iconStr = step.status === "running" ? "◌" : step.status === "error" ? "!" : "✓";
+    const undoBtn = step.undone ? ` <span class="undo-done">Restored</span>` : step.backup_id ? ` <button class="linkbtn undo-btn" data-undo="${esc(step.backup_id)}" title="Revert this change">Undo</button>` : "";
+    const subHTML = `<div class="sub" title="${esc(step.error || "")}">${iconStr} ${esc(step.summary || "Checking a tool")}${undoBtn}</div>`;
+    if (step.detail) {
+      return `<details class="chattoolstep" data-step-id="${esc(step.id || "")}"${openIds?.has(step.id) ? " open" : ""}><summary>${subHTML}</summary><pre class="chtdetail">${esc(step.detail)}</pre></details>`;
+    }
+    return subHTML;
+  }).join("");
+}
+function chToolsHTML(message) {
+  const steps = Array.isArray(message.tool_steps) ? message.tool_steps : [];
+  return steps.length ? `<div class="chattoolsteps">${chToolStepsInner(steps)}</div>` : "";
+}
+function chRoundItemHTML(r) {
+  const th = thoughtHTML(r, false);
+  const note = r.note ? `<div class="chround-note">${md(r.note)}</div>` : "";
+  const tools = Array.isArray(r.tools) && r.tools.length ? `<div class="chattoolsteps">${chToolStepsInner(r.tools)}</div>` : "";
+  return th || note || tools ? `<div class="chround">${th}${note}${tools}</div>` : "";
+}
+function chRoundsHTML(message) {
+  return Array.isArray(message.rounds) && message.rounds.length ? `<div class="chroundswrap">${message.rounds.map(chRoundItemHTML).join("")}</div>` : "";
+}
+function chPlanHTML(message) {
+  const plan = Array.isArray(message.plan) ? message.plan : [];
+  if (!plan.length) return "";
+  return `<div class="chplan"><div class="chplan-hdr">Task Plan</div><ul class="chplan-list">${plan.map((t) => {
+    const st = t.status || "pending";
+    const ico = st === "completed" ? "✓" : st === "in_progress" ? "◌" : "○";
+    return `<li class="chplan-item ${esc(st)}"><span class="chplan-ico">${ico}</span><span class="chplan-txt">${esc(t.content || t.task || "")}</span></li>`;
+  }).join("")}</ul></div>`;
+}
+function chHarnessCardHTML(message) {
+  if (message.pendingApproval) {
+    const a = message.pendingApproval;
+    return `<div class="chhcard approval">
+      <div class="chhcard-hdr">
+        <span class="chhcard-tag">Action Approval</span>
+        <span class="chhcard-title">${esc(a.title || a.name || "Approval Required")}</span>
+      </div>
+      ${a.reason ? `<div class="chhcard-reason">${esc(a.reason)}</div>` : ""}
+      ${a.preview ? `<pre class="chhcard-preview"><code>${esc(a.preview)}</code></pre>` : ""}
+      <div class="chhcard-acts">
+        <button class="btn primary sm" data-hdecide="allow" data-sid="${esc(a.session_id)}">Allow once</button>
+        <button class="btn sm" data-hdecide="allow_session" data-sid="${esc(a.session_id)}">Allow for this chat</button>
+        <button class="btn danger sm" data-hdecide="deny" data-sid="${esc(a.session_id)}">Deny</button>
+      </div>
+    </div>`;
+  }
+  if (message.pendingQuestion) {
+    const q = message.pendingQuestion;
+    const opts = Array.isArray(q.options) && q.options.length ? `
+      <div class="chhcard-opts">
+        ${q.options.map((opt) => `<button class="chip" data-hopt="${esc(opt)}" data-sid="${esc(q.session_id)}">${esc(opt)}</button>`).join("")}
+      </div>` : "";
+    return `<div class="chhcard question">
+      <div class="chhcard-hdr">
+        <span class="chhcard-tag">Question</span>
+        <span class="chhcard-title">${esc(q.question || "")}</span>
+      </div>
+      ${opts}
+      <div class="chhcard-input-row">
+        <input type="text" class="chhcard-inp" placeholder="Type an answer…" data-sid="${esc(q.session_id)}">
+        <button class="btn sm primary" data-hqsend data-sid="${esc(q.session_id)}">Send</button>
+        <button class="btn sm" data-hqskip data-sid="${esc(q.session_id)}">Skip</button>
+      </div>
+    </div>`;
+  }
+  return "";
+}
+function chWebSourcesHTML(message) {
+  const seen = new Set();
+  const sources = (Array.isArray(message.web_sources) ? message.web_sources : []).filter((source) => agWeb(source.url) && !seen.has(source.url) && seen.add(source.url));
+  return sources.length ? `<div class="sources">${sources.map((source) => `<a class="chip" href="${esc(source.url)}" target="_blank" rel="noopener noreferrer">${esc(source.title || source.url)}</a>`).join("")}</div>` : "";
+}
+
 function turnHTML(m, i, live = false) {
   if (m.role === "user") {
     const atts = m.attachments || [];
@@ -1222,26 +1379,145 @@ function turnHTML(m, i, live = false) {
     return `<div class="turn user">${imgs || docs ? `<div class="uatts">${imgs}${docs}</div>` : ""}${m.content ? `<div class="bubble">${esc(m.content)}</div>` : ""}</div>`;
   }
   if (chRun && chRun.msg === m) return chCardHTML(i);
-  const waiting = live && !m.content && !m.reasoning;
+  const hasRounds = Array.isArray(m.rounds) && m.rounds.length > 0;
+  const waiting = live && !m.content && !m.reasoning && !hasRounds && !(m.tool_steps?.length);
   const agentRid = typeof m.agent_run === "string" && AG_RID.test(m.agent_run) ? m.agent_run : "";
   const idle = m.agent_run && !m.content && !m.error;                                  // saved while the task was still running
-  const body = idle ? `<span class="agidle">This Agent task has no saved result yet.</span>` : m.switching ? `<span class="shimmer">${m.switching === "vision" ? `Loading ${esc(m.switchModel || "the vision engine")} with vision… (about 10 s)` : `Loading ${esc(m.switchModel || "the model")}… (first load takes 10–30 s)`}</span>` : waiting ? `<span class="shimmer">${(current?.messages || []).some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span>` : md(m.agent_run ? agNoImages(m.content) : m.content);
+  const body = idle ? `<span class="agidle">This task has no saved result yet.</span>` : m.switching ? `<span class="shimmer">${m.switching === "vision" ? `Loading ${esc(m.switchModel || "the vision engine")} with vision… (about 10 s)` : `Loading ${esc(m.switchModel || "the model")}… (first load takes 10–30 s)`}</span>` : waiting ? `<span class="shimmer">${(current?.messages || []).some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span>` : md(m.agent_run ? agNoImages(m.content) : m.content);
   const tail = live && m.content ? '<span class="caret"></span>' : "";
   const actions = live ? "" : `<div class="actions"><button class="iconbtn" data-act="copy" title="Copy">${icon("i-copy")}</button>${m.agent_run ? "" : `<button class="iconbtn" data-act="regen" title="Regenerate">${icon("i-redo")}</button>`}${perfLine(m.stats)}</div>${perfGrid(m.stats)}`;
-  const agentTail = (agentRid ? `<div class="agtask"><button class="linkbtn" data-agview="${esc(agentRid)}">Agent task · view steps</button></div>` : "")
-    + (m.agentLink ? `<div class="agtask"><button class="linkbtn" data-agopen>Open Agent</button></div>` : "");
+  const agentTail = (agentRid ? `<div class="agtask"><button class="linkbtn" data-agview="${esc(agentRid)}">Task · view steps</button></div>` : "")
+    + (m.computerSetup ? `<div class="agtask"><button class="btn sm" data-computer-setup="${m.computerSetup === "enable" ? "enable" : "settings"}">${m.computerSetup === "enable" ? "Enable computer access and continue" : "Computer access settings"}</button></div>` : "");
   const cut = !live && m.finish === "length" ? `<div class="cutoff">${icon("i-x", "width:14px;height:14px")}The reply hit the length limit. <button class="btn sm" data-act="continue">Continue</button></div>` : "";
-  return `<div class="turn bot" data-i="${i}">${thoughtHTML(m, live)}<div class="content">${body}${tail}</div>${agentTail}${live ? "" : sourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
+  const stepsBlock = hasRounds
+    ? `${chPlanHTML(m)}${chRoundsHTML(m)}${thoughtHTML(m, live)}`
+    : `${thoughtHTML(m, live)}${chPlanHTML(m)}${chToolsHTML(m)}`;
+  return `<div class="turn bot" data-i="${i}">${stepsBlock}${chHarnessCardHTML(m)}<div class="content">${body}${tail}</div>${agentTail}${live ? "" : sourcesHTML(m) + chWebSourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
 }
-$("thread").addEventListener("keydown", agLogKey);
-$("thread").onclick = (e) => {
+$("thread").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.classList?.contains("chhcard-inp")) {
+    e.preventDefault();
+    e.target.closest(".chhcard")?.querySelector("[data-hqsend]")?.click();
+  } else {
+    agLogKey(e);
+  }
+});
+$("thread").onclick = async (e) => {
   const full = e.target.closest(".uatts img[data-full]");
   if (full) { window.open(full.dataset.full, "_blank"); return; }
   const src = e.target.closest(".sources [data-open]");
   if (src) { srOpen(src); return; }
   const task = e.target.closest("[data-agview]");
-  if (task) { const rid = task.dataset.agview; if (AG_RID.test(rid)) { showView("agent"); agOpenSaved(rid); } return; }
-  if (e.target.closest("[data-agopen]")) { showView("agent"); return; }
+  if (task) { const rid = task.dataset.agview; if (AG_RID.test(rid)) chShowSteps(task, rid); return; }
+  const setup = e.target.closest("[data-computer-setup]");
+  if (setup) {
+    if (setup.dataset.computerSetup !== "enable") { showView("manage"); $("agSet").scrollIntoView({ block: "center" }); return; }
+    const chat = current, i = +setup.closest(".turn.bot").dataset.i, message = chat?.messages[i];
+    setup.disabled = true;
+    jpost("/api/agent/enable", { on: true }).then(() => {
+      if (current === chat && chat.messages[i] === message && message?.computerSetup && !streaming && !chLive()) {
+        chat.messages.splice(i, 1); renderThread(); generate();
+      }
+      loadAgent();
+    }).catch((err) => { setup.disabled = false; toast(err.message); });
+    return;
+  }
+  const undoBtn = e.target.closest("[data-undo]");
+  if (undoBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const bid = undoBtn.dataset.undo;
+    const turnEl = undoBtn.closest(".turn.bot");
+    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
+    undoBtn.disabled = true;
+    const oldTxt = undoBtn.textContent;
+    undoBtn.textContent = "Reverting…";
+    try {
+      const res = await jpost("/api/agent/undo", { backup_id: bid });
+      toast(`Restored ${res.name || "file"}`);
+      const step = (turnMsg?.tool_steps || []).find((s) => s.backup_id === bid);
+      if (step) { step.undone = true; delete step.backup_id; }
+      for (const r of turnMsg?.rounds || []) {
+        const rs = (r.tools || []).find((s) => s.backup_id === bid);
+        if (rs) { rs.undone = true; delete rs.backup_id; }
+      }
+      const doneSpan = document.createElement("span");
+      doneSpan.className = "undo-done";
+      doneSpan.textContent = "Restored";
+      undoBtn.replaceWith(doneSpan);
+      if (current && !streaming) saveChat(current);
+    } catch (err) {
+      toast(err.message || "Failed to restore");
+      undoBtn.disabled = false;
+      undoBtn.textContent = oldTxt;
+    }
+    return;
+  }
+  const decideBtn = e.target.closest("[data-hdecide]");
+  if (decideBtn) {
+    const sid = decideBtn.dataset.sid, decision = decideBtn.dataset.hdecide;
+    const card = decideBtn.closest(".chhcard"), turnEl = decideBtn.closest(".turn.bot");
+    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
+    if (card) card.querySelectorAll("button").forEach((b) => b.disabled = true);
+    try {
+      await jpost(`/api/chat/sessions/${sid}/reply`, { decision });
+      if (turnMsg) delete turnMsg.pendingApproval;
+      if (card) card.remove();
+    } catch (err) {
+      toast(err.message || "Approval reply failed");
+      if (card) card.querySelectorAll("button").forEach((b) => b.disabled = false);
+    }
+    return;
+  }
+  const optBtn = e.target.closest("[data-hopt]");
+  if (optBtn) {
+    const sid = optBtn.dataset.sid, answer = optBtn.dataset.hopt;
+    const card = optBtn.closest(".chhcard"), turnEl = optBtn.closest(".turn.bot");
+    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
+    if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = true);
+    try {
+      await jpost(`/api/chat/sessions/${sid}/reply`, { answer });
+      if (turnMsg) delete turnMsg.pendingQuestion;
+      if (card) card.remove();
+    } catch (err) {
+      toast(err.message || "Reply failed");
+      if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = false);
+    }
+    return;
+  }
+  const qSendBtn = e.target.closest("[data-hqsend]");
+  if (qSendBtn) {
+    const card = qSendBtn.closest(".chhcard"), turnEl = qSendBtn.closest(".turn.bot");
+    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
+    const inp = card?.querySelector(".chhcard-inp");
+    const sid = qSendBtn.dataset.sid, answer = inp?.value?.trim() || "";
+    if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = true);
+    try {
+      await jpost(`/api/chat/sessions/${sid}/reply`, { answer });
+      if (turnMsg) delete turnMsg.pendingQuestion;
+      if (card) card.remove();
+    } catch (err) {
+      toast(err.message || "Reply failed");
+      if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = false);
+    }
+    return;
+  }
+  const qSkipBtn = e.target.closest("[data-hqskip]");
+  if (qSkipBtn) {
+    const card = qSkipBtn.closest(".chhcard"), turnEl = qSkipBtn.closest(".turn.bot");
+    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
+    const sid = qSkipBtn.dataset.sid;
+    if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = true);
+    try {
+      await jpost(`/api/chat/sessions/${sid}/reply`, { answer: "" });
+      if (turnMsg) delete turnMsg.pendingQuestion;
+      if (card) card.remove();
+    } catch (err) {
+      toast(err.message || "Reply failed");
+      if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = false);
+    }
+    return;
+  }
   const card = e.target.closest(".agchat");
   if (card) { if (chRun?.el?.contains(card)) chCardClick(chRun, e); return; }
   const turn = e.target.closest(".turn.bot"); if (!turn) return;
@@ -1359,35 +1635,35 @@ syncThink(); syncEffort();
 async function send() {
   const text = $("input").value.trim();
   const atts = pending.filter((p) => p.meta).map((p) => p.meta);
-  if ((!text && !atts.length) || streaming || pending.some((p) => p.busy)) return;
-  const agentMode = useAgent && agentReady();
-  if (agentMode) {
-    if (chLive()) return toast("The Agent is already working on a task");
-    if (!text) return toast("Describe the task for the Agent");
-    if (atts.length) toast("Attachments aren't sent to the Agent yet");
-  }
-  const context = agentMode ? chContextText(current?.messages || []) : "";      // the turns before this message
+  if ((!text && !atts.length) || streaming || chLive() || pending.some((p) => p.busy)) return;
   $("input").value = ""; pending = []; renderPending(); autosize();
   const title = (text || atts.map((a) => a.name).join(", ")).replace(/\s+/g, " ").slice(0, 48);
   if (!current) current = { id: newId(), title, messages: [] };
-  current.messages.push({ role: "user", content: text, attachments: !agentMode && atts.length ? atts : undefined });
+  current.messages.push({ role: "user", content: text, attachments: atts.length ? atts : undefined });
   renderThread(); scrollBottom(true);
-  if (agentMode) return chAgentStart(text, context);
   generate();
 }
 async function generate() {
+  const chat = current;
   const bot = { role: "assistant", content: "", reasoning: "" };
   current.messages.push(bot);
   const idx = current.messages.length - 1;
   // Stable DOM for the live reply: the thinking panel and answer are updated in place, so the
   // panel keeps its open/closed state and its own scroll position while tokens stream in.
   $("thread").insertAdjacentHTML("beforeend", `<div class="turn bot" data-i="${idx}" data-live="1">
+    <div class="chplanwrap"></div>
+    <div class="chroundswrap"></div>
     <details class="thought" hidden><summary><span class="tl shimmer">Thinking…</span>${icon("i-right")}</summary><div class="tb"></div></details>
+    <div class="chround-note" hidden></div>
+    <div class="chattoolsteps"></div>
+    <div class="chhcardwrap"></div>
     <div class="content"><span class="shimmer">${current.messages.some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span></div>
     <div class="err" hidden></div></div>`);
   const el = $("thread").lastElementChild;
-  const th = el.querySelector(".thought"), tl = th.querySelector(".tl"), tb = th.querySelector(".tb");
-  const contentEl = el.querySelector(".content"), errEl = el.querySelector(".err");
+  const planWrap = el.querySelector(".chplanwrap"), roundsWrap = el.querySelector(".chroundswrap");
+  const th = el.querySelector(":scope > .thought"), tl = th.querySelector(".tl"), tb = th.querySelector(".tb");
+  const noteEl = el.querySelector(":scope > .chround-note"), liveToolsEl = el.querySelector(":scope > .chattoolsteps");
+  const cardWrap = el.querySelector(".chhcardwrap"), contentEl = el.querySelector(".content"), errEl = el.querySelector(".err");
   let userToggled = false;                               // a click on the header means "leave it as I set it"
   th.querySelector("summary").addEventListener("click", () => { userToggled = true; });
   const setOpen = (v) => { th.open = v; };
@@ -1397,13 +1673,58 @@ async function generate() {
   const messages = [];
   if (s.sys) messages.push({ role: "system", content: s.sys });
   current.messages.slice(0, -1).filter((m) => !(m.agent_run && !m.content)).forEach((m) => messages.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map((a) => a.id) } : {}) }));
-  const body = { messages, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
+  const body = { messages, chat_id: chat.id, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
   if (effort && modelThinks()) body.reasoning_effort = effort;
   if (s.temp) body.temperature = +s.temp;
   if (useFiles && sr?.running && !sr.error && !noFilesOnce) body.use_files = true;
+  if (current?.workspace) body.workspace = current.workspace;
   noFilesOnce = false;
   streaming = new AbortController(); updateSend();
-  let thinkStart = 0, thinkEnd = 0, raf = 0, pendingThought = "";
+  let thinkStart = 0, thinkEnd = 0, raf = 0, pendingThought = "", actionRun = null, lastCardKey = "|";
+  let curTools = [], curNote = "", curRoundNo = null, renderedRounds = 0;
+
+  const thoughtLabel = () => {
+    const words = (bot.reasoning || "").trim().split(/\s+/).filter(Boolean).length;
+    return `${bot.thoughtSecs ? `Thought for ${fmtSecs(bot.thoughtSecs)}` : "Thought process"}${words ? ` <span class="tw">· ${words.toLocaleString()} words</span>` : ""}`;
+  };
+  const finishRoundThinking = () => {
+    if (thinkStart && !thinkEnd) {
+      thinkEnd = performance.now();
+      bot.thoughtSecs = (thinkEnd - thinkStart) / 1000;
+      tl.className = "tl";
+      tl.innerHTML = thoughtLabel();
+      if (!userToggled) setOpen(false);                  // collapse once the round's action/answer starts, unless the user opened it
+    }
+  };
+  const advanceRound = () => {
+    if (!curTools.length) return;
+    if (pendingThought) { tb.append(pendingThought); pendingThought = ""; }
+    finishRoundThinking();
+    const noteTxt = curNote || (bot.content || "").trim();
+    bot.rounds ||= [];
+    bot.rounds.push({
+      reasoning: bot.reasoning || "",
+      thoughtSecs: bot.thoughtSecs || 0,
+      thoughtOpen: th.open,
+      note: noteTxt,
+      tools: curTools
+    });
+    curTools = [];
+    curNote = "";
+    curRoundNo = null;
+    bot.reasoning = "";
+    bot.thoughtSecs = 0;
+    bot.content = "";
+    thinkStart = 0;
+    thinkEnd = 0;
+    userToggled = false;
+    tb.textContent = "";
+    th.hidden = true;
+    th.open = false;
+    tl.className = "tl shimmer";
+    tl.textContent = "Thinking…";
+    if (noteEl) { noteEl.hidden = true; noteEl.innerHTML = ""; }
+  };
 
   const paint = () => {
     raf = 0;
@@ -1412,15 +1733,33 @@ async function generate() {
       tb.append(pendingThought); pendingThought = "";
       if (atEnd) tb.scrollTop = tb.scrollHeight;        // follow the thinking unless the user scrolled up in it
     }
+    if (planWrap) planWrap.innerHTML = chPlanHTML(bot);
+    while (roundsWrap && renderedRounds < (bot.rounds?.length || 0)) {
+      roundsWrap.insertAdjacentHTML("beforeend", chRoundItemHTML(bot.rounds[renderedRounds++]));
+    }
+    if (noteEl) {
+      noteEl.hidden = !curNote;
+      if (curNote) noteEl.innerHTML = md(curNote);
+    }
+    if (liveToolsEl) {
+      const openSteps = new Set([...liveToolsEl.querySelectorAll("details.chattoolstep[open]")].map((d) => d.dataset.stepId));
+      liveToolsEl.innerHTML = chToolStepsInner(curTools, openSteps);
+    }
+    if (cardWrap) {
+      const cardKey = `${bot.pendingApproval?.id || ""}|${bot.pendingQuestion?.id || ""}`;
+      if (cardKey !== lastCardKey) {
+        lastCardKey = cardKey;
+        cardWrap.innerHTML = chHarnessCardHTML(bot);
+      }
+    }
     if (bot.switching) contentEl.innerHTML = `<span class="shimmer">${bot.switching === "vision" ? `Loading ${esc(bot.switchModel || "the model")} with vision… (about 10 s)` : `Loading ${esc(bot.switchModel || "the model")}… (first load takes 10–30 s)`}</span>`;
     else if (bot.content) contentEl.innerHTML = md(bot.content) + '<span class="caret"></span>';
-    else if (bot.reasoning) contentEl.innerHTML = "";
+    else if (bot.reasoning || curTools.length || bot.rounds?.length) contentEl.innerHTML = "";
     scrollBottom();
   };
   // rAF pauses while the window is hidden or covered; fall back to a timer so the reply keeps
   // rendering (and is complete when the user comes back).
   const repaint = () => { if (!raf) raf = document.hidden ? -setTimeout(paint, 150) : requestAnimationFrame(paint); };
-  const thoughtLabel = () => `Thought for ${fmtSecs(bot.thoughtSecs)}`;
   try {
     const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: streaming.signal });
     const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
@@ -1435,20 +1774,59 @@ async function generate() {
           let j; try { j = JSON.parse(data); } catch { continue; }
           if (j.error) { bot.error = typeof j.error === "string" ? j.error : (j.error.message || JSON.stringify(j.error)); continue; }
           if (j.x_engine) { bot.switching = j.x_engine.status === "switching" ? j.x_engine.mode : null; bot.switchModel = j.x_engine.model; if (bot.switching) poll(); repaint(); continue; }
-          if (j.x_sources) { bot.sources = j.x_sources; continue; }
+          if (j.x_sources) { bot.sources = [...(bot.sources || []), ...j.x_sources]; continue; }
+          if (j.x_web_sources) { bot.web_sources = [...(bot.web_sources || []), ...j.x_web_sources]; continue; }
+          if (j.x_plan) {
+            bot.plan = j.x_plan;
+            repaint();
+            continue;
+          }
+          if (j.x_approval) {
+            bot.pendingApproval = j.x_approval;
+            repaint();
+            scrollBottom(true);
+            continue;
+          }
+          if (j.x_question) {
+            bot.pendingQuestion = j.x_question;
+            repaint();
+            scrollBottom(true);
+            continue;
+          }
+          if (j.x_tool) {
+            const rNo = String(j.x_tool.id || "").split("-")[0];
+            if (curTools.length && curRoundNo !== null && rNo !== curRoundNo) advanceRound();
+            curRoundNo = rNo;
+            finishRoundThinking();
+            if (!curTools.length && bot.content.trim()) {
+              curNote = bot.content.trim();
+              bot.content = "";
+            }
+            const ci = curTools.findIndex((step) => step.id === j.x_tool.id);
+            if (ci < 0) curTools.push(j.x_tool); else curTools[ci] = j.x_tool;
+            bot.tool_steps ||= [];
+            const i = bot.tool_steps.findIndex((step) => step.id === j.x_tool.id);
+            if (i < 0) bot.tool_steps.push(j.x_tool); else bot.tool_steps[i] = j.x_tool;
+            if (bot.pendingApproval && bot.pendingApproval.id === j.x_tool.id) delete bot.pendingApproval;
+            if (bot.pendingQuestion && bot.pendingQuestion.id === j.x_tool.id) delete bot.pendingQuestion;
+            delete bot.finish; repaint(); continue;
+          }
+          if (j.x_agent && AG_RID.test(j.x_agent.run_id || "")) { actionRun = j.x_agent.run_id; continue; }
+          if (j.x_computer_setup) {
+            bot.content = j.x_computer_setup.message; bot.computerSetup = j.x_computer_setup.enable ? "enable" : "settings";
+            continue;
+          }
           const ch = j.choices?.[0], d = ch?.delta;
           if (ch?.finish_reason) bot.finish = ch.finish_reason;
           const rc = d?.reasoning_content ?? d?.reasoning;
           if (rc) {
-            if (!thinkStart) { thinkStart = performance.now(); th.hidden = false; if (!userToggled) setOpen(true); }
+            if (curTools.length) advanceRound();
+            if (!thinkStart) { thinkStart = performance.now(); th.hidden = false; tl.className = "tl shimmer"; tl.textContent = "Thinking…"; if (!userToggled) setOpen(true); }
             bot.reasoning += rc; pendingThought += rc;
           }
           if (d?.content) {
-            if (thinkStart && !thinkEnd) {
-              thinkEnd = performance.now(); bot.thoughtSecs = (thinkEnd - thinkStart) / 1000;
-              tl.className = "tl"; tl.textContent = thoughtLabel();
-              if (!userToggled) setOpen(false);              // collapse once the answer starts, unless the user opened it
-            }
+            if (curTools.length) advanceRound();
+            finishRoundThinking();
             bot.content += d.content;
           }
           if (j.x_mlx_dspark) bot.stats = j.x_mlx_dspark;
@@ -1456,23 +1834,56 @@ async function generate() {
         }
       }
     }
-  } catch (e) { bot.error = e.name === "AbortError" ? (bot.content ? "" : "Stopped.") : String(e.message || e); }
+  } catch (e) {
+    if (e.name === "AbortError" && actionRun) {
+      try { await jpost(`/api/agent/runs/${actionRun}/stop`); } catch {}
+    }
+    bot.error = e.name === "AbortError" ? (bot.content ? "" : "Stopped.") : String(e.message || e);
+  }
   if (raf) { raf < 0 ? clearTimeout(-raf) : cancelAnimationFrame(raf); paint(); }
   if (thinkStart && !thinkEnd) bot.thoughtSecs = (performance.now() - thinkStart) / 1000;
+  if (curTools.length) advanceRound();
   if (!bot.error) delete bot.error;
   delete bot.switching; delete bot.switchModel;
+  delete bot.pendingApproval; delete bot.pendingQuestion;
   bot.thoughtOpen = th.open;                               // keep the panel as the user left it
+  const openStepIds = new Set([...el.querySelectorAll("details.chattoolstep[open]")].map((d) => d.dataset.stepId));
+  el.querySelectorAll(".chroundswrap .chround").forEach((rEl, rIdx) => {
+    const rTh = rEl.querySelector("details.thought");
+    if (rTh && bot.rounds?.[rIdx]) bot.rounds[rIdx].thoughtOpen = rTh.open;
+  });
   streaming = null; updateSend();
+  if (actionRun) return chAttachAction(chat, bot, el, actionRun);
   // Swap in the finished turn (actions + stats) without touching the rest of the thread.
   const tbScroll = tb.scrollTop;
   const tmp = document.createElement("div"); tmp.innerHTML = turnHTML(bot, idx);
-  const done = tmp.firstElementChild; el.replaceWith(done);
-  const ntb = done.querySelector(".thought .tb"); if (ntb) ntb.scrollTop = tbScroll;
+  const done = tmp.firstElementChild;
+  done.querySelectorAll("details.chattoolstep").forEach((d) => {
+    if (openStepIds.has(d.dataset.stepId)) d.open = true;
+  });
+  el.replaceWith(done);
+  const ntb = done.querySelector(":scope > .thought .tb"); if (ntb) ntb.scrollTop = tbScroll;
   showPerf(bot.stats); drawSpark(); scrollBottom();
-  await saveChat(); poll();
+  await saveChat(chat); poll();
 }
 
-// ---------------- agent runs started from chat
+// ---------------- computer actions in chat
+async function chShowSteps(button, rid) {
+  const turn = button.closest(".turn.bot");
+  const existing = turn.querySelector(".chsavedsteps");
+  if (existing) { existing.hidden = !existing.hidden; return; }
+  button.disabled = true;
+  try {
+    const data = await api(`/api/agent/runs/${rid}`);
+    const box = document.createElement("div"); box.className = "aglog chsavedsteps";
+    const state = { ...agFresh(), rid, log: box, replay: true, events: data.events || [] };
+    for (const event of state.events) if (event.type !== "answer") agRender(state, event);
+    agDerive(state);
+    box.addEventListener("click", (event) => agLogClick(state, event));
+    turn.append(box);
+  } catch (error) { toast(error.message); }
+  finally { button.disabled = false; }
+}
 // The Agent switch: a message becomes a task for the Agent. Its card lives in the thread (same building blocks as the Agent view, see agFresh);
 // when the run ends the card is replaced by the run's answer as an ordinary reply that links back to the steps.
 const AG_RID = /^[a-f0-9]{12}$/, CH_STATUS = { done: "Done", stopped: "Stopped", failed: "Failed", interrupted: "Interrupted" };
@@ -1548,26 +1959,16 @@ function chCardClick(c, e) {
 function chStop() { if (!chRun?.s.rid) return toast("The Agent is still starting"); agStopRun(chRun.s); }
 // Leave the card behind (another chat opens): the task keeps running, and opening this chat again reattaches to it.
 function chDetach() { if (chRun) { agClose(chRun.s); chRun = null; agAttnNow(); updateSend(); } }
-async function chAgentStart(task, context) {
-  const chat = current, bot = { role: "assistant", content: "" };
-  chat.messages.push(bot);
-  const c = chRun = Object.assign(chNewRun(chat, bot), { starting: true });
-  $("thread").insertAdjacentHTML("beforeend", chCardHTML(chat.messages.length - 1));
-  chBind(c, $("thread").lastElementChild); scrollBottom(true);
-  let r;
-  try { r = await jpost("/api/agent/run", { task, model_id: activeChat()?.id, context, chat_id: chat.id }); }
-  catch (e) {
-    bot.error = e.message; bot.agentLink = true;
-    if (chRun === c) chRun = null;
-    chSwapTurn(chat, bot, c.el); scrollBottom(true);
-    updateSend(); agAttnNow();
-    return saveChat(chat);
-  }
-  c.starting = false; bot.agent_run = r.run_id;
-  await saveChat(chat);                                      // the placeholder carries the run id, so reopening the chat can find the task
-  if (chRun !== c) return;
-  Object.assign(c.s, { rid: r.run_id, live: true, task });
-  agConnect(c.s); chSync(c); loadAgentRuns();
+async function chAttachAction(chat, bot, el, rid) {
+  bot.content = ""; bot.agent_run = rid;
+  delete bot.computerSetup; delete bot.error; delete bot.finish;
+  await saveChat(chat);                                      // a reload can recover the run even before its first event
+  if (current !== chat) return;
+  const c = chRun = chNewRun(chat, bot);
+  Object.assign(c.s, { rid, live: true, task: chat.messages.at(-2)?.content || "" });
+  const card = chSwapTurn(chat, bot, el);
+  if (card) chBind(c, card);
+  agConnect(c.s); chSync(c); loadAgentRuns(); scrollBottom(true);
 }
 // Redraw one assistant turn where it stands. Never re-renders the thread: a normal reply may be streaming into it in this same chat.
 function chSwapTurn(chat, m, prefer) {
@@ -2111,16 +2512,7 @@ const ag = { ...agFresh(), st: null, runs: [], es: null, pinned: false, replay: 
   log: $("agLog"), scroller: () => document.querySelector("#v-agent .scroll"),
   hooks: { sync: () => agSync(), ended: () => { loadAgentRuns(); loadAgent(); }, retry: () => loadAgent() } };
 
-let useAgent = store.get("useAgent", false);
-const agPermMissing = (st) => { const p = st?.permissions || {}; return p.accessibility === false || p.screen_recording === false; };   // unknown never counts
-const agentReady = () => { const c = ag.st?.cua || {}; return !!(ag.st?.enabled && c.installed && c.ok_version && !agPermMissing(ag.st)); };
-function syncAgentPill() {                                    // only offered while Agent is on and CuaDriver is ready
-  const can = agentReady(), p = $("agentPill");
-  p.hidden = !can; p.classList.toggle("on", useAgent && can);
-  p.title = "Run your message as a task for the Agent: it works in a browser and Mac apps.\nYour recent chat turns are sent to the agent as background.";
-  store.set("useAgent", useAgent);
-}
-$("agentPill").onclick = () => { useAgent = !useAgent; syncAgentPill(); };
+const agPermMissing = (st) => st?.permissions?.accessibility === false || st?.permissions?.screen_recording === false;
 
 // Pure helpers (also run under plain node by the author's checks).
 // An approval title is markdown the server has already escaped: **bold** and \x escapes are all that is honoured, the rest is text.
@@ -2206,8 +2598,7 @@ const agTierKey = (n) => {                       // like the server's _norm_labe
 async function agFetchStatus() {
   let st; try { st = await api("/api/agent/status"); } catch { return null; }
   ag.st = st;
-  $("navAgent").hidden = !st.enabled;
-  syncAgentPill();
+  $("navAgent").hidden = true;
   return st;
 }
 async function loadAgent() {
@@ -2228,7 +2619,7 @@ function agOpen() {
   agSync();
 }
 setInterval(() => { if (view === "agent" || view === "manage") loadAgent(); }, 5000);
-function agAttn(on) { document.title = on ? "⏸ Agent needs your OK" : AG_TITLE; $("navAgent").classList.toggle("attn", on); }
+function agAttn(on) { document.title = on ? "⏸ A task needs your OK" : AG_TITLE; $("navAgent").classList.toggle("attn", on); }
 // Needs the user: the Agent view's task, another task waiting in the background, or the task started from chat.
 function agAttnNow() { const w = (s) => !!s && s.live && !!s.pending && !s.paused; agAttn(w(ag) || ag.bgWait || w(chRun?.s)); }
 // Shared by both places that show a run: which step waits for the user, whether the user holds the controls, and which cards still take an answer.
@@ -2555,7 +2946,7 @@ function agRenderSettings() {
   const st = ag.st; if (!st) return;
   const c = st.cua || {}, s = st.settings || {}, perm = agPermMissing(st), ready = c.installed && c.ok_version && !perm;
   $("agEnable").checked = !!st.enabled;
-  $("agSetSum").textContent = !st.enabled ? "Let a local model use a browser and Mac apps for you. Off until you turn it on." : ready ? "On. The agent asks before anything risky." : "On, but CuaDriver needs attention.";
+  $("agSetSum").textContent = !st.enabled ? "Let chat take actions in your browser and Mac apps. You can also enable access when a chat task needs it." : ready ? "Chat can take actions when you ask, with approval before risky steps." : "Computer access is on, but CuaDriver needs attention.";
   $("agSetBody").style.display = st.enabled ? "" : "none";
   if (document.activeElement !== $("agSteps")) $("agSteps").value = s.max_steps ?? "";
   if (document.activeElement !== $("agMins")) $("agMins").value = s.max_minutes ?? "";

@@ -10,6 +10,23 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-16-local-agent-design.md`
 
+## Verification status (17 Oct 2026)
+
+Tasks 0–9 and the 1.4.0 documentation/version work are implemented. The original checkboxes
+below describe the historical implementation sequence, rather than the current backlog.
+The completion review found and fixed missing process IDs on native input calls, added recovery
+guidance for multi-window input refusals, and preserved paragraph tails in browser views.
+
+Verified: the automated build guards, real Calculator button actions, a Qwen browser task,
+and the approval → reload/reconnect → answer → completion interface flow on an isolated
+fixture server. Task 10's full laptop/store-hours/form/cart/Notes acceptance matrix remains
+unverified; the release continues to label native app control experimental. See the spec's
+completion-review amendment for the exact validation scope and remaining limits.
+
+The later user correction replaces the Agent switch with automatic action selection in chat
+(1.4.1). Progress, approvals and saved step details stay in the conversation. See the final
+spec amendment; this supersedes Task 9's separate-feature interaction.
+
 ## Global Constraints
 
 - No new Python dependency: `start.sh` and `APP_DEPS` in `setup.sh` stay unchanged.
@@ -371,3 +388,27 @@ Pure functions, written against the Task 0 fixtures.
 - [ ] **Step 2: Fix what the runs expose**, each fix with a check in `check_agent.py` first.
 - [ ] **Step 3: Bump the version and docs; run `macos/build.sh`** → all checks pass and the app builds.
 - [ ] **Step 4: Commit** `Local Studio 1.4.0: an agent that works on your Mac` with a bulleted body.
+
+### Follow-up: factual and local-document tools (1.4.2)
+
+- [x] Add clock, web search/page reading and local-file search/reading to regular chat, with
+  native tool results returned to the same model and visible saved progress/sources.
+- [x] Fix I94/I-94 identifier matching and newest-document ranking using date evidence, with
+  regression cases for copied old files, expiry dates and unrelated newer semantic matches.
+- [x] Verify the clock, controlled I94/date comparison, unavailable-product behavior and public
+  source reading with Qwen3.8 27B and LFM2.5 24B-A2B; fix LFM's repeated-search loop.
+- [x] Verify progress and source links in a browser, including reopening a saved chat.
+- [x] Finish the final build/install verification after the LFM loop correction: 213 checks
+  passed, signed 1.4.2 installed while idle, source/signature verified after launch, Qwen restored,
+  and the installed chat used the clock tool and returned the correct local date.
+
+### Follow-up: scanned records and filled forms (1.4.3)
+
+- [x] Reproduce the reported wrong-date answer against actual local records and visually verify
+  the newer source documents; identify omitted scans and filled PDF fields.
+- [x] Replace My files snippet injection with search/read tool guidance and preserve the actual
+  user question. Distinguish personal expiry fields from government form expiration dates.
+- [x] Bundle an on-device native PDF/image reader with filled-field extraction, OCR, pagination,
+  and explicit unreadable-document errors. Keep source chips tied to actual document reads.
+- [x] Run the full 218 checks, install signed 1.4.3 while idle, and rerun the exact question through
+  the installed chat with thinking enabled. Both requested dates match visual source verification.

@@ -5,9 +5,10 @@
 A private, on-device AI studio for Apple Silicon Macs. Chat with models like **Qwen3.8-27B**
 accelerated by **DFlash/DSpark** speculative decoding or any **GGUF** model on **llama.cpp**, ask
 about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Image Turbo** or
-**FLUX.2 Klein**. Everything runs locally; nothing leaves your Mac.
+**FLUX.2 Klein**. Model inference runs locally. Web requests go to the search provider and
+sites you ask about; local file tools read your on-device index.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.4.0**
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.4.3**
 
 ![Chat](docs/chat.jpg)
 
@@ -17,21 +18,36 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 
 ## Features
 
-- **Chat**: streaming replies, collapsible "thinking", effort control, saved conversations with
-  search/rename/delete, copy and regenerate, and per-reply performance details (tok/s, speed-up,
-  accept length, time to first token, cached tokens).
+- **Chat**: streaming replies, step-by-step per-round collapsible "thinking" and intermediate
+  notes, effort control, saved conversations with search/rename/delete, copy and regenerate, and
+  per-reply performance details (tok/s, speed-up, accept length, time to first token, cached tokens).
+- **Agent Harness in chat**: local models work like a full coding and research agent harness across up
+  to 12 tool-calling rounds:
+  - **Workspace & codebase tools**: pick a workspace folder per conversation (`list_directory`,
+    `find_files`, `grep_files`, `read_file`), create or edit files (`write_file`, `edit_file`) with
+    unified diff previews, tolerant block matching, automatic backups, and 1-click **Undo**.
+  - **Local execution**: run Python (`run_python`) and shell commands (`run_shell`) in your active
+    workspace with interactive approval cards (**Allow once**, **Allow in this chat**, **Deny**) and
+    strict path/command safety fences.
+  - **Planning, memory & clarifying questions**: live step-by-step task checklist (`todo_write`),
+    persistent cross-chat memory (`memory_store`, `memory_recall`, manageable in Settings), and
+    interactive clarifying question cards with option chips (`ask_user`).
+  - **Clock, web & indexed local files**: check the real date/time (`get_current_datetime`), search
+    and verify public web pages (`web_search`, `read_webpage`), and search/read indexed personal
+    documents and PDFs with on-device OCR (`search_files`, `read_file`).
 - **Attachments (multimodal)**: attach with the paperclip, drag and drop, or paste. Ask about
   images (Qwen3.8 vision), PDFs, Word (.docx), Excel (.xlsx), and text/code files. Scanned PDFs
   are read as page images.
-- **Agent**: hand a task to a local model that uses an isolated browser and your Mac apps, and
-  asks before anything risky (see "Agent" below). Off until you turn it on.
+- **Computer use in chat**: ask naturally to use a browser or Mac app (`use_computer`). Chat chooses
+  when to act and shows progress, approvals and results in the same conversation. Computer access is
+  enabled once.
 - **Images**: text-to-image with aspect presets, steps, seed, guidance and step caching; live
   progress with ETA and cancel; a library with full-size view, reuse settings, download and delete.
 - **Model library**: one-click download, switch and delete for a curated set of chat and image
   models, plus search across Hugging Face for any MLX or GGUF model (pick the quantization).
   Switch the chat model from the header; the right engine starts automatically.
-- **Settings**: start/stop the engine, see versions, update the engines in one click, clear
-  images, chats, uploads, logs and caches, and uninstall everything.
+- **Settings**: start/stop the engine, see versions, update the engines in one click, manage
+  persistent agent memory, clear images, chats, uploads, logs and caches, and uninstall everything.
 - **API**: the engine serves OpenAI- and Anthropic-compatible endpoints at
   `http://127.0.0.1:8080/v1`, usable from Claude Code, scripts or other local apps.
 
@@ -40,13 +56,13 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 - Mac with Apple Silicon (M1 or newer), macOS 15+
 - 32 GB RAM minimum; 48 GB recommended (all numbers below are from a 48 GB M4 Pro)
 - ~30 GB free disk space for the models
-- Internet only for the one-time install and model downloads
+- Internet for installation, model downloads and public web tools; local inference works offline
 
 ## Install
 
 ### The easy way (recommended)
 
-1. Download **Local-Studio-1.4.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+1. Download **Local-Studio-1.4.3.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
 2. Open it and drag **Local Studio** into **Applications**.
 3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
    engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
@@ -138,37 +154,79 @@ developer folders such as `node_modules` and `.git`, Python environments (recogn
 contents, whatever they are called), copied `node_modules` contents, and private keys. Unrecognised types and
 iCloud files that are not downloaded to this Mac are found by name only.
 
-## Agent
+## Agent Harness & actions in chat
 
-Turn on **Agent** in Settings → Agent and a local model can carry out a task for you on this Mac,
-step by step, while you watch: look something up, read and summarize pages, fill in a form,
-add things to a cart, or work in a Mac app ("make a note called Groceries with milk and eggs").
-It browses in its own isolated Chrome profile (never your everyday browser or its sign-ins) and
-operates other apps through macOS Accessibility, in the background. The Agent view shows a live
-picture beside the step log. Anything risky (submit, send, buy, post, delete, a site you did not
-name, a changing action in some apps) stops and asks first: Allow once, Deny, or Stop. It never
-types into password, card or one-time-code fields. **Take over** brings its browser or app
-forward so you can sign in or sort something out, then Resume. With the **Agent** switch next to
-My files in chat, a message becomes a task and the run appears inside the conversation.
+Chat includes a multi-step **Agent Harness** tailored for local models (up to 12 tool-calling
+rounds per turn) as well as live browser/macOS computer use. There is no separate task mode: ask
+naturally in regular chat, and each round renders its own collapsible **Thought for Xs · N words** block,
+intermediate notes, expandable tool inspector cards, approvals, and final answer in chronological order.
 
-Agent is off by default. It uses the active chat model, so a task that needs to read an image
-wants a vision model.
+### Workspace, coding & execution tools
+
+Click the **Workspace** folder pill in the composer to bind a conversation to any local project
+folder (or leave it on the default workspace):
+
+- **Explore & inspect**: `list_directory`, `find_files`, `grep_files`, and `read_file` let the model
+  browse directories, find files by glob or substring, search code with regexes, and read file line
+  ranges (with line numbers) or local PDFs/DOCX/XLSX.
+- **Create & edit files**: `write_file` and `edit_file` show a unified diff preview and require your
+  approval (**Allow once**, **Allow in this chat**, or **Deny**). Edits use whitespace- and
+  line-number-tolerant block matching so local models succeed reliably. Every file modification saves
+  an automatic backup first and displays a 1-click **Undo** button on the completed tool step.
+- **Run Python & shell commands**: `run_python` (20 s timeout) and `run_shell` (30 s timeout) run in
+  the active workspace after approval, streaming stdout/stderr into the expandable tool step.
+- **Safety fences**: sensitive paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, `Keychains`, `.env` files,
+  private keys, and macOS system directories) and destructive shell patterns (`sudo`, `rm -rf /`,
+  `curl | sh`, `dd if=`, `mkfs`, `launchctl`, keychain dumps) are blocked automatically.
+- **Task planning, memory & clarifying questions**: for multi-step work, the model can maintain a
+  live task checklist (`todo_write`), ask an interactive clarifying question with selectable option
+  chips (`ask_user`), and store or recall persistent cross-chat preferences and facts
+  (`memory_store`, `memory_recall`, viewable and deletable under **Settings → Agent memory**).
+
+### Clock, web & indexed personal documents
+
+Questions such as "What is today's date?", "Check the current Mac lineup", and "Find my most
+recent I-94" or "When is Mithran's passport expiring?" use clock (`get_current_datetime`), web
+(`web_search`, `read_webpage`) and local-file (`search_files`, `read_file`) tools directly in chat.
+Personal documents (passports, visas, I-94s, EADs, tax forms, receipts, notes) always search your
+local files first rather than the public web. Web snippets are leads to verify against source pages;
+unavailable or unreadable sources produce errors rather than assumed facts. Local-file tools
+compare labeled document dates when present and identify filename-only dates as less precise; file
+modification time alone does not prove which document is newest. Scanned PDFs and images are read
+with on-device Vision OCR (`DocumentReader`), and filled PDF form values are preserved when chat
+reads a document. The model checks the person and field label: an I-94 Admit Until Date is separate
+from the government form expiration date. **My files** uses the same search/read tools instead of
+limiting the answer to a few automatically retrieved snippets.
+
+### Browser & Mac app control (CuaDriver)
+
+Ask in the regular chat: "Open Calculator", "Look up the Apple Store hours", or "Fill in this
+form and stop before submitting." When a request needs live GUI or browser interaction, the model
+calls `use_computer()`. Computer access is off by default. The first action request offers **Enable computer access
+and continue** in the chat, or you can manage it in **Settings → Computer access**. Once enabled,
+you keep chatting normally. Risky actions still pause for Allow once, Deny or Stop. Password,
+card and one-time-code fields remain blocked. **Take over** brings the browser or app forward
+for you; Resume continues the same task. Native-app support remains experimental.
+
+Browser actions use an isolated Chrome profile. Pages and app contents go only to the local
+model. Text documents can provide background for a task; actions using image attachments are
+not supported yet, while ordinary image questions continue to work in chat.
 
 Requirements:
 
 - [CuaDriver](https://github.com/trycua/cua) 0.28.2 or newer, installed on the Mac. Local Studio
   runs its own CuaDriver, separate from any other, and never changes its settings without your click.
-- macOS **Accessibility** and **Screen Recording** for CuaDriver. Settings → Agent shows the
+- macOS **Accessibility** and **Screen Recording** for CuaDriver. Settings → Computer access shows the
   status and a Grant button.
 - Google Chrome, for the agent's isolated browser.
 
 Privacy: everything runs on this Mac, and pages and app contents go only to your local model.
-CuaDriver's own telemetry is **on by default**; Settings → Agent shows its state and a
+CuaDriver's own telemetry is **on by default**; Settings → Computer access shows its state and a
 **Turn off** button. The agent's browser profile lives in
 `~/Library/Application Support/CuaDriver/BrowserProfiles`; Settings has Reset browser profile.
-Runs and their screenshots are saved in `data/agent/runs/` and can be deleted from the Agent view.
+Runs and their screenshots are saved in `data/agent/runs/` and can be inspected from the chat and deleted from task history.
 
-Which Mac apps it may touch (Settings → Agent, editable):
+Which Mac apps it may touch (Settings → Computer access, editable):
 
 | Tier | What it can do | Default apps |
 |---|---|---|
@@ -184,8 +242,10 @@ Limits in this release:
 - One task at a time, and chat and image generation wait while it runs. Tasks stop at a step
   limit (40) or time limit (15 minutes, counted while the Mac is awake); a long research task may
   end with an answer labelled **Partial answer**.
-- Mac-app control is **experimental** in this release: it is tested against recorded app data, but
-  not yet end to end on a live Mac. It depends on the app exposing accessibility. If an app doesn't
+- Mac-app control is **experimental** in this release: Calculator button actions are verified on a
+  live Mac; Notes creation is still tested with recorded app data. It depends on the app exposing
+  accessibility. With several app windows, CuaDriver may refuse background typing; use **Take over**
+  to complete that step, then **Resume**. If an app doesn't
   respond, quit and reopen it, or switch CuaDriver off and on in System Settings → Privacy &
   Security → Accessibility.
 - Small local models misread pages sometimes; check the answer, and watch tasks that matter.
@@ -305,9 +365,12 @@ The active chat and image models and any models added from Hugging Face are stor
 | Engine calibration | `~/.cache/mlx_dspark` |
 | Images | `<data>/gallery/` |
 | Conversations | `<data>/data/chats/` |
-| Attachments | `uploads/` |
-| Agent runs | `<data>/data/agent/runs/` |
-| Logs | `logs/` |
+| Attachments | `<data>/uploads/` |
+| Local file search index | `<data>/data/search/` |
+| Agent computer-use runs | `<data>/data/agent/runs/` |
+| Agent persistent memory | `<data>/data/agent/memory.json` |
+| Agent file-edit backups (Undo) | `<data>/data/agent/backups/` |
+| Logs | `<data>/logs/` |
 
 `<data>` is `~/Library/Application Support/Local Studio` for the Mac app, or the checkout folder
 when running from source. None of these folders are committed to git.
@@ -327,15 +390,16 @@ or added from Hugging Face, removes `~/.cache/mlx_dspark`, and deletes `/Applica
 ## Project layout
 
 ```
-app.py          FastAPI backend: engines, chat proxy, attachments, image jobs, models, updates
+app.py          FastAPI backend: engines, chat & agent harness, computer use, attachments, images, models
 catalog.json    Curated chat and image models
-index.html      Single-page UI
+index.html      Single-page UI (step-by-step thinking, tool inspector, computer-use cards, gallery, library)
+search.py       On-device semantic & lexical file search service (EmbeddingGemma 2 on MLX)
 setup.sh        Checks the Mac and installs the engines (used by the app's first-run screen)
 install.sh      Engines + default models, for source checkouts
 start.sh        Starts engine and UI
 stop.sh         Stops everything
 uninstall.sh    Removes tools, models and (optionally) this folder
-macos/          Native Mac app: main.swift, logos.py (icon), build.sh, release.sh (DMG)
+macos/          Native Mac app: main.swift, document_reader.swift, logos.py, check_*.py, build.sh, release.sh
 ```
 
 ## Contributing
