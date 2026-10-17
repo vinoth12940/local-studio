@@ -184,8 +184,10 @@ Limits in this release:
 - One task at a time, and chat and image generation wait while it runs. Tasks stop at a step
   limit (40) or time limit (15 minutes, counted while the Mac is awake); a long research task may
   end with an answer labelled **Partial answer**.
-- Mac-app control depends on the app exposing accessibility. If an app doesn't respond, quit and
-  reopen it, or switch CuaDriver off and on in System Settings → Privacy & Security → Accessibility.
+- Mac-app control is **experimental** in this release: it is tested against recorded app data, but
+  not yet end to end on a live Mac. It depends on the app exposing accessibility. If an app doesn't
+  respond, quit and reopen it, or switch CuaDriver off and on in System Settings → Privacy &
+  Security → Accessibility.
 - Small local models misread pages sometimes; check the answer, and watch tasks that matter.
 
 ## Models
