@@ -1091,10 +1091,13 @@ def large_image(path, side=1600):
 
 # ---------------------------------------------------------------- HTTP API
 
-def _local_request(host, origin):
-    """Only this Mac's own app calls the service: a loopback Host (no DNS rebinding) and no browser
-    Origin (app.py calls it server-side, a web page never should)."""
+def _local_request(host, origin, fetch_site=None):
+    """Only this Mac's own app calls the service: a loopback Host (no DNS rebinding), no browser
+    Origin and no cross-site Sec-Fetch-Site (app.py calls it server-side, a web page never should:
+    not by fetch, and not by embedding /preview/N in an iframe, which sends no Origin)."""
     name = (host or "").rsplit(":", 1)[0].strip("[]")
+    if (fetch_site or "").strip().lower() in ("cross-site", "same-site"):
+        return False
     return name in ("127.0.0.1", "localhost", "::1") and not origin
 
 
@@ -1114,7 +1117,8 @@ def make_app(store, embedder, indexer, searcher):
     async def app(scope, receive, send):                  # plain ASGI wrapper: these routes return the user's file contents
         if scope["type"] == "http":
             h = dict(scope["headers"])
-            if not _local_request(h.get(b"host", b"").decode("latin-1"), h.get(b"origin", b"").decode("latin-1")):
+            if not _local_request(h.get(b"host", b"").decode("latin-1"), h.get(b"origin", b"").decode("latin-1"),
+                                  h.get(b"sec-fetch-site", b"").decode("latin-1")):
                 return await PlainTextResponse("forbidden", status_code=403)(scope, receive, send)
         await api(scope, receive, send)
 

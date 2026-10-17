@@ -548,6 +548,13 @@ def only_this_mac_may_call():
     assert not ok("evil.example:8083", None), "DNS rebinding: a foreign Host is refused"
     assert not ok("127.0.0.1:8083", "https://evil.example"), "a web page (any Origin) is refused"
     assert not ok("", None) and not ok(None, None)
+    # an iframe of /preview/N on a hostile page sends no Origin but does send Sec-Fetch-Site
+    assert ok("127.0.0.1:8083", None, None) and ok("127.0.0.1:8083", None, ""), "app.py (httpx) sends no Sec-Fetch headers"
+    assert not ok("127.0.0.1:8083", None, "cross-site"), "cross-site is refused"
+    assert not ok("127.0.0.1:8083", None, "same-site"), "same-site is refused"
+    assert not ok("127.0.0.1:8083", None, "Cross-Site"), "the value is case-insensitive"
+    assert ok("127.0.0.1:8083", None, "none") and ok("127.0.0.1:8083", None, "same-origin")
+    assert not ok("evil.example:8083", None, "none"), "the Host check still applies"
 
 
 @check
