@@ -941,6 +941,11 @@ function safeMd(s) {
     .replace(new RegExp("(?<!!)\\[([^\\]]*)\\]" + url, "g"), (m, t, u) => /^(https?:|mailto:|#)/i.test(first(u)) ? m : t)
     .replace(/^(\s{0,3}\[[^\]]+\]:\s*)(\S+)/gm, (m, a, u) => /^(https?:|mailto:|#)/i.test(u.replace(/^</, "")) ? m : a + "#");
 }
+// Answers from the Agent are page-steered text: they never carry an image into a chat (a same-origin one would load on every open).
+function agNoImages(s) {
+  return String(s || "").replace(/!\[([^\]]*)\]\(((?:[^()]|\([^()]*\))*)\)/g, "$1").replace(/!\[([^\]]*)\](?:\[[^\]]*\])?/g, "$1");
+}
+const agAnswerMd = (s) => safeMd(agNoImages(s));
 function md(s) {
   const html = window.marked ? marked.parse(s || "") : esc(s).replace(/\n/g, "<br>");
   const t = document.createElement("template"); t.innerHTML = html; cleanChat(t.content);   // a template is inert: nothing loads or runs while it is cleaned
@@ -1145,8 +1150,12 @@ function renderThread() {
     if (w) { $("v-chat").appendChild(wrap); w.remove(); }
     wrap.style.display = "";
     scroll.style.display = "";
+    const keep = chRun && chRun.chat === current ? chRun.el : null;                     // the live card is the same element afterwards: typed answers and open panels stay
     $("thread").innerHTML = current.messages.map((m, i) => turnHTML(m, i)).join("");
-    if (chRun && chRun.chat === current) { const el = $("thread").querySelector(".agchat")?.closest(".turn"); if (el) chBind(chRun, el); }   // a task in progress keeps its card
+    if (chRun && chRun.chat === current) {
+      const ph = $("thread").querySelector(".agchat")?.closest(".turn");
+      if (ph && keep) { keep.dataset.i = ph.dataset.i; ph.replaceWith(keep); } else if (ph) chBind(chRun, ph);
+    }
     $("input").placeholder = `Message ${activeChat()?.name || ""}`;
     const last = [...current.messages].reverse().find((m) => m.stats);
     showPerf(last?.stats); drawSpark();
@@ -1212,7 +1221,7 @@ function turnHTML(m, i, live = false) {
   const waiting = live && !m.content && !m.reasoning;
   const agentRid = typeof m.agent_run === "string" && AG_RID.test(m.agent_run) ? m.agent_run : "";
   const idle = m.agent_run && !m.content && !m.error;                                  // saved while the task was still running
-  const body = idle ? `<span class="agidle">This Agent task has no saved result yet.</span>` : m.switching ? `<span class="shimmer">${m.switching === "vision" ? `Loading ${esc(m.switchModel || "the vision engine")} with vision… (about 10 s)` : `Loading ${esc(m.switchModel || "the model")}… (first load takes 10–30 s)`}</span>` : waiting ? `<span class="shimmer">${(current?.messages || []).some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span>` : md(m.content);
+  const body = idle ? `<span class="agidle">This Agent task has no saved result yet.</span>` : m.switching ? `<span class="shimmer">${m.switching === "vision" ? `Loading ${esc(m.switchModel || "the vision engine")} with vision… (about 10 s)` : `Loading ${esc(m.switchModel || "the model")}… (first load takes 10–30 s)`}</span>` : waiting ? `<span class="shimmer">${(current?.messages || []).some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span>` : md(m.agent_run ? agNoImages(m.content) : m.content);
   const tail = live && m.content ? '<span class="caret"></span>' : "";
   const actions = live ? "" : `<div class="actions"><button class="iconbtn" data-act="copy" title="Copy">${icon("i-copy")}</button>${m.agent_run ? "" : `<button class="iconbtn" data-act="regen" title="Regenerate">${icon("i-redo")}</button>`}${perfLine(m.stats)}</div>${perfGrid(m.stats)}`;
   const agentTail = (agentRid ? `<div class="agtask"><button class="linkbtn" data-agview="${esc(agentRid)}">Agent task · view steps</button></div>` : "")
@@ -1239,7 +1248,7 @@ $("thread").onclick = (e) => {
     noFilesOnce = true;                                    // "continue" is not a question to look up in the user's files
     $("input").value = "Continue exactly where you left off."; autosize(); send(); return;
   }
-  if (act === "regen" && !streaming && !m.agent_run) {
+  if (act === "regen" && !streaming && !chLive() && !m.agent_run) {
     current.messages = current.messages.slice(0, +turn.dataset.i); renderThread(); generate();
   }
 };
@@ -1546,7 +1555,7 @@ async function chAgentStart(task, context) {
   catch (e) {
     bot.error = e.message; bot.agentLink = true;
     if (chRun === c) chRun = null;
-    if (current === chat) { renderThread(); scrollBottom(true); }
+    chSwapTurn(chat, bot, c.el); scrollBottom(true);
     updateSend(); agAttnNow();
     return saveChat(chat);
   }
@@ -1556,13 +1565,23 @@ async function chAgentStart(task, context) {
   Object.assign(c.s, { rid: r.run_id, live: true, task });
   agConnect(c.s); chSync(c); loadAgentRuns();
 }
+// Redraw one assistant turn where it stands. Never re-renders the thread: a normal reply may be streaming into it in this same chat.
+function chSwapTurn(chat, m, prefer) {
+  if (current !== chat) return null;
+  const i = chat.messages.indexOf(m); if (i < 0) return null;
+  const old = (prefer && prefer.isConnected ? prefer : null) || $("thread").querySelector(`.turn.bot[data-i="${i}"]`);
+  const tmp = document.createElement("div"); tmp.innerHTML = turnHTML(m, i);
+  const el = tmp.firstElementChild;
+  if (old) old.replaceWith(el); else if (!streaming) renderThread();
+  return el;
+}
 async function chEnded(c) {
   if (chRun !== c) return;
   chRun = null;
   loadAgentRuns(); loadAgent();
   const m = c.msg;
-  m.content = safeMd(agFinalText(agOutcome(c.s.events))); m.agent_run = c.s.rid;
-  if (current === c.chat) { renderThread(); scrollBottom(); }
+  m.content = agAnswerMd(agFinalText(agOutcome(c.s.events))); m.agent_run = c.s.rid;
+  chSwapTurn(c.chat, m, c.el); scrollBottom();
   updateSend(); agAttnNow();
   await saveChat(c.chat);
 }
@@ -1587,17 +1606,19 @@ async function chResume() {
   let d; try { d = await api(`/api/agent/runs/${rid}`); } catch { return; }
   const evs = Array.isArray(d.events) ? d.events : [];
   let live = false;
-  if (!evs.some((e) => e?.type === "end")) { const st = await agFetchStatus(); live = st?.running === rid; }
+  if (!evs.some((e) => e?.type === "end")) { const st = await agFetchStatus(); if (!st) return; live = st.running === rid; }   // can't tell: leave it for the next open
   if (current !== chat || m.content || chRun) return;
   if (live) {
     const c = chRun = chNewRun(chat, m);
     Object.assign(c.s, { rid, live: true, task: d.task || "" });
-    renderThread();                                          // draws the card for chRun and binds it
+    const el = chSwapTurn(chat, m, null);                    // draws the card for chRun in place
+    if (el && chRun === c && el.querySelector(".agchat")) chBind(c, el);
     agConnect(c.s); updateSend(); scrollBottom(true);
     return;
   }
-  m.content = safeMd(agFinalText(agOutcome(evs, d.status || "interrupted")));
-  renderThread(); await saveChat(chat);
+  const final = ["done", "stopped", "failed", "interrupted"].includes(d.status) ? d.status : "interrupted";   // not live and not over: it was cut off
+  m.content = agAnswerMd(agFinalText(agOutcome(evs, final)));
+  chSwapTurn(chat, m, null); await saveChat(chat);
 }
 
 // ---------------- images
@@ -2078,7 +2099,7 @@ const AG_STATUS = { done: "Finished", stopped: "Stopped", failed: "Failed", inte
 // One run's state. The Agent view keeps a single one (`ag`); a task started from chat keeps its own (`chRun.s`); every agXxx(s, …) below works on either.
 function agFresh() {
   return { rid: null, events: [], last: -1, live: false, retries: 0, cards: {}, pending: null, paused: false, pausing: false, stopping: false, replyingN: null,
-    engine: "", shot: null, where: "", urls: [], answer: "", task: "", status: "", reason: "", lost: false };
+    engine: "", shot: null, where: "", urls: [], answer: "", task: "", status: "", reason: "", lost: false, chatId: null };
 }
 const ag = { ...agFresh(), st: null, runs: [], es: null, pinned: false, replay: false, timer: 0, shotShown: null, setSig: "", runsSig: "", bgWait: false,
   log: $("agLog"), scroller: () => document.querySelector("#v-agent .scroll"),
@@ -2312,7 +2333,7 @@ async function agStart() {
 async function agAttach(rid) {
   agClear(); Object.assign(ag, { rid, live: true, pinned: false });
   agSync();
-  try { const d = await api(`/api/agent/runs/${rid}`); if (ag.rid === rid) { ag.task = d.task || ""; if (!$("agTask").value.trim()) { $("agTask").value = ag.task; agSize(); } } } catch {}
+  try { const d = await api(`/api/agent/runs/${rid}`); if (ag.rid === rid) { ag.task = d.task || ""; ag.chatId = typeof d.chat_id === "string" ? d.chat_id : null; if (!$("agTask").value.trim()) { $("agTask").value = ag.task; agSize(); } } } catch {}
   if (ag.rid === rid && ag.live) agConnect(ag);
 }
 // One EventSource per (re)connect: the browser's own reconnect would replay from the original URL. `after` is inclusive.
@@ -2464,8 +2485,12 @@ async function agContinue() {
   if (streaming) return toast("Wait for the reply to finish");
   if (!ag.answer) return;
   const task = ag.task || $("agTask").value.trim();
+  if (ag.chatId) {                                            // a task that began in a chat: go back to that chat, which already has the answer
+    let ok = false; try { await api(`/api/chats/${encodeURIComponent(ag.chatId)}`); ok = true; } catch {}
+    if (ok) return openChat(ag.chatId);
+  }
   chDetach();
-  current = { id: newId(), title: task.replace(/\s+/g, " ").slice(0, 48) || "Agent task", messages: [{ role: "user", content: task }, { role: "assistant", content: safeMd(ag.answer) }] };
+  current = { id: newId(), title: task.replace(/\s+/g, " ").slice(0, 48) || "Agent task", messages: [{ role: "user", content: task }, { role: "assistant", content: agAnswerMd(ag.answer) }] };
   await saveChat(); showView("chat"); renderThread(); scrollBottom(true);
 }
 async function agStopRun(s) {
@@ -2506,7 +2531,7 @@ async function agOpenSaved(rid) {
   if (ag.live) return toast("Stop the running task first to open another");
   let d; try { d = await api(`/api/agent/runs/${rid}`); } catch (e) { return toast(e.message); }
   if (ag.st?.running === rid) return agAttach(rid);
-  agClear(); Object.assign(ag, { rid, pinned: true, task: d.task || "", replay: true });
+  agClear(); Object.assign(ag, { rid, pinned: true, task: d.task || "", replay: true, chatId: typeof d.chat_id === "string" ? d.chat_id : null });
   $("agTask").value = ag.task; agSize();
   const evs = Array.isArray(d.events) ? d.events : [];
   evs.forEach((x) => agEvent(ag, x));
