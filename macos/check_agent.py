@@ -292,6 +292,28 @@ class Stub:
 
 
 @check
+def profile_in_use_pattern_is_anchored():
+    import subprocess as sp
+    prof = Path("/Users/x/Library/Application Support/Local Studio/BrowserProfiles/local-studio")
+    real = app.AGENT_PROFILE
+    app.AGENT_PROFILE = prof
+    try:
+        with Stub(lambda cmd: (1, "")) as s:
+            app._agent_profile_in_use()
+        pat = next(c for c in s.calls if c[0] == "pgrep")[-1]
+    finally:
+        app.AGENT_PROFILE = real
+
+    def hits(line):                                          # pgrep -f matches with POSIX extended regexes, as grep -E does
+        return sp.run(["grep", "-E", "--", pat], input=line, capture_output=True, text=True).returncode == 0
+    assert hits(f"Google Chrome --user-data-dir={prof} --no-first-run")
+    assert hits(f"Google Chrome --no-first-run --user-data-dir={prof}")
+    assert hits(f'Google Chrome --user-data-dir="{prof}" --x') and hits(f"Google Chrome --user-data-dir={prof}/Default --x")
+    assert not hits(f"Google Chrome --user-data-dir={prof}-1a2b3c4d --no-first-run"), "a dev server's profile is not ours"
+    assert not hits(f"Google Chrome --user-data-dir={prof}-1a2b3c4d")
+
+
+@check
 def cua_status_parses_the_cli():
     def cli(cmd):
         return (0, "cua-driver 0.28.2 \u2014 cross-platform computer-use automation driver\nUSAGE: ...") if "--help" in cmd else (0, "Telemetry: enabled (source: default)\n")
@@ -733,6 +755,13 @@ def own_app_and_users_browsers_have_default_tiers():
         assert t("Navigateur", {}, bid) == "ask", bid                   # by bundle id alone
         assert t(name, {name: "allowed"}) == "allowed", name            # the user can still allow it
     assert t("Brave Browser", {}) == "ask" and t("Google Chrome Canary", {}) == "ask"
+    for name, bid in {"Chromium": "org.chromium.Chromium", "Orion": "com.kagi.kagimacOS", "Zen": "app.zen-browser.zen", "Dia": "company.thebrowser.dia"}.items():
+        assert t("Navigateur", {}, bid) == "ask", bid                   # Chromium forks, by bundle id
+        assert t(name, {name: "allowed"}, bid) == "allowed", name
+    # an unlisted browser by its name: ends with "browser", or is Chromium; the stricter rule wins, the user's override beats it
+    assert t("Chromium", {}) == "ask" and t("Chromium.app", {}) == "ask" and t("Tor Browser", {}) == "ask" and t("Some New BROWSER", {}) == "ask"
+    assert t("Tor Browser", {"Tor Browser": "allowed"}) == "allowed" and t("Wallet Browser", {}) == "read", "money in the name is stricter"
+    assert t("Browserling", {}) == "allowed" and t("Chromium Notes", {}) == "allowed" and t("Notes", {}) == "allowed"
     assert t("Local Studio", {"Local Studio": "allowed"}) == "allowed"
     # the agent's own browser: the browser surface carries no tier, so a page click is judged as before
     ad = types.SimpleNamespace(surface="browser", app=None, bundle_id=None, domain="example.com", link_domains={"docs.other.org"})
@@ -1646,12 +1675,19 @@ def loopback_pages_are_never_read():
         if args.get("snapshot_format") == "semantic_v2":
             sem = copy.deepcopy(_fx("browser_semantic_login"))
             sem["page"]["url"] = where["sem"]
+            if where["sem"] == "about:blank":
+                sem.update(refs=[], content_refs=[], outline="")
             return _tr(sem, image=PNG if args.get("include_screenshot") else None)
         dom = dict(_fx("browser_domrefs_login"), url=where["dom"])
-        dom["refs"] = dom["refs"] + [{"node": "a", "label": "href=http://127.0.0.1:7860/", "ref": "p1:999"}]
+        dom["refs"] = [] if where["dom"] == "about:blank" else dom["refs"] + [{"node": "a", "label": "href=http://127.0.0.1:7860/", "ref": "p1:999"}]
         return _tr(dom)
 
-    c, a = web_adapter(get_browser_state=state)
+    def navigate(args):                                      # what the leave does: the tab really is a blank page afterwards
+        if args["url"] == "about:blank":
+            where.update(dom="about:blank", sem="about:blank")
+        return _tr({"status": "ok", "url": args["url"], "refs_invalidated": True})
+
+    c, a = web_adapter(get_browser_state=state, browser_navigate=navigate)
     a.execute("open_url", {"url": "https://github.com/login"})
     a.observe()
     assert a.domain == "github.com" and "127.0.0.1" not in a.link_domains, a.link_domains
@@ -1668,13 +1704,14 @@ def loopback_pages_are_never_read():
     assert c.of("browser_navigate")[-1]["url"] == "about:blank", c.of("browser_navigate")
     assert a.view is None and a.url is None and a.domain is None and a.link_domains == set() and a.last_image is None
     assert all("127.0.0.1" not in u for u in a._history), a._history
-    out = a.execute("read_page", {})
-    assert out == "Error: " + app.AGENT_LOCAL_PAGE, out
-    assert a.screenshot() is None                              # the after-step picture re-reads: refused the same way
+    assert where == {"dom": "about:blank", "sem": "about:blank"}
+    out = a.execute("read_page", {})                           # the next view is the blank page, and says why
+    assert out.startswith(app.AGENT_LOCAL_LEFT) and "127.0.0.1" not in out and "Username or email address" not in out, out
+    assert a.take_left_local() is None and app.AGENT_LOCAL_LEFT not in a.execute("read_page", {}), "said once"
     # only the semantic read says so (a redirect between the two reads)
     where.update(dom="https://github.com/login", sem="http://localhost:7860/")
     assert a.execute("read_page", {}) == "Error: " + app.AGENT_LOCAL_PAGE
-    assert c.of("browser_navigate")[-1]["url"] == "about:blank" and a.view is None
+    assert c.of("browser_navigate")[-1]["url"] == "about:blank" and a.view is None and a.take_left_local() == app.AGENT_LOCAL_LEFT
     # open_url never navigates there, and a navigation that lands there is left at once
     where.update(dom="https://github.com/login", sem="https://github.com/login")
     n = len(c.of("browser_navigate"))
@@ -1683,22 +1720,57 @@ def loopback_pages_are_never_read():
     assert len(c.of("browser_navigate")) == n, c.of("browser_navigate")[n:]
     c.script["browser_navigate"] = lambda args: _tr({"status": "ok", "url": LOCAL if args["url"] != "about:blank" else "about:blank"})
     assert a.execute("open_url", {"url": "https://redirects.example/"}) == "Error: " + app.AGENT_LOCAL_PAGE
-    assert c.of("browser_navigate")[-1]["url"] == "about:blank" and a.url is None
+    assert c.of("browser_navigate")[-1]["url"] == "about:blank" and a.url is None and a.take_left_local() == app.AGENT_LOCAL_LEFT
     # a run: the model hears that the page can't be read, and never sees it
     c2 = png_client()
     with Env(model=Model(tc("open_url", url="https://github.com/login"), tc("read_page"), tc("done", answer="ok")), client=c2) as e:
         inner = c2.script["get_browser_state"]
         def moved(args):
             r = inner(args)
-            if e.model.calls and len(e.model.calls) >= 2 and isinstance(r.get("data"), dict) and args.get("snapshot_format") == "dom_refs_v1":
-                r = {**r, "data": {**r["data"], "url": LOCAL}}
-            return r
+            if not (e.model.calls and len(e.model.calls) >= 2 and isinstance(r.get("data"), dict)):
+                return r
+            if [u for u in c2.of("browser_navigate") if u["url"] == "about:blank"]:      # after the leave the tab is an empty page
+                return {**r, "data": {**r["data"], "url": "about:blank", "refs": [], "content_refs": [], "outline": "",
+                                      **({"page": {"title": "", "url": "about:blank"}} if "page" in r["data"] else {})}}
+            return {**r, "data": {**r["data"], "url": LOCAL}} if args.get("snapshot_format") == "dom_refs_v1" else r
         c2.script["get_browser_state"] = moved
         e.start("Sign in on github.com")
         e.finish()
         assert e.end()["status"] == "done", e.run_.events
         third = e.model.text(2)
         assert app.AGENT_LOCAL_PAGE in third and "Username or email address" not in third, third
+        assert app.AGENT_LOCAL_LEFT in third, third
+
+
+@check
+def a_click_that_lands_on_this_mac_is_not_reported_as_clicked_only():
+    """The after-step picture is what finds a click or script redirect on a page served by this Mac: the step's result then
+    says so (the picture's error is swallowed), and the tab is a blank page."""
+    LOCAL = "http://127.0.0.1:7860/api/chats"
+    c = png_client()
+    sign = login_ref("Sign in")
+    model = Model(tc("open_url", url="https://github.com/login"), tc("click", ref=sign), tc("done", answer="x"))
+    with Env(model=model, client=c) as e:
+        inner = c.script["get_browser_state"]
+
+        def moved(args):
+            r = inner(args)
+            if not c.of("browser_click") or not isinstance(r.get("data"), dict):
+                return r
+            if [u for u in c.of("browser_navigate") if u["url"] == "about:blank"]:
+                return {**r, "data": {**r["data"], "url": "about:blank", "refs": [], "content_refs": [], "outline": "",
+                                      **({"page": {"title": "", "url": "about:blank"}} if "page" in r["data"] else {})}}
+            return {**r, "data": {**r["data"], "url": LOCAL, **({"page": {"title": "t", "url": LOCAL}} if "page" in r["data"] else {})}}
+        c.script["get_browser_state"] = moved
+        e.start("Sign in on github.com")
+        e.status("waiting")
+        assert e.post("reply", decision="allow").status_code == 200
+        e.finish()
+        assert e.end()["status"] == "done", e.run_.events
+        click = e.ev("step")[1]
+        assert click["tool"] == "click" and click["result"].startswith("Clicked") and click["result"].endswith(app.AGENT_LOCAL_LEFT), click
+        assert c.of("browser_navigate")[-1]["url"] == "about:blank"
+        assert app.AGENT_LOCAL_LEFT in e.model.text(2) and "127.0.0.1" not in e.model.text(2).replace("http://127.0.0.1:7860/api/chats", ""), e.model.text(2)
 
 
 @check

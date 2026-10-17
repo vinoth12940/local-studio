@@ -2287,7 +2287,8 @@ APP_TIERS_BUNDLE_DEFAULT = {                                  # the same default
         "com.apple.mail", "com.apple.MobileSMS", "net.whatsapp.WhatsApp", "com.tinyspeck.slackmacgap", "com.apple.iCal", "com.apple.finder",
         "ru.keepcoder.Telegram", "com.hnc.Discord", "org.whispersystems.signal-desktop", "com.microsoft.teams2", "com.microsoft.Outlook", "us.zoom.xos",
         "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox", "company.thebrowser.Browser", "com.microsoft.edgemac",
-        "com.brave.Browser", "com.operasoftware.Opera", "com.vivaldi.Vivaldi")},
+        "com.brave.Browser", "com.operasoftware.Opera", "com.vivaldi.Vivaldi", "org.chromium.Chromium", "com.kagi.kagimacOS",
+        "app.zen-browser.zen", "company.thebrowser.dia")},
 }
 READ_ONLY_NAME = re.compile(r"bank|banking|finance|wallet|password|crypto|invest|broker|trading|pay\b", re.I)
 SEARCH_DOMAINS = frozenset(("duckduckgo.com", "google.com", "bing.com"))     # open_url may go to a search on exactly these hosts (_search_ok)
@@ -2329,6 +2330,12 @@ def _tier_key(name):
     return k[:-4] if k.endswith(".app") else k
 
 
+def _browser_name(app_name):
+    """A Chromium fork or other browser the lists above don't know by name: "Tor Browser", "Chromium", "Some New Browser"."""
+    k = _tier_key(app_name)
+    return k == "chromium" or k.endswith("browser")
+
+
 def _default_tier(k):
     """Longest default whose name equals k or is a whole-word prefix of it ("Microsoft Teams (work or school)", "Telegram Desktop")."""
     best = None
@@ -2350,7 +2357,8 @@ def app_tier(app_name, overrides, bundle_id=None):
     t = _default_tier(k) or (_default_tier(k.rstrip("0123456789 ")) if k.rstrip("0123456789 ") != k else None)   # iTerm2 -> iterm
     rule = "read" if READ_ONLY_NAME.search(_norm_label(app_name)) else None            # "Zoom Pay", "Mail Banking": the stricter of the two wins
     by_id = next((v for b, v in APP_TIERS_BUNDLE_DEFAULT.items() if b.casefold() == bid), None) if bid else None
-    return min((x for x in (t, rule, by_id) if x), key=_TIER_NAMES.index, default="allowed")
+    browser = "ask" if _browser_name(app_name) else None                              # an unlisted browser holds the user's sign-ins too
+    return min((x for x in (t, rule, by_id, browser) if x), key=_TIER_NAMES.index, default="allowed")
 
 
 def _norm_url(u):
@@ -2781,6 +2789,8 @@ _STALE_MARKERS = ("browser_binding_stale", "browser_ref_stale", "browser_tab_not
 # The page's window stopped matching the native window (a popup or a new window appeared). Never a ref-stale retry: the same
 # call could land in another tab. The adapter re-binds the window exactly, re-reads, and retries once only if it is the same control.
 _WRONG_TARGET_MARKERS = ("browser_wrong_target_refused", "no longer has an exact geometry")
+AGENT_LOCAL_LEFT = ("The page tried to open an address on this Mac; the agent can't read pages served by this Mac, "
+                    "so it went back to a blank page.")
 AGENT_LOCAL_PAGE = "The agent can't read pages served by this Mac"   # Local Studio's own chats, previews and UI live on 127.0.0.1
 AGENT_WINDOW_LOST = ("the browser window changed in a way the agent can't follow. "
                      "Use Take over to close any popups, then Resume.")
@@ -2893,7 +2903,8 @@ def _match_app(apps, name):
 
 def _agent_profile_in_use():
     """True while a Chrome (or anything) runs with the agent's profile folder on its command line."""
-    return bool(subprocess.run(["pgrep", "-f", re.escape(str(AGENT_PROFILE))], capture_output=True).stdout.strip())
+    # anchored: the app's .../BrowserProfiles/local-studio must not match a dev server's .../local-studio-<8 hex>
+    return bool(subprocess.run(["pgrep", "-f", re.escape(str(AGENT_PROFILE)) + """([[:space:]"'/]|$)"""], capture_output=True).stdout.strip())
 
 
 def _repair_agent_profile():
@@ -2930,6 +2941,7 @@ class Adapter:
     replace it, and anything older is "not on the page". Read failures raise McpError from observe(); execute() never raises."""
 
     def __init__(self, client, session):
+        self._left_local = False
         self.client, self.session = client, session
         self.surface, self.app = "browser", None
         self.url = self.domain = self.title = None
@@ -3090,9 +3102,17 @@ class Adapter:
         self.url = self.domain = self.title = None
         self.link_domains, self._unconfirmed = set(), True
         self.last_image = self.last_snapshot = self._image_for = None
+        self._left_local = True                              # said once: in the step's result, else at the top of the next view
         raise McpError(AGENT_LOCAL_PAGE)
 
-    def _read(self, search=False):
+    def take_left_local(self):
+        """AGENT_LOCAL_LEFT once, if the page was just left for being served by this Mac (the after-step picture swallows that error)."""
+        if not getattr(self, "_left_local", False):
+            return None
+        self._left_local = False
+        return AGENT_LOCAL_LEFT
+
+    def _read(self, search=False, notify=True):
         """DOM first, then the semantic snapshot (with its picture) last: every read supersedes the refs of the one before,
         and the refs the model is shown come from the semantic one, so it has to be the newest. Then the next parts of that
         same snapshot up to page_part (every part, within AGENT_SEARCH_PARTS / AGENT_SEARCH_SECONDS, for a search); they
@@ -3150,6 +3170,8 @@ class Adapter:
         cur = parts[self.page_part]
         self._parts, self._page_more = parts, bool(_snap_more(chunks[self.page_part]))
         self.view = {**cur, "refs": refs, "sparse": parts[0]["sparse"]}      # sparse is about the page, not a text-only later part
+        if notify and self.take_left_local():                # the model has not been told yet: the blank page it now sees is not by chance
+            self.view["text"] = AGENT_LOCAL_LEFT + "\n" + self.view["text"]
         self.last_image, self.last_snapshot, self._image_for = sem.get("image"), snap_id, self.view
         return self.view
 
@@ -3175,7 +3197,7 @@ class Adapter:
             return None
         if self.view is None or self._image_for is not self.view:
             try:
-                self._read()
+                self._read(notify=False)                     # the step (or the next view) tells the model about a page left, not this picture
             except Exception:                                # a screenshot is optional; nothing here may end the run
                 return None
         return self.last_image
@@ -3947,9 +3969,11 @@ def _agent_summary(tool, args, facts):
 
 def _agent_short(tool, result):
     """The result as the history shows it: "ok" for a plain success, else its first line."""
-    if tool in ("click", "type", "read_page", "click_app", "type_app") and not result.startswith(("Error", "Blocked", "The user", "Not done")):
+    if tool in ("click", "type", "read_page", "click_app", "type_app") and not result.startswith(("Error", "Blocked", "The user", "Not done")) and AGENT_LOCAL_LEFT not in result:
         return "ok"
-    return _clip(re.sub(r";\s*read the (?:page|app)[^\n]*", "", result.split("\n", 1)[0]), 400)
+    left = AGENT_LOCAL_LEFT in result
+    first = _clip(re.sub(r";\s*read the (?:page|app)[^\n]*", "", result.replace(AGENT_LOCAL_LEFT, "").strip().split("\n", 1)[0]), 400 - (len(AGENT_LOCAL_LEFT) + 1 if left else 0))
+    return f"{first} {AGENT_LOCAL_LEFT}" if left else first
 
 
 def _agent_use_engine(run, mode, m):
@@ -4261,7 +4285,9 @@ class _AgentLoop:
             return self.record(n, name, args, facts, AGENT_TOOK_OVER, "skipped", thought)
         result = ad.execute(name, args)
         self.reuse = name == "read_page" and not result.startswith("Error")
-        self.record(n, name, args, facts, result, decision, thought, None if hidden else run.shot(str(n), ad.screenshot()))
+        shot = None if hidden else run.shot(str(n), ad.screenshot())      # may find the page redirected to this Mac and leave it
+        left = None if result.startswith("Error") or not hasattr(ad, "take_left_local") else ad.take_left_local()
+        self.record(n, name, args, facts, f"{result} {left}" if left else result, decision, thought, shot)
 
     def loop(self):
         while True:
