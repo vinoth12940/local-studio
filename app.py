@@ -1999,13 +1999,20 @@ def _facts(role, name, input_type=None, autocomplete=None, in_form=False, is_sub
             "sensitive_unknown": sensitive_unknown}              # editable, not matched to the DOM, on a page whose DOM holds a sensitive input
 
 
+VIEW_REPEATED_HEAD = ("Repeated controls (their position on the page is uncertain \u2014 open the item's own page or use a uniquely named "
+                      "control; don't guess):")
+
+
 def _assemble(header, items, budget, start=0):
     """items (document order): {kind: "i"|"t", vis, line: fn(id) -> str, ref, facts}. Keeps interactive-and-visible, then
     visible text, then off-screen interactive, then off-screen text, until the budget is spent; ids e1..eN (counting on from
-    e<start>, for a later part of a long page) are then handed out in document order to the interactive items that made it."""
+    e<start>, for a later part of a long page) are then handed out in document order to the interactive items that made it.
+    Items marked `rep` (controls whose name repeats, listed after the page) come under VIEW_REPEATED_HEAD whenever any is kept."""
     total = sum(1 for it in items if it["kind"] == "i")
     idw = len(str(max(start + total, 1)))
     room = int(budget * 3.2) - len("\n".join(header)) - 1 - 32           # 32 = the "(+N more not shown)" footer
+    if any(it.get("rep") for it in items):
+        room -= len(VIEW_REPEATED_HEAD) + 1
     chosen = set()
     for tier in ((True, "i"), (True, "t"), (False, "i"), (False, "t")):
         for n, it in enumerate(items):
@@ -2019,9 +2026,12 @@ def _assemble(header, items, budget, start=0):
         else:
             continue
         break
-    lines, refs = list(header), {}
+    lines, refs, headed = list(header), {}, False
     for n, it in enumerate(items):
         if n in chosen:
+            if it.get("rep") and not headed:
+                lines.append(VIEW_REPEATED_HEAD)
+                headed = True
             eid = None
             if it["kind"] == "i":
                 eid = f"e{start + len(refs) + 1}"
@@ -2054,8 +2064,16 @@ def browser_view(state, dom=None, budget=6000, start=0, part=1, joined=None):
     else:
         dom_of = {id(s): joined[s.get("ref")] for s in sem if s.get("ref") in joined}
     dom_sens = _dom_sensitive(dom)
-    sem_ids = {id(r) for r in sem}
-    # walk the outline for document order, text and <form> scope; refs are matched to outline lines in order
+    key = lambda role, name: (role, " ".join((name or "").split()))        # noqa: E731
+    groups = {}
+    for r in sem:
+        groups.setdefault(key(r.get("role"), r.get("name")), []).append(r)
+    # A name that several controls share can't be placed: CuaDriver ranks refs by visibility, the outline is in document order,
+    # so "the n-th Add to cart" in one is not the n-th in the other. Those controls are never paired with an outline line.
+    repeated = {k: g for k, g in groups.items() if len(g) > 1}
+    rep_ids, rep_form = {id(r) for g in repeated.values() for r in g}, {}
+    sem_ids = {id(r) for r in sem} - rep_ids
+    # walk the outline for document order, text and <form> scope; refs of unique names are matched to outline lines in order
     seq, ptr, forms, vis, form_at = [], 0, [], "in_viewport", None
     names = {" ".join((r.get("name") or "").split()) for r in sem}
     for raw in (state.get("outline") or "").splitlines():
@@ -2070,6 +2088,10 @@ def browser_view(state, dom=None, budget=6000, start=0, part=1, joined=None):
             forms = [ind]                                    # forms do not nest; a new one ends the last
         elif role in _VIEW_LANDMARKS:
             forms = []
+        if role not in _VIEW_TEXT_ROLES and role not in _VIEW_PLAIN_ROLES and (role, name) in repeated:
+            seq.append(("r", role, name, vis))               # the line stays (it tells where such controls are), with no number
+            rep_form[(role, name)] = rep_form.get((role, name), False) or bool(forms)
+            continue
         if role in _VIEW_TEXT_ROLES or role not in _VIEW_PLAIN_ROLES:
             hit = next((j for j in range(ptr, min(ptr + 60, len(refs)))
                         if refs[j].get("role") == role and " ".join((refs[j].get("name") or "").split()) == name), None)
@@ -2087,12 +2109,18 @@ def browser_view(state, dom=None, budget=6000, start=0, part=1, joined=None):
     for r in refs[ptr:]:
         if id(r) in sem_ids:
             seq.append(("i", r, False))
+    for k, g in repeated.items():                            # then every repeated control, apart, in CuaDriver's order
+        for i, r in enumerate(g):
+            seq.append(("i", r, rep_form.get(k, False), f" ({i + 1} of {len(g)})"))
     items = []
     for e in seq:
         if e[0] == "t":
             items.append({"kind": "t", "vis": part > 1 or e[3] == "in_viewport", "line": (lambda t, n: lambda eid: f'{t} "{_clip(n, 160)}"')("heading" if e[2] == "heading" else "text", e[1])})
             continue
-        r, in_form = e[1], e[2]
+        if e[0] == "r":
+            items.append({"kind": "t", "vis": part > 1 or e[3] == "in_viewport", "line": (lambda t, n: lambda eid: t + (f' "{_clip(n, 100)}"' if n else ""))(e[1], e[2])})
+            continue
+        r, in_form, nth = e[1], e[2], (e[3] if len(e) > 3 else None)
         a = dom_of.get(id(r)) or {}
         role, name = r["role"], _clip(r.get("name"), 100)
         editable = _sem_class(role) == "text" or "type" in (r.get("actions") or ()) and role not in ("button", "link", "checkbox", "radio", "menuitem", "tab", "switch")
@@ -2112,7 +2140,8 @@ def browser_view(state, dom=None, budget=6000, start=0, part=1, joined=None):
         if r.get("value") not in (None, "") and itype != "password" and not unknown and not _sensitive_ac(ac):
             extra += f' = "{_clip(r["value"], 80)}"'
             val = str(r["value"])
-        items.append({"kind": "i", "vis": part > 1 or r.get("visibility") == "in_viewport", "ref": r["ref"], "line": _control_line(role, name, extra), "value": val,
+        items.append({"kind": "i", "vis": part > 1 or r.get("visibility") == "in_viewport", "ref": r["ref"], "line": _control_line(role, name, extra + (nth or "")),
+                      "value": val, "rep": nth is not None,
                       "facts": _facts(role, r.get("name"), itype, ac, in_form, submit, href=a.get("href") if link else None,
                                       sensitive_unknown=unknown, download=link and "download" in a)})
     page = state.get("page") or {}
@@ -3204,7 +3233,7 @@ class Adapter:
         for part in self._parts:
             for ln in part["text"].split("\n")[part.get("head", 2):]:
                 order += 1
-                score = _line_score(ln, words) if words and not ln.startswith("(+") else 0
+                score = _line_score(ln, words) if words and not ln.startswith(("(+", VIEW_REPEATED_HEAD)) else 0
                 if score:
                     hits.append((-score, order, ln))
         lines = view["text"].split("\n")

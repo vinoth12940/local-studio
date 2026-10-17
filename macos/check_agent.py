@@ -464,12 +464,57 @@ def refs_are_short_and_stable():
         assert all(k in a["text"] for k in ("[e1]", f"[e{len(a['refs'])}]"))
         assert a["refs"]["e1"]["ref"] == st["refs"][0]["ref"]
         order = [e["ref"] for e in a["refs"].values()]
-        assert order == sorted(order, key=[r["ref"] for r in st["refs"]].index)    # document order
+        placed = order[:len(order) - len(re.findall(r"^\[e\d+\] .* \(\d+ of \d+\)$", a["text"], re.M))]
+        assert placed == sorted(placed, key=[r["ref"] for r in st["refs"]].index)    # document order (repeated names are listed apart, last)
     n = app.app_view(_fx("window_state_notes"))
     assert list(n["refs"]) == [f"e{i}" for i in range(1, len(n["refs"]) + 1)]
     e1 = n["refs"]["e1"]["ref"]
     assert set(e1) == {"element_index", "window_id", "pid", "element_token", "snapshot_id"} and e1["window_id"] == 480 and e1["pid"] == 12282
     assert e1["snapshot_id"] == "s00000001" and e1["element_token"] == "s00000001:%d" % e1["element_index"]
+
+
+REPEATED_HEAD = ("Repeated controls (their position on the page is uncertain \u2014 open the item's own page or use a uniquely named control; "
+                 "don't guess):")
+
+
+@check
+def repeated_controls_never_get_a_position():
+    """automationexercise.com: the outline (document order) lists two "Add to cart" links per product card, while CuaDriver ranks
+    refs by visibility, so pairing the n-th outline line with the n-th ref of the same name put Men Tshirt's button under Blue Top.
+    A (role, name) with more than one ref is never placed: its outline lines carry no eN, and its refs are listed apart as
+    "(k of N)". Unique names are placed (and mapped) as before."""
+    st, dom = _fx("browser_semantic_shop"), _fx("browser_domrefs_shop")
+    v = app.browser_view(st, dom, budget=12000)
+    text = v["text"]
+    assert REPEATED_HEAD in text, text
+    before, after = text.split(REPEATED_HEAD)
+    assert not re.search(r'\[e\d+\] link "(?:Add to cart|View Product)"', before), before
+    assert re.search(r'text "Blue Top"\nlink "Add to cart"\n', before), before            # the line stays, with no number
+    rows = re.findall(r'^\[(e\d+)\] link "Add to cart" \((\d+) of (\d+)\)$', after, re.M)
+    want = [r["ref"] for r in st["refs"] if r["role"] == "link" and r.get("name") == "Add to cart"]
+    assert len(rows) == len(want) == 30 and [int(k) for _, k, _ in rows] == list(range(1, 31)) and {n for *_, n in rows} == {"30"}, rows
+    assert [v["refs"][e]["ref"] for e, _, _ in rows] == want                                 # each row is its own ref, in CuaDriver's order
+    assert len(re.findall(r'^\[e\d+\] link "View Product" \(\d+ of 15\)$', after, re.M)) == 15
+    assert all(v["refs"][e]["facts"]["name"] == "Add to cart" and v["refs"][e]["facts"]["role"] == "link" for e, _, _ in rows)
+    # unique names: placed where the outline has them, and mapped to their own ref
+    by = {r["facts"]["name"]: (k, r["ref"]) for k, r in v["refs"].items()}
+    assert by["Tshirt"][1] == "p122:213" and by["(5) BIBA"][1] == "p122:206" and by["Cart"][1] == next(r["ref"] for r in st["refs"] if r.get("name") == "Cart")
+    t = by["Tshirt"][0]
+    assert before.index('text "Blue Top"') < before.index(f'[{t}] link "Tshirt"') < before.index('text "Men Tshirt"'), before
+    assert list(v["refs"]) == [f"e{i}" for i in range(1, len(v["refs"]) + 1)] and len(v["refs"]) == v["interactive"]
+    # a small budget keeps the heading with whatever repeated rows fit
+    small = app.browser_view(st, dom, budget=900)
+    assert ("(1 of 30)" in small["text"]) == (REPEATED_HEAD in small["text"]), small["text"]
+    # repeated buttons in a form are still judged as submits (never looser than before)
+    f = {"page": {"title": "t", "url": "https://x.test/"}, "outline": '- form\n  - button "Delete"\n  - button "Delete"\n- button "Help"\n',
+         "refs": [{"ref": f"p1:{i}", "role": "button", "name": n, "actions": ["click"], "states": {}, "value": None, "visibility": "in_viewport"}
+                  for i, n in enumerate(("Delete", "Help", "Delete"))]}
+    fv = app.browser_view(f)
+    assert fv["text"].split("\n")[2:] == ['button "Delete"', 'button "Delete"', '[e1] button "Help"', REPEATED_HEAD,
+                                         '[e2] button "Delete" (1 of 2)', '[e3] button "Delete" (2 of 2)'], fv["text"]
+    assert fv["refs"]["e2"]["ref"] == "p1:0" and fv["refs"]["e3"]["ref"] == "p1:2" and fv["refs"]["e1"]["ref"] == "p1:1"
+    assert fv["refs"]["e2"]["facts"]["in_form"] is True and fv["refs"]["e2"]["facts"]["is_submit"] is True
+    assert app.browser_view({**f, "outline": '- button "Help"\n', "refs": f["refs"][1:2]})["text"].count("Repeated") == 0
 
 
 @check

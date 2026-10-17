@@ -1,0 +1,1131 @@
+{
+ "mode": "snapshot",
+ "oopif": {
+  "frames": 5,
+  "status": "attached"
+ },
+ "refs": [
+  {
+   "frame": "main",
+   "label": "href=/static/css/bootstrap.min.css",
+   "node": "link",
+   "ref": "p123:0"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/css/font-awesome.min.css",
+   "node": "link",
+   "ref": "p123:1"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/css/prettyPhoto.css",
+   "node": "link",
+   "ref": "p123:2"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/css/animate.css",
+   "node": "link",
+   "ref": "p123:3"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/css/main.css",
+   "node": "link",
+   "ref": "p123:4"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/css/responsive.css",
+   "node": "link",
+   "ref": "p123:5"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://fonts.googleapis.com/icon?family=Material+Icons",
+   "node": "link",
+   "ref": "p123:6"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/css/cart.css",
+   "node": "link",
+   "ref": "p123:7"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/images/home/short_logo.png",
+   "node": "link",
+   "ref": "p123:8"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/images/ico/apple-touch-icon-144-precomposed.png",
+   "node": "link",
+   "ref": "p123:9"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/images/ico/apple-touch-icon-114-precomposed.png",
+   "node": "link",
+   "ref": "p123:10"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/images/ico/apple-touch-icon-72-precomposed.png",
+   "node": "link",
+   "ref": "p123:11"
+  },
+  {
+   "frame": "main",
+   "label": "href=/static/images/ico/apple-touch-icon-57-precomposed.png",
+   "node": "link",
+   "ref": "p123:12"
+  },
+  {
+   "frame": "main",
+   "label": "type=text/css href=//fonts.googleapis.com/css?family=Roboto%3A500",
+   "node": "link",
+   "ref": "p123:13"
+  },
+  {
+   "frame": "main",
+   "label": "href=/",
+   "node": "a",
+   "ref": "p123:14"
+  },
+  {
+   "frame": "main",
+   "label": "href=/",
+   "node": "a",
+   "ref": "p123:15"
+  },
+  {
+   "frame": "main",
+   "label": "href=/products",
+   "node": "a",
+   "ref": "p123:16"
+  },
+  {
+   "frame": "main",
+   "label": "href=/view_cart",
+   "node": "a",
+   "ref": "p123:17"
+  },
+  {
+   "frame": "main",
+   "label": "href=/login",
+   "node": "a",
+   "ref": "p123:18"
+  },
+  {
+   "frame": "main",
+   "label": "href=/test_cases",
+   "node": "a",
+   "ref": "p123:19"
+  },
+  {
+   "frame": "main",
+   "label": "href=/api_list",
+   "node": "a",
+   "ref": "p123:20"
+  },
+  {
+   "frame": "main",
+   "label": "href=https://www.youtube.com/c/AutomationExercise",
+   "node": "a",
+   "ref": "p123:21"
+  },
+  {
+   "frame": "main",
+   "label": "href=/contact_us",
+   "node": "a",
+   "ref": "p123:22"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=Automation practice platform role=link",
+   "node": "div",
+   "ref": "p123:23"
+  },
+  {
+   "frame": "main",
+   "label": "href=/test_cases",
+   "node": "a",
+   "ref": "p123:24"
+  },
+  {
+   "frame": "main",
+   "label": "type=button",
+   "node": "button",
+   "ref": "p123:25"
+  },
+  {
+   "frame": "main",
+   "label": "href=/api_list",
+   "node": "a",
+   "ref": "p123:26"
+  },
+  {
+   "frame": "main",
+   "label": "type=button",
+   "node": "button",
+   "ref": "p123:27"
+  },
+  {
+   "frame": "main",
+   "label": "href=/test_cases",
+   "node": "a",
+   "ref": "p123:28"
+  },
+  {
+   "frame": "main",
+   "label": "type=button",
+   "node": "button",
+   "ref": "p123:29"
+  },
+  {
+   "frame": "main",
+   "label": "href=/api_list",
+   "node": "a",
+   "ref": "p123:30"
+  },
+  {
+   "frame": "main",
+   "label": "type=button",
+   "node": "button",
+   "ref": "p123:31"
+  },
+  {
+   "frame": "main",
+   "label": "href=/test_cases",
+   "node": "a",
+   "ref": "p123:32"
+  },
+  {
+   "frame": "main",
+   "label": "type=button",
+   "node": "button",
+   "ref": "p123:33"
+  },
+  {
+   "frame": "main",
+   "label": "href=/api_list",
+   "node": "a",
+   "ref": "p123:34"
+  },
+  {
+   "frame": "main",
+   "label": "type=button",
+   "node": "button",
+   "ref": "p123:35"
+  },
+  {
+   "frame": "main",
+   "label": "href=#slider-carousel",
+   "node": "a",
+   "ref": "p123:36"
+  },
+  {
+   "frame": "main",
+   "label": "href=#slider-carousel",
+   "node": "a",
+   "ref": "p123:37"
+  },
+  {
+   "frame": "main",
+   "label": "href=#Women",
+   "node": "a",
+   "ref": "p123:38"
+  },
+  {
+   "frame": "main",
+   "label": "href=/category_products/1",
+   "node": "a",
+   "ref": "p123:39"
+  },
+  {
+   "frame": "main",
+   "label": "href=/category_products/2",
+   "node": "a",
+   "ref": "p123:40"
+  },
+  {
+   "frame": "main",
+   "label": "href=/category_products/7",
+   "node": "a",
+   "ref": "p123:41"
+  },
+  {
+   "frame": "main",
+   "label": "href=#Men",
+   "node": "a",
+   "ref": "p123:42"
+  },
+  {
+   "frame": "main",
+   "label": "href=/category_products/3",
+   "node": "a",
+   "ref": "p123:43"
+  },
+  {
+   "frame": "main",
+   "label": "href=/category_products/6",
+   "node": "a",
+   "ref": "p123:44"
+  },
+  {
+   "frame": "main",
+   "label": "href=#Kids",
+   "node": "a",
+   "ref": "p123:45"
+  },
+  {
+   "frame": "main",
+   "label": "href=/category_products/4",
+   "node": "a",
+   "ref": "p123:46"
+  },
+  {
+   "frame": "main",
+   "label": "href=/category_products/5",
+   "node": "a",
+   "ref": "p123:47"
+  },
+  {
+   "frame": "main",
+   "label": "href=/brand_products/Polo",
+   "node": "a",
+   "ref": "p123:48"
+  },
+  {
+   "frame": "main",
+   "label": "href=/brand_products/H&M",
+   "node": "a",
+   "ref": "p123:49"
+  },
+  {
+   "frame": "main",
+   "label": "href=/brand_products/Madame",
+   "node": "a",
+   "ref": "p123:50"
+  },
+  {
+   "frame": "main",
+   "label": "href=/brand_products/Mast & Harbour",
+   "node": "a",
+   "ref": "p123:51"
+  },
+  {
+   "frame": "main",
+   "label": "href=/brand_products/Babyhug",
+   "node": "a",
+   "ref": "p123:52"
+  },
+  {
+   "frame": "main",
+   "label": "href=/brand_products/Allen Solly Junior",
+   "node": "a",
+   "ref": "p123:53"
+  },
+  {
+   "frame": "main",
+   "label": "href=/brand_products/Kookie Kids",
+   "node": "a",
+   "ref": "p123:54"
+  },
+  {
+   "frame": "main",
+   "label": "href=/brand_products/Biba",
+   "node": "a",
+   "ref": "p123:55"
+  },
+  {
+   "frame": "main",
+   "label": "href=/view_cart",
+   "node": "a",
+   "ref": "p123:56"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "button",
+   "ref": "p123:57"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:58"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:59"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/1",
+   "node": "a",
+   "ref": "p123:60"
+  },
+  {
+   "frame": "main",
+   "label": "href=#",
+   "node": "a",
+   "ref": "p123:61"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:62"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:63"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/2",
+   "node": "a",
+   "ref": "p123:64"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:65"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:66"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/3",
+   "node": "a",
+   "ref": "p123:67"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:68"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:69"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/4",
+   "node": "a",
+   "ref": "p123:70"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:71"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:72"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/5",
+   "node": "a",
+   "ref": "p123:73"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:74"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:75"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/6",
+   "node": "a",
+   "ref": "p123:76"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:77"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:78"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/7",
+   "node": "a",
+   "ref": "p123:79"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:80"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:81"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/8",
+   "node": "a",
+   "ref": "p123:82"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=Website development services role=link",
+   "node": "div",
+   "ref": "p123:83"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:84"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:85"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/11",
+   "node": "a",
+   "ref": "p123:86"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=Quality assurance training role=link",
+   "node": "div",
+   "ref": "p123:87"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:88"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:89"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/12",
+   "node": "a",
+   "ref": "p123:90"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:91"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:92"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/13",
+   "node": "a",
+   "ref": "p123:93"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:94"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:95"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/14",
+   "node": "a",
+   "ref": "p123:96"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:97"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:98"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/15",
+   "node": "a",
+   "ref": "p123:99"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:100"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:101"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/16",
+   "node": "a",
+   "ref": "p123:102"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:103"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:104"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/18",
+   "node": "a",
+   "ref": "p123:105"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=API testing tools role=link",
+   "node": "div",
+   "ref": "p123:106"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:107"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:108"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/19",
+   "node": "a",
+   "ref": "p123:109"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:110"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:111"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/20",
+   "node": "a",
+   "ref": "p123:112"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:113"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:114"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/21",
+   "node": "a",
+   "ref": "p123:115"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=Software testing tutorials role=link",
+   "node": "div",
+   "ref": "p123:116"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:117"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:118"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/22",
+   "node": "a",
+   "ref": "p123:119"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:120"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:121"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/23",
+   "node": "a",
+   "ref": "p123:122"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:123"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:124"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/24",
+   "node": "a",
+   "ref": "p123:125"
+  },
+  {
+   "frame": "main",
+   "label": "href=#",
+   "node": "a",
+   "ref": "p123:126"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:127"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:128"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/28",
+   "node": "a",
+   "ref": "p123:129"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:130"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:131"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/29",
+   "node": "a",
+   "ref": "p123:132"
+  },
+  {
+   "frame": "main",
+   "label": "href=#",
+   "node": "a",
+   "ref": "p123:133"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:134"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:135"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/30",
+   "node": "a",
+   "ref": "p123:136"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:137"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:138"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/31",
+   "node": "a",
+   "ref": "p123:139"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:140"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:141"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/33",
+   "node": "a",
+   "ref": "p123:142"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:143"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:144"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/35",
+   "node": "a",
+   "ref": "p123:145"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:146"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:147"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/37",
+   "node": "a",
+   "ref": "p123:148"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:149"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:150"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/38",
+   "node": "a",
+   "ref": "p123:151"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:152"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:153"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/39",
+   "node": "a",
+   "ref": "p123:154"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:155"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:156"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/40",
+   "node": "a",
+   "ref": "p123:157"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:158"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:159"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/41",
+   "node": "a",
+   "ref": "p123:160"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:161"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:162"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/42",
+   "node": "a",
+   "ref": "p123:163"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=T-Shirts role=link",
+   "node": "div",
+   "ref": "p123:164"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:165"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:166"
+  },
+  {
+   "frame": "main",
+   "label": "href=/product_details/43",
+   "node": "a",
+   "ref": "p123:167"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:168"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:169"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:170"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:171"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:172"
+  },
+  {
+   "frame": "main",
+   "label": null,
+   "node": "a",
+   "ref": "p123:173"
+  },
+  {
+   "frame": "main",
+   "label": "href=#recommended-item-carousel",
+   "node": "a",
+   "ref": "p123:174"
+  },
+  {
+   "frame": "main",
+   "label": "href=#recommended-item-carousel",
+   "node": "a",
+   "ref": "p123:175"
+  },
+  {
+   "frame": "main",
+   "label": "name=csrfmiddlewaretoken type=hidden value=6nlI7fybu5xtWze2cQ1DhFVSv3ye77VoTRhaVFnq4VT71NHZv9Ufud1QKt3DT8sN",
+   "node": "input",
+   "ref": "p123:176"
+  },
+  {
+   "frame": "main",
+   "label": "placeholder=Your email address id=susbscribe_email type=email",
+   "node": "input",
+   "ref": "p123:177"
+  },
+  {
+   "frame": "main",
+   "label": "id=subscribe type=submit",
+   "node": "button",
+   "ref": "p123:178"
+  },
+  {
+   "frame": "main",
+   "label": "id=scrollUp href=#top",
+   "node": "a",
+   "ref": "p123:179"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=Advertisement name=aswift_0 id=aswift_0",
+   "node": "iframe",
+   "ref": "p123:180"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=Advertisement name=aswift_3 id=aswift_3",
+   "node": "iframe",
+   "ref": "p123:181"
+  },
+  {
+   "frame": "main",
+   "label": "aria-label=Advertisement name=aswift_4 id=aswift_4",
+   "node": "iframe",
+   "ref": "p123:182"
+  },
+  {
+   "frame": "oopif",
+   "label": "id=abgl href=https://adssettings.google.com/whythisad?source=display&reasons=AQSQ1KNglldtecoLyKNoEdIfFOukLdga943jAOoLAXQUVygkcBhEwihS5lGDXG0EnkNQT2g7PMYztzUMwI1fsCqpimHcLNaLopYFhElSuvS-Cd0DKy5ZFMnW31d1E-w7NZofL9PXQvvxfx_s1vqKO8HNQuq6LBqx6uPY_-NltpsORXLFWOYF9bdmDisg4zH59KNpRqPK0MdXnpxb_-QkHZw9SmKtmX8tsWuy73Y19X_VFwLet1rq3tARpRtw5utISrqLrmB3ocYPfDX_uEbatH5YlHMSQc6IfmuJqvfpRiQ74m3jbUCexM74cUIQ7xEWHSWIqFhNnOvls8GtRkqx9m1-UIs2dLEBq67P0vlchQIVeEfCHMR83LtEiQHL0eytXuHffT9e2TS7Xr8XdaiyKipWjItnyYeMtOZ9LBjfrIfAUBh_voWkhG-1ToKuF7weJY--sUmTAEEAZjyuShRGsseXs4AFKsvMcOvebEekqy5ckMjRdZ6GV6lJqLUi8WnnQxxSM0ZexIwhZ9-JMt5jCOFIewcdh1gACwmVSEddhTffEscipKPUsTwnTLIVK-2sAR4T4iTY6WlHgm_wP7cnZYETwROt4RS6vdvbqSdFXy6-W2IMDT_vSqQEhw8lyYz2_XwA7pvv1HraNMrsPvRVxw5bljtHckyeJ347eVoWpx07eurRLhmppBt8XONYqzjExqu8Fo4j_ufVRTVzumzjzlqg_BjUo8PxVLNBeNASg9mJ_-HVVlXxwWIbctLr8z4Sls-AVPl2o-VDChL-_Wxrzbh2QctA_hABa0jsEkibrqIELc-YDKt2ZSo9BjyCO2bAVVyUh9YCNJSlYofMrlWrORqk7pS4WB1BOywZxv17-QV61ShMOTI0WRtdQPllug-zWT8jggYKKHbVUq4Mk2E0kz3Our51FsiO851083B7gB41g7VpMO7xVeLYeaYsizZSYlRBHkr0cOPH-FWK2GQUujiURal16CTQBY9deemTqG2AbJkwmsMgwHdvDBZvoXgoNQ2E9-sHKxzACaVpq2V0amCXPJ8d6jcY0_ZlfAbRANaun7he9Cy2xVtEg5-eG303YeCA0tjf6frMmHsgkWN5cgiYC7VHWeU3uOBho3obb6OKJsXdi6OtVYrvn_gYgnPnUH5YSv-0e7X1lWUPvkcTOYqA1_EHjnDPEBhvrCJnwzFTHasplFyGmu9IQcQxsS7ihI9WwP_4a9tSZ4zikTlUo2SZVcXyOzGV6RUsztqym82ye_0nx2F_73ZsEPS7pyJSqfOGALogTeUgrkY5mxOF1RuceXHyQuKpsWuIA7bT9OvL7aQRsJCX33wKmWEMK-0PUtsanVJr-z-zYedRBLKuE-_-ExHV4-t-bl7z8qJLMdUa_iJ3uRnrl4fSrHc_GI5NEISPm1nVIfsuZnYBjIUewS8S4CAy2KIzJpf1Vy8bcITOqKBioML1lZDYvPBdIkGpDFzDybfLlqx7v1enG4GN6wVxrLP6dY-KILDyNHDcO9ON4_tnx9xyhZqVrRXZMiDCfGLhnmQD7lBTk3dhw8N3FA8EtigvlifwI1PeNwzb8jAlx_HkCvEvpvG4ahr00rfwdNU9tEQYAgvbNsMQhkRBg2qNUjyHMyez9Y8ND-Vwk7UybBjPTtMRPGBZNti7dCPCQ0SV8HyTYSGxr9oT5Vy6fOWpAl30mKxAffn5Z0XHFwWTig5F8WIOWeFKcBF_08KO6coE6HmplQyP6MMJRZ8HBrzopBexFXiflMb7tnooRtNmysEue8W_7Z61iW7wAtcJs9-d115gIrmOa0Hhiz-9l-V2M_cylHMHMI9mKvut-raAsHzWaeE_m8yQOKbEHuGoLdd-N9OSksXLXzylyGdhdcamMsKOn-THEOWaT0T1NN57ha0ZyLvXvx5evVrRTaBptybGn3Jkzo5ScXs4o0DKWNMdDXvqfddQhOXH6HinSqtZ2q84A0Z1d-MUjiGAL4M7GSwT0mXKtCiz6Ztqcdy7SL83H8jON7X7ZGhxIavBYrwcrnj0ZyMZwWhEQm0uJRHKKfp59oe98N6pBUv98Ygp7KW_9UkXCG6sBunCn3R5fZND0mq9NCOXLMEXLLotwe3qRmCW-9at-SkkZJ8fn_MNfmUtxClged_k3QZ-z-uWNVvwQXYvvMMNOCcjD45cyp9D3qZAIzPG2UVQsMhQzn6iuws3JtHix1rK-fSqyNi2pJj6sCIojKPJ5dh3McG-iz2O9jBHyZ8sdPYipjfIM5OAMW4cKrzl-bWRcuSqXlK8eydIciPoddUlV32zqFxE89Jajqhk025xwd3z1fatVwS4TQply0U7BxONA0V_BFnvX0zR0h9V9Ufvgh9W9wbKVR4EW5qT7DRZit5B3g",
+   "node": "a",
+   "ref": "p123:183"
+  },
+  {
+   "frame": "oopif",
+   "label": "id=abgl href=https://adssettings.google.com/whythisad?source=display&reasons=AQSQ1KP6vgH9fVu3GU_1w_98glzPA4pacXB2EM1OpH8kLuI7VlSZkXBl4lQ9ibhZElP10OljAjkVc7sSRdS2MDz5XT0wL9H8wrrKV9a_GnBBwJOwAhvWCbMdGJdk_rhJMy7Ao6r8DCqp2CTHpLva0CGcghtRIYcvAXnghed1-pSedho_W2WhiJkhUZVgIdu8vbhNR5Ll818MCbBFP3FVGAHQoojI9D87GFTgk3lDju0qCPG55Ybg9Yq1LJpjY-_vTE81YRHU5b_1toqAwmIqtpeNljauL4n84CNf0Ja2l85nSKt3VEfJoDZt8_LacgCMXZNb6cWRXAiDueEpg7ziOYwL0EmjGX29zARHiHdOAdbVfAXDWD9npgOyURsGJrm5AjR3ivYp6CB2JuhKUuderhWGGt4QfUa0BbZ5E33-VzTGxikl0voH3Xqg9lo4Z_jbAC9S0DpsHMfEan36WqEAyww7fsvdeCbnsiLrMV49vdvEB2HSHlEniNn0BrkCQFHlCQd9oNtProsp62Y3imYNDzBpE0FSzaSXNnfvZvhy8S9hs3KNE_1FzEO3zM38PAb1oXNoPSIqy9kj2Y73gSa8q1umCcJUkIjS_9ARyVO_uYRLKY5v5O31_oByT5tC1KGfuLUq4r0h_DwEK-vODrEky0otwwyZwVF6NN9Lw1Qew0aH0-nFb6VYmoG31JjFX4drci09uzJgc6cix0hE2pSr1DUu17ZAgo6u3LGKujy1s0V2dtXNsxk5-3GFkQm4Zw7zZ1JVzbilsEB7FXEh41YwLUVmavM5X5UfkWEJeviSf6KLawNctjwzXaVB8fuhEWCSWELUg2hZJQgl9DSRDgPiiLpqCTVkwN6iCkAX7-GhZWFoRrQW1zrwMh6aC7MXGssNL-2jyDsbbd0xJyFvgRqDc9wX1n4gBpQz_WdUwsTjlLRce0qBKNa6MUN0-RdW08p2erLed3hPHmXgxkCXoI4GoXPdg8XmCeP98T3igkPpsontrYnqMtPwbRbCUclJXvq5LUK037C5csnnGlD-Kw_wwCz0tL1iC9xGQCDFLirFMiSecl_Jc6fOH2xpAuJenPF1UdJSHOj-9DER6zH38xO9epetintF5JxCgCdxBGBAJyyZcqw9UHN2YKNZKiEyY6gzqIvz_HzrjUFdzcmWakBaXj5yJuQqS3zLWc08-qECtmKQjkPFhuYolLKXVn6toFQ0nEorhdioS7RRcx9UuDhZnfV39QGFfLoCxDCHFL8QdTILaDcPKnsbqXjpRK8AWpWs88KE3oS0yh9BWf43t3R6qzROOW7tLtzbOZPvvHx8bp7fsNbNWNKWHdM1eBNCOrM_4ekZ24tf1SzWw11QJSJF8-cPWPpsK82vKXueiYKi6S-m6XRmTFLmcbIJ28KyNMJKTlCvvXYLJ_A5Anx6tZsa5D39AaKE6XUtviL5cTrurQvqxLd10F6kf6DxOtlrR-sJGRwvDAXz68Qwl2KbiuKk_X3p4KUf6ARdRsCf8T3jMqpH8ALjUDKMEYlGxqUF0rfAsyR65NFp3H7TBU4Q_dsCVHfwnuzMZQOec3PSpsJftt95Uq43FpAXUnxhl_QdBmvek8Jz2Mjc3tFEigXrebARUWU8lRxe15Hdi9xlGwBlJ034lzl5m_dCl3KHr4KZqHKetvRBkdHyvreqRUoU5tsYVySTl1_mreaIh4c14A0TdBsCGTfd1Dqfz3uQvqwznmPfKDNdE-AKh9yoawadzPT2bCaOue9rWDpVlGJSDVUi1c0wTI3k5r7XfEFrXywuPHnC4m-0OxTj7i5kZ5f3lA8axVQsl535aVDzDueT5ndu4icdswDqmnAGBekJ6amgNe7it_09kqnKif7t9CkAOksmnzSV4BV6iaFXFL--CJEoScePmPpqlVzs-tt-LrfIa0S5nxyaJwbwwc8igvKLEUBGNVLdTpu8eP_lbXlVHz8R-ey1f9xpTzXFIGntVUD39S6rgq7EGyC61kTW4FWi5CfVwkXYb8V1cn0w4aRdXn-2KeSu-4j0pc7KFyOaFpfaxSozT7k48UNoDpQDPmMBlFirBBwbmcDXzywvnxf3qwyDF4OFBZ27ETOTMUVyJj5FVO_MyT9pcDVoGQKARIB9hIEl9DxO2FkYd8r177GmmjFxTfvqqHEDE2BVyHqtNCEGjSK8Upj7xFPcYrOSkiRegGD2sarJl9rqtHAMYb4oaonP8oPzi2HgJ-kgwbVlEmyj4SyGVHY71_PmV2DxnAxsOq_2wWcaQAauHpfsvSqzSqeDsMO-Tc-SyQWjCg8sn2DznZ-TaqE05NjcAXEooHoNfXP6aBzap8K6vgBL1Q_LPj0JA1RGcsVRVnKEUiY_Apzm_mJHKH5oE2ykJSjZ1qeUsWU",
+   "node": "a",
+   "ref": "p123:184"
+  },
+  {
+   "frame": "oopif",
+   "label": "id=cbb role=button",
+   "node": "div",
+   "ref": "p123:185"
+  }
+ ],
+ "snapshot_id": "p123",
+ "status": "ok",
+ "tab_id": "tab-4d5ab61b-f992-45bd-bdfc-832979e150c9",
+ "target_id": "bt-b5528c18-442d-434f-9f09-b6d184154498",
+ "truncated": false,
+ "url": "https://automationexercise.com/"
+}
