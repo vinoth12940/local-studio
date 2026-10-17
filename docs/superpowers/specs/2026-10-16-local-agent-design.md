@@ -342,3 +342,16 @@ probe daemon on a socket under `build/agent-probe/`, and the user's running app 
 
 Fixtures from these runs are in `macos/fixtures/agent/` (public pages only; the Notes tree has all
 note text replaced).
+
+## Amendment: Agent switch in chat (16 Oct 2026, user-approved)
+
+Chat gets an **Agent** pill next to My files (shown when Agent is on and CuaDriver is ready).
+With it on, a message starts an agent run (`POST /api/agent/run` with the chat's model, the last
+chat turns as `context`, and `chat_id`); the run appears inline in the thread as a compact card
+(status, latest screenshot, collapsed steps, inline approval/question cards, Stop / Take over),
+built from the Agent view's own components and sanitizers. When it ends, the answer (images
+stripped) becomes the assistant message, with a link to the run's steps. The context is fenced
+as background data (`<<<CHAT … CHAT>>>`, every line indented) and never acts as a task.
+With the pill off, chat gets one short system note (when Agent is on and CuaDriver ready) so it
+tells the user about the Agent switch instead of claiming it can act. Live tests also changed:
+the agent's time limit counts only time the Mac is awake (`time.monotonic`).
