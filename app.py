@@ -4146,7 +4146,7 @@ class _AgentLoop:
         if decision == "risky":
             card = {"type": "approval", "n": n, "title": self.scrub(approval_title(name, facts, ctx, self.scrub_args(args))),
                     "shot": None if hidden else run.shot(f"{n}-ask", ad.screenshot()),
-                    "box": (facts or {}).get("box"), "tool": name, "args": self.scrub_args(_agent_redact(name, args, facts)), "reason": reason}
+                    "box": (facts or {}).get("box"), "tool": name, "args": self.scrub_args(_agent_redact(name, args, facts)), "reason": self.scrub(reason)}
             try:
                 answer = self.wait("approval", n, card)
             except _AgentEnd as e:

@@ -368,3 +368,13 @@ the agent's time limit counts only time the Mac is awake (`time.monotonic`).
   in a file extension (`.zip`, `.dmg`, `.pkg`, `.exe`, `.pdf`, `.docx`, `.csv`, `.mp4`, `.sh`, …)
   is risky ("this link downloads a file"). Links are joined to anchors by name or by order, so
   this check is best effort.
+- **Pages served by this Mac.** The agent never opens or reads a loopback page (127/8, `::1`,
+  0.0.0.0, `localhost`, `*.localhost`, in any spelling a browser accepts): `open_url` there is
+  blocked, and a page that lands there (link, script, redirect) sends the tab to `about:blank`
+  with "The agent can't read pages served by this Mac". Other local-network hosts (private,
+  link-local, `*.local`) always ask and are never vouched for. `LocalOnly` also guards
+  `/api/chats`, `/api/attachments`, `/api/gallery` and `/gallery`, and rejects
+  `Sec-Fetch-Site: cross-site` / `same-site`.
+- **Profile per data folder.** The isolated profile is `local-studio` only for the Mac app's data
+  folder; any other `STATE` (a dev server, a checkout) uses `local-studio-<8 hex of its path>`, so
+  two Local Studios never share sign-ins. Reset refuses while a Chrome still uses the profile.

