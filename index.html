@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <style>
 :root {
   --bg: #ffffff; --side: #f9f9f9; --raised: #ffffff; --hover: #ececec; --soft: #f4f4f4;
@@ -2112,11 +2112,12 @@ const ag = { ...agFresh(), st: null, runs: [], es: null, pinned: false, replay: 
   hooks: { sync: () => agSync(), ended: () => { loadAgentRuns(); loadAgent(); }, retry: () => loadAgent() } };
 
 let useAgent = store.get("useAgent", false);
-const agentReady = () => { const c = ag.st?.cua || {}; return !!(ag.st?.enabled && c.installed && c.ok_version); };
+const agPermMissing = (st) => { const p = st?.permissions || {}; return p.accessibility === false || p.screen_recording === false; };   // unknown never counts
+const agentReady = () => { const c = ag.st?.cua || {}; return !!(ag.st?.enabled && c.installed && c.ok_version && !agPermMissing(ag.st)); };
 function syncAgentPill() {                                    // only offered while Agent is on and CuaDriver is ready
   const can = agentReady(), p = $("agentPill");
   p.hidden = !can; p.classList.toggle("on", useAgent && can);
-  p.title = "Run your message as a task for the Agent: it works in a browser and Mac apps";
+  p.title = "Run your message as a task for the Agent: it works in a browser and Mac apps.\nYour recent chat turns are sent to the agent as background.";
   store.set("useAgent", useAgent);
 }
 $("agentPill").onclick = () => { useAgent = !useAgent; syncAgentPill(); };
@@ -2270,10 +2271,12 @@ function agRenderSetup() {
   if (!st.enabled) { t = "Agent is off"; m = "Turn it on to let the agent use a browser and Mac apps. Nothing runs until you start a task."; act = `<button class="btn primary" id="agSetupOn">Turn on Agent</button>`; }
   else if (!c.installed) { t = "CuaDriver is not installed"; m = "Agent needs CuaDriver to control the browser and apps. Install it from github.com/trycua/cua, then come back."; act = link("Get CuaDriver"); }
   else if (!c.ok_version) { t = "CuaDriver needs an update"; m = `You have ${c.version || "an unknown version"}. Agent needs ${AG_CUA_MIN} or later. Update it from github.com/trycua/cua.`; act = link("Update CuaDriver"); }
+  else if (agPermMissing(st)) { t = "CuaDriver needs permissions"; m = "macOS hasn't given CuaDriver Accessibility and Screen Recording yet, so no task can start. Grant them, then start the task again."; act = `<button class="btn primary" data-agperm>Grant permissions</button>`; }
   box.style.display = t ? "" : "none";
   if (t) { $("agSetupTtl").textContent = t; $("agSetupMsg").textContent = m; $("agSetupAct").innerHTML = act; }
 }
 $("agSetup").onclick = async (e) => {
+  if (e.target.closest("[data-agperm]")) return agGrant();
   if (!e.target.closest("#agSetupOn")) return;
   try { await jpost("/api/agent/enable", { on: true }); } catch (err) { toast(err.message); }
   loadAgent();
@@ -2550,19 +2553,20 @@ async function agOpenSaved(rid) {
 // ---- settings
 function agRenderSettings() {
   const st = ag.st; if (!st) return;
-  const c = st.cua || {}, s = st.settings || {}, ready = c.installed && c.ok_version;
+  const c = st.cua || {}, s = st.settings || {}, perm = agPermMissing(st), ready = c.installed && c.ok_version && !perm;
   $("agEnable").checked = !!st.enabled;
   $("agSetSum").textContent = !st.enabled ? "Let a local model use a browser and Mac apps for you. Off until you turn it on." : ready ? "On. The agent asks before anything risky." : "On, but CuaDriver needs attention.";
   $("agSetBody").style.display = st.enabled ? "" : "none";
   if (document.activeElement !== $("agSteps")) $("agSteps").value = s.max_steps ?? "";
   if (document.activeElement !== $("agMins")) $("agMins").value = s.max_minutes ?? "";
-  const sig = JSON.stringify([st.enabled, c, s]);
+  const sig = JSON.stringify([st.enabled, c, s, st.permissions]);
   if (sig === ag.setSig) return;
   ag.setSig = sig;
   const link = `<a href="${AG_CUA_URL}" target="_blank" rel="noopener noreferrer">github.com/trycua/cua</a>`;
   let msg, act = "";
   if (!c.installed) msg = `Not installed. Get it from ${link}.`;
   else if (!c.ok_version) msg = `Update needed (have ${esc(c.version || "unknown")}, need ${AG_CUA_MIN}). Update it from ${link}.`;
+  else if (perm) { msg = `v${esc(c.version)}, but macOS hasn't given it Accessibility and Screen Recording yet. No task can start until it has them.`; act = `<button class="btn sm" data-agperm>Grant permissions</button>`; }
   else { msg = `Ready v${esc(c.version)}. macOS asks once for Accessibility and Screen Recording.`; act = `<button class="btn sm" data-agperm>Grant permissions</button>`; }
   $("agCua").innerHTML = `<div class="grow"><div class="ttl">CuaDriver</div><div class="sub">${msg}</div></div>${act}`;
   const tel = $("agTelemetry"); tel.style.display = c.installed ? "" : "none";
@@ -2619,10 +2623,10 @@ $("agEnable").onchange = async () => {
   try { await jpost("/api/agent/enable", { on: $("agEnable").checked }); } catch (e) { toast(e.message); }
   ag.setSig = ""; loadAgent();
 };
-$("agCua").onclick = async (e) => {
-  if (!e.target.closest("[data-agperm]")) return;
+async function agGrant() {
   try { await jpost("/api/agent/permissions"); toast("Follow the macOS prompts for Accessibility and Screen Recording"); } catch (err) { toast(err.message); }
-};
+}
+$("agCua").onclick = (e) => { if (e.target.closest("[data-agperm]")) agGrant(); };
 $("agTelemetry").onclick = async (e) => {
   if (!e.target.closest("[data-agtele]")) return;
   if (!(await confirmBox("Turn off CuaDriver telemetry?", "This runs cua-driver telemetry disable, so CuaDriver stops sending usage data. It changes a CuaDriver setting, not a Local Studio one.", "Turn off"))) return;
