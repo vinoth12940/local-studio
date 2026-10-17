@@ -4250,6 +4250,76 @@ def read_only_app_blocks_click():
         assert e.ev("step")[1]["decision"] == "safe" and len(c3.of("click")) == 1
 
 
+def _degraded(st, how="reason"):
+    """get_window_state as CuaDriver answers when the app's AX window can't be resolved: data, but marked degraded."""
+    def state(args):
+        r = st.state(args)
+        if args.get("include_accessibility_tree") is False or not r.get("ok"):
+            return r
+        d = dict(r["data"])
+        if how == "reason":
+            d.update(degraded=True, degraded_reason="ax_window_unresolved: no AXWindow matches window 480")
+        else:
+            d.update(degraded=True, degraded_reason="other", background_input={"exact_window": {"status": "ax_unresolved"}})
+        return _tr(d, image=PNG)
+    return state
+
+
+AX_MSG = ("Notes isn't exposing its window to the agent right now (macOS accessibility). "
+          "Ask the user to quit and reopen Notes, then try again.")
+
+
+@check
+def unresolved_app_window_asks_for_a_reopen():
+    """A degraded get_window_state (ax_window_unresolved, or exact_window ax_unresolved) is a clear error, and click_app, type_app,
+    menu and hotkey are refused without reaching CuaDriver until the app is read cleanly again (read_app / open_app)."""
+    for how in ("reason", "exact"):
+        c, a = app_client()
+        c.script["get_window_state"] = _degraded(c.st, how)
+        assert a.execute("open_app", {"name": "Notes"}).startswith("Opened Notes")
+        try:
+            a.observe()
+            raise AssertionError("a degraded read must not give a view")
+        except app.AppUnresolved as e:
+            assert str(e) == AX_MSG, str(e)
+        assert a.view is None
+        before = len(c.calls)
+        assert a.execute("hotkey", {"keys": ["cmd", "n"]}) == "Error: " + AX_MSG
+        assert a.execute("hotkey", {"keys": ["return"]}) == "Error: " + AX_MSG
+        assert a.execute("menu", {"app": "Notes", "path": ["File", "New Note"]}) == "Error: " + AX_MSG
+        assert a.execute("click_app", {"ref": "e1"}) == "Error: " + AX_MSG
+        assert len(c.calls) == before, c.calls[before:]                                   # nothing reached CuaDriver
+        # the user quit and reopened it: read_app binds it again and the next clean read clears the refusal
+        c.script["get_window_state"] = c.st.state
+        assert a.execute("read_app", {"name": "Notes"}).startswith("Looking at Notes")
+        assert a.observe()["text"].startswith("App: Notes")
+        assert a.execute("hotkey", {"keys": ["cmd", "n"]}).startswith("Pressed cmd+n") and c.of("hotkey")
+    # a healthy degraded flag (any other reason) is still read
+    c, a = app_client()
+    inner = c.st.state
+    c.script["get_window_state"] = lambda args: (lambda r: _tr({**r["data"], "degraded": True, "degraded_reason": "screenshot_failed"}, image=PNG)
+                                                 if r.get("ok") and args.get("include_accessibility_tree") is not False else r)(inner(args))
+    assert a.execute("open_app", {"name": "Notes"}).startswith("Opened")
+    assert a.observe()["text"].startswith("App: Notes")
+    # in a run: the model is told (and the user sees) the reopen message once, and its hotkeys never reach CuaDriver
+    c = app_client()[0]
+    c.script["get_window_state"] = _degraded(c.st)
+    model = Model(tca("open_app", name="Notes"), tc("hotkey", keys=["cmd", "n"]), tc("ask_user", question="Please quit and reopen Notes."),
+                  tc("done", answer="Waiting for Notes."))
+    with _app_run(model, c) as e:
+        e.start("Make a new note in Notes")
+        e.status("waiting")
+        assert AX_MSG in model.text(1) and "could not be read" not in model.text(1), model.text(1)
+        e.post("reply", text="done")
+        e.finish()
+        steps = e.ev("step")
+        info = [s for s in steps if s["decision"] == "info"]
+        assert len(info) == 1 and info[0]["result"] == AX_MSG, steps
+        hk = next(s for s in steps if s["tool"] == "hotkey")
+        assert hk["result"] == "Error: " + AX_MSG and not c.of("hotkey"), hk
+        assert e.end()["status"] == "done"
+
+
 @check
 def ask_app_pauses_on_type():
     c = app_client()[0]

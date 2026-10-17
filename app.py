@@ -1559,6 +1559,11 @@ class McpError(Exception):
     pass
 
 
+class AppUnresolved(McpError):
+    """get_window_state answered, but the app's window can't be resolved through accessibility (degraded ax_window_unresolved):
+    clicks and keys can't reach it until the user quits and reopens the app."""
+
+
 class McpClient:
     """MCP over stdio to a child process: newline-delimited JSON-RPC 2.0. Calls are serialized; a reader
     thread routes each response to the queue of the request that is waiting for it. If the process has
@@ -2762,6 +2767,19 @@ def _agent_sleep(s):
     time.sleep(s)                                            # a function of its own so the checks can replace it
 
 
+AGENT_AX_UNRESOLVED = ("{app} isn't exposing its window to the agent right now (macOS accessibility). "
+                      "Ask the user to quit and reopen {app}, then try again.")
+
+
+def _ax_unresolved(d):
+    """True when get_window_state says the window could not be resolved through accessibility (its tree and tokens are unusable)."""
+    if not isinstance(d, dict):
+        return False
+    ew = (d.get("background_input") or {}).get("exact_window") if isinstance(d.get("background_input"), dict) else None
+    return (d.get("degraded") is True and str(d.get("degraded_reason") or "").startswith("ax_window_unresolved")
+            or isinstance(ew, dict) and ew.get("status") == "ax_unresolved")
+
+
 def _cua_problem(res):
     """The one-line reason a CuaDriver result failed, or None. A refusal comes back with ok True and
     status "refused" (or effect "refused"), or with isError."""
@@ -2902,6 +2920,7 @@ class Adapter:
         self._last_res = None
         self.app_pid = self.app_window = self.bundle_id = None    # the Mac app being driven (surface "app"); the browser keeps pid/window_id
         self._app_rebind_due = False
+        self._app_unresolved = None                          # AGENT_AX_UNRESOLVED for the bound app after a degraded read; cleared by a clean one
         self._shot, self._shot_fresh = None, False           # the picture that came with the last app read; good until something acts
         # CuaDriver browser refs (pN:M) work only for the tab's newest snapshot, and every get_browser_state read makes a new one.
         # So the picture comes with the view's own read, and between observe() and the action nothing reads the page again.
@@ -3307,6 +3326,8 @@ class Adapter:
             return f"Error: {tool} is for the browser and a Mac app is open; use click_app / type_app, or open_url / read_page to go back to the browser"
         if tool in _APP_ONLY and self.surface != "app":
             return "Error: no Mac app is open; use open_app first"
+        if tool in _APP_ACTING and self._app_unresolved:   # until read_app / open_app reads the app cleanly again
+            return "Error: " + self._app_unresolved
         try:
             return fn(args if isinstance(args, dict) else {})
         except McpError as e:
@@ -3320,7 +3341,7 @@ class Adapter:
     # -- Mac apps: their own pid/window, their own recovery (a stale snapshot is re-read, never re-bound like the browser)
     def _to_browser(self):
         self.surface, self.app, self.app_pid, self.app_window, self.bundle_id = "browser", None, None, None, None
-        self._app_rebind_due, self._shot, self._shot_fresh = False, None, False
+        self._app_rebind_due, self._shot, self._shot_fresh, self._app_unresolved = False, None, False, None
 
     def _apps(self):
         res = self._call("list_apps", {})
@@ -3346,7 +3367,7 @@ class Adapter:
         win = self._app_main_window(pid, a["name"], tries)
         self.surface, self.app, self.app_pid, self.app_window = "app", _norm_label(a["name"]), pid, win["window_id"]
         self.bundle_id = a.get("bundle_id") or None
-        self.view, self._app_rebind_due, self._shot, self._shot_fresh = None, False, None, False
+        self.view, self._app_rebind_due, self._shot, self._shot_fresh, self._app_unresolved = None, False, None, False, None
 
     def app_info(self, name):
         """{name, bundle_id, running} of the app a name means, or None (unknown, ambiguous, or list_apps failing: open_app then says so itself)."""
@@ -3403,6 +3424,11 @@ class Adapter:
             if attempt:
                 raise McpError(_cua_problem(res) or "the app window could not be read")
         d = res["data"]
+        if _ax_unresolved(d):                                # no element can be targeted: never let the model loop on clicks and keys
+            self.view, self._shot, self._shot_fresh = None, None, False
+            self._app_unresolved = AGENT_AX_UNRESOLVED.format(app=_clip(self.app or "The app", 40))
+            raise AppUnresolved(self._app_unresolved)
+        self._app_unresolved = None
         theirs = d.get("app_name") if isinstance(d.get("app_name"), str) else None
         bid = next((d[k] for k in ("bundle_id", "bundleId") if isinstance(d.get(k), str)), None)
         if (theirs is not None and _tier_key(theirs) != _tier_key(self.app)) or (bid and self.bundle_id and bid.casefold() != self.bundle_id.casefold()):
@@ -4034,6 +4060,13 @@ class _AgentLoop:
             return self.mcp(self.ad.observe)
         except _AgentEnd:
             raise
+        except AppUnresolved as e:                           # not "try read_app again": only the user can fix this
+            msg = str(e)
+            if ("ax", msg) not in self.warned:
+                self.warned.add(("ax", msg))
+                self.run.emit({"type": "step", "n": None, "tool": None, "args": {}, "summary": "Can't reach the app window",
+                               "result": msg, "decision": "info", "shot": None, "thought": ""})
+            return {"text": msg, "refs": {}, "interactive": 0, "sparse": False, "unread": True}
         except Exception as e:                               # this page can't be read; the model can go elsewhere
             return {"text": (f"(The app window could not be read: {_clip(e, 200)}. Try read_app, open_app or open_url.)" if app_s
                              else f"(The page could not be read: {_clip(e, 200)}. Try read_page, back or open_url.)"), "refs": {},
