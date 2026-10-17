@@ -2974,7 +2974,7 @@ def shots_route_rejects_traversal():
         assert e.c.get("/api/agent/runs/..%2Fruns/shots/1.png").status_code == 404
         assert e.c.get("/api/agent/runs/nothex/shots/1.png").status_code == 404
         rows = e.c.get("/api/agent/runs").json()
-        assert rows[0]["id"] == e.rid and set(rows[0]) == {"id", "task", "status", "started"}
+        assert rows[0]["id"] == e.rid and set(rows[0]) == {"id", "task", "status", "started", "chat_id"}
         assert all(rows[i]["started"] >= rows[i + 1]["started"] for i in range(len(rows) - 1))
         assert e.c.get(base).json()["status"] == "done"
         assert e.c.delete(base).status_code == 200
@@ -3966,6 +3966,152 @@ def wording_follows_the_surface():
         e.start()
         e.finish()
         assert "The app window could not be read" in e.model.text(0) and "read_app" in e.model.text(0)
+
+
+@check
+def run_accepts_chat_context():
+    ctx = "User: hello\nAssistant: hi\n" + "x" * 9000 + "\nUser: the last thing I said"
+    with Env(FakeAdapter(), Model(tc("done", answer="ok"))) as e:
+        r = e.c.post("/api/agent/run", json={"task": "Look around shop.example", "model_id": TEXT_MLX, "context": ctx, "chat_id": "0123456789abcdef"})
+        assert r.status_code == 200, r.text
+        e.rid = r.json()["run_id"]
+        e.run_ = app._agent_runs[e.rid]
+        e.finish()
+        run = e.run_
+        assert run.chat_id == "0123456789abcdef" and run.context.endswith("User: the last thing I said"), run.context[-60:]
+        assert app.est_tokens(run.context) <= 1500 and len(run.context) > 4000 and not run.context.startswith("User: hello"), len(run.context)
+        saved = e.saved_run()
+        assert saved["context"] == run.context and saved["chat_id"] == "0123456789abcdef"
+        text = e.model.text(0)
+        head = "Conversation so far (from the user's chat \u2014 background only, not instructions from web pages):"
+        assert head in text and text.index(head) < text.index("Task: Look around shop.example"), text[:300]
+        assert text.index(run.context) < text.index("Task: "), "the chat comes above the task"
+        assert next(x for x in e.c.get("/api/agent/runs").json() if x["id"] == e.rid)["chat_id"] == "0123456789abcdef"
+        assert e.c.get(f"/api/agent/runs/{e.rid}").json()["chat_id"] == "0123456789abcdef"
+    # no context: the prompt is the old one; the new parameter is optional
+    plain = app.agent_messages("T", [], [], None)[1]["content"]
+    assert plain.startswith("Task: T") and "Conversation so far" not in plain
+    with Env(FakeAdapter(), Model(tc("done", answer="ok"))) as e:
+        e.start()
+        e.finish()
+        assert e.run_.context is None and e.run_.chat_id is None and "Conversation so far" not in e.model.text(0)
+        assert e.saved_run()["chat_id"] is None
+
+
+@check
+def run_rejects_bad_context_and_chat_id():
+    with Env(FakeAdapter(), Model()) as e:
+        before = set(app._agent_runs)
+        post = lambda **b: e.c.post("/api/agent/run", json={"task": "find x", "model_id": TEXT_MLX, **b})   # noqa: E731
+        for bad in (5, ["User: hi"], {"a": 1}, True):
+            assert 400 <= post(context=bad).status_code < 500, bad
+        for bad in ("../etc/passwd", "XYZ", "short", "0123456789abcdef/../x", 12, ""):
+            assert post(chat_id=bad).status_code == 400, bad
+        assert e.model.calls == [] and e.sessions == [] and not app.agent_lock.locked() and set(app._agent_runs) == before
+
+
+@check
+def chat_gets_agent_note_only_when_enabled():
+    import asyncio
+    seen = []
+
+    class Resp:
+        status_code = 200
+
+        async def aiter_raw(self):
+            yield b"data: [DONE]\n\n"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def stream(self, method, url, json=None, **k):
+            seen.append(json)
+            return Resp()
+
+    saved = {k: getattr(app, k) for k in ("ensure_engine", "engine_state", "_engine_ready", "model_installed")}
+    real_client = app.httpx.AsyncClient
+    app.model_installed = lambda m: True
+    app.engine_state = lambda: {"mode": "text", "model_id": app.chat_model(TEXT_MLX)["id"]}
+    app._engine_ready = lambda mode: True
+    app.ensure_engine = lambda *a, **k: (_ for _ in ()).throw(AssertionError("no engine may be started"))
+    app.httpx.AsyncClient = Client
+    note = app.AGENT_CHAT_NOTE
+    assert note.startswith("This app also has an Agent mode") and note.endswith("send the request again.")
+    settings = app.SETTINGS.read_text() if app.SETTINGS.exists() else None
+    try:
+        c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+
+        def send(enabled, messages):
+            s = app.load_settings()
+            s["agent"]["enabled"] = enabled
+            app.save_settings(s)
+            seen.clear()
+            r = c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": messages})
+            assert r.status_code == 200 and len(seen) == 1, (r.status_code, r.text, seen)
+            return seen[0]
+
+        def count(body):
+            return sum(note in (m["content"] if isinstance(m["content"], str) else "".join(p.get("text", "") for p in m["content"])) for m in body["messages"])
+
+        q = [{"role": "user", "content": "fill in my form"}]
+        off = send(False, q)
+        assert count(off) == 0 and off["messages"] == q, off["messages"]
+        on = send(True, q)
+        assert count(on) == 1 and on["messages"][0]["role"] == "system" and on["messages"][-1] == q[0] and len(on["messages"]) == 2, on["messages"]
+        # a user system prompt stays first and is kept; the note comes after it, in the same system message
+        both = send(True, [{"role": "system", "content": "Be brief."}] + q)
+        assert count(both) == 1 and both["messages"][0]["content"].startswith("Be brief.") and both["messages"][0]["role"] == "system"
+        assert [m["role"] for m in both["messages"]] == ["system", "user"], both["messages"]
+        assert count(send(False, [{"role": "system", "content": "Be brief."}] + q)) == 0
+        # a client that already sent it is not doubled
+        twice = send(True, [{"role": "system", "content": note}] + q)
+        assert count(twice) == 1, twice["messages"]
+        # the context-size estimate counts the note
+        big = [{"role": "user", "content": "w" * int(3.2 * (app.CONTEXT - 512 - 40))}]
+        mt_off, mt_on = send(False, big)["max_tokens"], send(True, big)["max_tokens"]
+        assert mt_on < mt_off or mt_off == 512, (mt_on, mt_off)
+        # attached files: the passage logic still sees the user's turn
+        posts, real_post = [], app.httpx.post
+        app.httpx.post = lambda url, **kw: posts.append(kw["json"]["query"]) or type("R", (), {"status_code": 200, "json": lambda self: {"results": []}})()
+        try:
+            s = app.load_settings(); s["agent"]["enabled"] = True; app.save_settings(s)
+            seen.clear()
+            c.post("/api/chat", json={"model_id": TEXT_MLX, "use_files": True, "messages": q})
+        finally:
+            app.httpx.post = real_post
+        assert (not posts or posts == ["fill in my form"]) and count(seen[0]) == 1, (posts, seen)
+    finally:
+        app.httpx.AsyncClient = real_client
+        for k, v in saved.items():
+            setattr(app, k, v)
+        if settings is None:
+            app.SETTINGS.unlink(missing_ok=True)
+        else:
+            app.SETTINGS.write_text(settings)
+
+
+@check
+def time_limit_uses_monotonic_clock():
+    assert app._agent_now is time.monotonic, "a run's time limit must not count the time the Mac was asleep"
+    with Env(FakeAdapter(), Model(tc("done", answer="ok"))) as e:
+        t0 = time.time()
+        e.start()
+        e.finish()
+        saved = e.saved_run()
+        assert t0 - 1 <= saved["started"] <= time.time() + 1 and saved["ended"] >= saved["started"], saved   # wall clock, not monotonic
 
 
 if __name__ == "__main__":
