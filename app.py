@@ -2308,6 +2308,8 @@ def _is_search_field(facts, name):
 
 
 def _gate_acting(tool, args, facts, ctx):
+    if tool in ("hotkey", "menu") and ctx.get("surface") == "browser":
+        return "blocked", "hotkey and menu work only in Mac apps; use click or type on the page"
     in_app = ctx.get("surface") == "app" or tool in _APP_ACTING
     tier = (ctx.get("tier") if ctx.get("tier") in _TIER_NAMES else "ask") if in_app else None
     app = ctx.get("app")
@@ -2371,19 +2373,19 @@ def approval_title(tool, facts, ctx, args=None):
     args, ctx = args or {}, ctx or {}
     esc = lambda v, n=80: _md_escape(_clip(_norm_label(v), n))
     where_web = f"on {_card_host(ctx.get('domain') or '') or 'this page'}"
-    where_app = f"in {esc(ctx.get('app') or 'the app')}"
+    where_app = "" if ctx.get("surface") == "browser" and not ctx.get("app") else f"in {esc(ctx.get('app') or 'the app')}"   # never "in the app" on a web page
     f = facts or {}
     label = lambda: esc(f.get("name") or f.get("role") or "control")
     if tool == "click":
         return f"Click **{label()}** {where_web}"
     if tool == "click_app":
-        return f"Click **{label()}** {where_app}"
+        return f"Click **{label()}** {where_app}".rstrip()
     if tool == "type":
         return f"Type into **{label()}** {where_web}"
     if tool == "type_app":
         if f.get("role") in _SETTABLE:
-            return f"Choose **{esc(args.get('text'))}** in **{label()}** {where_app}"
-        return f"Type into **{label()}** {where_app}"
+            return f"Choose **{esc(args.get('text'))}** in **{label()}** {where_app}".rstrip()
+        return f"Type into **{label()}** {where_app}".rstrip()
     if tool == "open_app":
         return f"Open **{esc((ctx.get('target') or {}).get('name') or args.get('name') or 'an app')}**"
     if tool == "download":
@@ -2395,13 +2397,13 @@ def approval_title(tool, facts, ctx, args=None):
         show = lambda v, n=80: _md_escape(_clip(_visible(v), n))       # joiners and bidi marks are spelled out, not hidden
         return f"Open **{_card_host(_host(url)) or 'an address with no host'}** ({show(url)})"
     if tool == "menu":
-        return f"Use menu **{esc(' › '.join(_menu_path(args.get('path')) or ['?']))}** {where_app}"
+        return f"Use menu **{esc(' › '.join(_menu_path(args.get('path')) or ['?']))}** {where_app}".rstrip()
     if tool == "hotkey":
         ks = args.get("keys")
         parts = [t for k in ([ks] if isinstance(ks, str) else ks if isinstance(ks, (list, tuple)) else ()) if isinstance(k, str)
                  for t in _KEY_SPLIT.split(_norm_label(k)) if t]
         keys = [_KEY_NAMES.get(t.lower(), t.capitalize() if len(t) > 1 else t.upper()) for t in parts]
-        return f"Press **{esc('+'.join(keys) or '?')}** {where_app}"
+        return f"Press **{esc('+'.join(keys) or '?')}** {where_app}".rstrip()
     return f"Run **{esc(tool)}**"
 
 
@@ -2446,6 +2448,11 @@ AGENT_BIND_TRIES = 10                                        # list_windows poll
 AGENT_SCROLL_PX = 600
 AGENT_VIEWPORT = (600, 400)                                  # where a scroll is aimed when the snapshot did not give the viewport size
 _STALE_MARKERS = ("browser_binding_stale", "browser_ref_stale", "browser_tab_not_found")
+# The page's window stopped matching the native window (a popup or a new window appeared). Never a ref-stale retry: the same
+# call could land in another tab. The adapter re-binds the window exactly, re-reads, and retries once only if it is the same control.
+_WRONG_TARGET_MARKERS = ("browser_wrong_target_refused", "no longer has an exact geometry")
+AGENT_WINDOW_LOST = ("the browser window changed in a way the agent can't follow. "
+                     "Use Take over to close any popups, then Resume.")
 
 
 def _agent_sleep(s):
@@ -2469,6 +2476,11 @@ def _cua_blob(res):
 def _is_stale(res):
     blob = _cua_blob(res)
     return any(m in blob for m in _STALE_MARKERS)
+
+
+def _is_wrong_target(res):
+    blob = _cua_blob(res)
+    return any(m in blob for m in _WRONG_TARGET_MARKERS)
 
 
 _APP_STALE = ("stale", "snapshot", "element_token", "element not found", "element_not_found", "window_not_found", "no such window")   # what a Mac app says when the tree moved on; a retry re-reads first
@@ -2559,7 +2571,7 @@ class Adapter:
     def __init__(self, client, session):
         self.client, self.session = client, session
         self.surface, self.app = "browser", None
-        self.url = self.domain = None
+        self.url = self.domain = self.title = None
         self.link_domains: set[str] = set()                  # hosts of every link seen on any page this run (for the gate)
         self.view = None
         self.pid = self.window_id = self.target = self.tab = None
@@ -2581,7 +2593,9 @@ class Adapter:
         return self.client.call(name, {**args, "session": self.session})
 
     # -- binding: prepare the isolated Chromium -> its window -> target/tab ids
-    def _bind(self):
+    def _bind(self, follow=False):
+        """Prepare the browser and bind its window. follow=True is a re-bind after a wrong-target refusal: when several windows
+        bind exactly (the page opened a new one), the one showing the page last read wins, else the newest (highest window_id)."""
         for fresh in (self.pid is None, True):               # a known pid whose window is gone is prepared once more
             if self.pid is None:
                 _repair_agent_profile()                      # a crash flag makes Chrome open "Restore pages?" and bind only heuristically
@@ -2607,7 +2621,7 @@ class Adapter:
                 raise McpError("the browser window did not appear")
             self.pid = None
         area = lambda w: ((w.get("bounds") or {}).get("width") or 0) * ((w.get("bounds") or {}).get("height") or 0)   # noqa: E731
-        first_problem, inexact = None, False
+        first_problem, inexact, exact = None, False, []
         for win in sorted(wins, key=area, reverse=True):     # largest first; only an exact binding may be used to act
             res = self._call("get_browser_state", {"pid": self.pid, "window_id": win["window_id"]})
             d = res.get("data") or {}
@@ -2618,6 +2632,21 @@ class Adapter:
             if d.get("mutation_allowed") is False or d.get("binding_quality") not in (None, "exact"):
                 inexact = True
                 continue
+            exact.append((win, d, tab))
+            if not follow:
+                break
+        if exact:
+            def rank(c):
+                shown = [(t.get("url"), t.get("title")) for t in c[1].get("tabs") or [] if isinstance(t, dict)]
+                if self.url and any(u == self.url for u, _ in shown):
+                    score = 0
+                elif self.title and self.title != "about:blank" and any(t == self.title for _, t in shown):
+                    score = 1
+                else:
+                    score = 2
+                wid = c[0]["window_id"]
+                return (score, -wid if isinstance(wid, (int, float)) else 0)
+            win, d, tab = min(exact, key=rank) if follow else exact[0]
             self.window_id, self.target, self.tab, self._rebind_due = win["window_id"], d["target_id"], tab, False
             return
         if inexact:
@@ -2633,21 +2662,29 @@ class Adapter:
 
     def _act(self, make, reread=True):
         """One CuaDriver call built by make() -> (tool, args). A stale binding or ref gets one re-bind (and re-read, so make()
-        can look its short ref up again) and one retry; any other failure, and a second one, raises McpError."""
+        can look its short ref up again) and one retry. A wrong-target refusal (the window no longer correlates) gets one exact
+        re-bind that may pick another window, a re-read and one retry; make() decides whether the retry is still the same
+        control. Any other failure, and a second failure of the same kind, raises McpError."""
         self._last_res = None
-        for attempt in (0, 1):
+        used = set()
+        why = "the browser refused"
+        for _ in range(3):
             name, args = make()
             res = self.client.call(name, {**args, "session": self.session})
             self._last_res = res
             why = _cua_problem(res)
             if why is None:
                 return res
-            if attempt == 0 and _is_stale(res):
-                self._bind()
-                if reread:
-                    self._read()
-                continue
-            raise McpError(why)
+            kind = "wrong" if _is_wrong_target(res) else "stale" if _is_stale(res) else None
+            if kind is None:
+                raise McpError(why)
+            if kind in used:
+                raise McpError(AGENT_WINDOW_LOST if kind == "wrong" else why)
+            used.add(kind)
+            self._bind(follow=kind == "wrong")
+            if reread:
+                self._read()
+        raise McpError(AGENT_WINDOW_LOST if "wrong" in used else why)
 
     # -- reading
     def _state(self, extra=None):
@@ -2695,6 +2732,7 @@ class Adapter:
         if url:
             self._unconfirmed = False
         self._set_page(url)
+        self.title = (sd.get("page") or {}).get("title") or self.title
         shot = sd.get("screenshot") or {}
         w, h = shot.get("viewport_css_width"), shot.get("viewport_css_height")
         self._viewport = (round(w / 2), round(h / 2)) if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0 else AGENT_VIEWPORT

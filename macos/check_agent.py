@@ -901,7 +901,12 @@ def gate_table():
         ("hotkey empty", "hotkey", {"keys": []}, None, _ac(), "risky"),
         ("hotkey missing", "hotkey", {}, None, _ac(), "risky"),
         ("hotkey dict", "hotkey", {"keys": {"a": 1}}, None, _ac(), "risky"),
-        ("hotkey in a browser ctx", "hotkey", {"keys": ["cmd", "b"]}, None, _gc(), "risky"),
+        ("hotkey in a browser ctx", "hotkey", {"keys": ["cmd", "b"]}, None, _gc(), "blocked"),
+        ("hotkey cmd+l on the browser surface", "hotkey", {"keys": ["cmd", "l"]}, None, _gc(), "blocked"),
+        ("hotkey return on the browser surface", "hotkey", {"keys": ["return"]}, None, _gc(), "blocked"),
+        ("hotkey nonsense on the browser surface", "hotkey", {"keys": 5}, None, _gc(), "blocked"),
+        ("menu on the browser surface", "menu", {"app": "Chrome", "path": ["File", "New Tab"]}, None, _gc(), "blocked"),
+        ("menu empty on the browser surface", "menu", {}, None, _gc(), "blocked"),
         # typing text in apps
         ("type_app newline", "type_app", {"ref": "e1", "text": "hi\n"}, _gf("textfield", "Title"), _ac(), "risky"),
         ("type_app crlf", "type_app", {"ref": "e1", "text": "hi\r\nthere"}, _gf("textfield", "Title"), _ac(), "risky"),
@@ -1006,6 +1011,9 @@ def approval_titles():
     assert T("dialog", None, _gc()) == "Answer a page dialog on example.com"
     assert T("menu", None, _ac("ask", "Mail"), {"path": ["File", "Delete Note"]}) == "Use menu **File \u203a Delete Note** in Mail"
     assert T("hotkey", None, _ac("ask", "Mail"), {"keys": ["cmd", "return"]}) == "Press **\u2318+Return** in Mail"
+    for t in (T("hotkey", None, _gc(), {"keys": ["cmd", "l"]}), T("menu", None, _gc(), {"path": ["File", "New Tab"]})):
+        assert "in the app" not in t, t                       # a browser-surface card never says "in the app" (it is blocked before one is shown)
+    assert T("hotkey", None, _gc(), {"keys": ["cmd", "l"]}) == "Press **\u2318+L**"
     long = T("click", _gf("button", "x" * 300), _gc())
     assert long.startswith("Click **xxx") and "\u2026** on example.com" in long and len(long) < 120
     assert "\n" not in T("click", _gf("button", "a\nb"), _gc())
@@ -1443,6 +1451,153 @@ def stale_retry_never_hits_another_control():
     out = a.execute("type", {"ref": "e1", "text": "x", "submit": True})
     assert out == "Error: the page changed; read_page to refresh" and len(c.of("browser_type")) == 2, (out, c.of("browser_type"))
     # an unchanged control is retried as before (stale_binding_rebinds covers the success path)
+
+
+WRONG_TEXT = ("refused (browser_wrong_target_refused): CDP window no longer has an exact geometry or singleton-cardinality "
+              "correlation with the native window \u2014 refusing to mutate it")
+WRONG = _tr({"status": "refused", "refusal": {"code": "browser_wrong_target_refused", "message": WRONG_TEXT}}, text=WRONG_TEXT)
+WRONG_NAV = _tr(None, text=WRONG_TEXT.split(": ", 1)[1], ok=False)                 # navigate: the same text without the refused (...) prefix
+
+
+@check
+def wrong_target_rebinds_and_retries_navigation():
+    c, a = web_adapter()
+    a.execute("open_url", {"url": "https://github.com/login"})
+    a.observe()
+    for res in (WRONG, WRONG_NAV):
+        c.script["browser_navigate"] = [res, _tr({"status": "ok", "url": "https://github.com/two"})]
+        n_win, n_nav, n_state = len(c.of("list_windows")), len(c.of("browser_navigate")), len(c.of("get_browser_state"))
+        out = a.execute("open_url", {"url": "https://github.com/two"})
+        assert not out.startswith("Error"), out
+        assert len(c.of("list_windows")) == n_win + 1 and len(c.of("browser_navigate")) == n_nav + 2, c.names()
+        assert [x["url"] for x in c.of("browser_navigate")[-2:]] == ["https://github.com/two"] * 2
+        assert any("window_id" in x for x in c.of("get_browser_state")[n_state:])           # re-bound through get_browser_state with a window
+        assert c.names().count("browser_prepare") == 1                                       # a re-bind, not a new browser
+    # back() retries the same way
+    a.observe()
+    c.script["browser_navigate"] = [WRONG, _tr({"status": "ok", "url": "https://github.com/login"})]
+    n_nav = len(c.of("browser_navigate"))
+    out = a.execute("back", {})
+    assert out.startswith("Went back to https://github.com/login") and len(c.of("browser_navigate")) == n_nav + 2, (out, c.names())
+
+
+@check
+def wrong_target_click_retries_only_same_control():
+    sem = _fx("browser_semantic_login")
+    gone = dict(sem, refs=sem["refs"][1:])                                       # after the re-bind the first control is missing: eN shifts
+    flip = {"on": False}
+
+    def state(args):
+        if "pid" in args:
+            return _tr(_fx("browser_bind"))
+        if args.get("snapshot_format") == "semantic_v2":
+            return _tr(gone if flip["on"] else sem, image=b"PNG" if args.get("include_screenshot") else None)
+        return _tr(_fx("browser_domrefs_login"))
+
+    # the same control: rebind, DOM read, semantic read, one more click
+    c, a = web_adapter(get_browser_state=state)
+    a.execute("open_url", {"url": "https://github.com/login"})
+    a.observe()
+    c.script["browser_click"] = [WRONG, _tr(_fx("browser_click_dom_result"))]
+    n_win, n_state = len(c.of("list_windows")), len(c.of("get_browser_state"))
+    out = a.execute("click", {"ref": "e3"})
+    assert not out.startswith("Error") and len(c.of("browser_click")) == 2 and len(c.of("list_windows")) == n_win + 1, (out, c.names())
+    reads = [x.get("snapshot_format") for x in c.of("get_browser_state")[n_state:] if x.get("snapshot_format")]
+    assert reads == ["dom_refs_v1", "semantic_v2"], reads                        # DOM first, the semantic read (with its picture) last
+    # another control after the re-bind: never clicked
+    def refuse_then_shift(args):
+        flip["on"] = True
+        return WRONG
+    c.script["browser_click"] = refuse_then_shift
+    flip["on"] = False
+    a.observe()
+    v = a.view
+    n_click = len(c.of("browser_click"))
+    out = a.execute("click", {"ref": "e1"})
+    assert out == "Error: the page changed; read_page to refresh", out
+    assert len(c.of("browser_click")) == n_click + 1, c.of("browser_click")      # the retry never reached CuaDriver
+    assert a.view["refs"]["e1"]["facts"]["name"] != v["refs"]["e1"]["facts"]["name"]
+    # typing is held to the same rule
+    flip["on"] = False
+    a.observe()
+    c.script["browser_type"] = [WRONG, _tr(_fx("browser_type_result"))]
+    n_type = len(c.of("browser_type"))
+    out = a.execute("type", {"ref": "e1", "text": "x"})
+    assert not out.startswith("Error") and len(c.of("browser_type")) == n_type + 2, (out, c.of("browser_type"))
+
+
+@check
+def wrong_target_twice_errors_clearly():
+    want = "Error: the browser window changed in a way the agent can't follow. Use Take over to close any popups, then Resume."
+    c, a = web_adapter()
+    a.execute("open_url", {"url": "https://github.com/login"})
+    a.observe()
+    c.script["browser_click"] = [WRONG]
+    n = len(c.of("browser_click"))
+    assert a.execute("click", {"ref": "e3"}) == want
+    assert len(c.of("browser_click")) == n + 2                                   # one retry, no more
+    c.script["browser_navigate"] = [WRONG_NAV]
+    n = len(c.of("browser_navigate"))
+    assert a.execute("open_url", {"url": "https://github.com/two"}) == want
+    assert len(c.of("browser_navigate")) == n + 2
+    c.script["browser_type"] = [WRONG]
+    a.observe()
+    assert a.execute("type", {"ref": "e1", "text": "x"}) == want
+    # a refusal that is not about the binding keeps its own text
+    c.script["browser_click"] = [_tr({"status": "refused", "refusal": {"code": "browser_other", "message": "nope"}}, text="nope")]
+    a.observe()
+    assert a.execute("click", {"ref": "e3"}).startswith("Error: nope")
+
+
+@check
+def new_window_after_click_binds_the_new_one():
+    def build(quality, tabs):
+        """windows 7 (the old one) and 8, 9 appear after the click; quality/tabs: window_id -> (quality, mutation_allowed) / tab url."""
+        st = {"after": False}
+
+        def listing(args):
+            return _wins(*([(47601, 7, True, 800)] + ([(47601, 8, True, 800), (47601, 9, True, 700)] if st["after"] else [])))
+
+        def state(args):
+            if "pid" in args:
+                w = args["window_id"]
+                q, m = quality.get(w, ("exact", True)) if st["after"] else ("exact", True)
+                return _tr({**BIND, "binding_quality": q, "mutation_allowed": m, "target_id": f"bt-{w}",
+                            "tabs": [{"active": True, "tab_id": f"tab-{w}", "title": "t", "url": tabs.get(w, "about:blank")}]})
+            if args.get("snapshot_format") == "semantic_v2":
+                return _tr(_fx("browser_semantic_login"), image=b"PNG" if args.get("include_screenshot") else None)
+            return _tr(_fx("browser_domrefs_login"))
+
+        def click(args):
+            if not st["after"]:
+                st["after"] = True
+                return WRONG
+            return _tr(_fx("browser_click_dom_result"))
+
+        c, a = web_adapter(list_windows=listing, get_browser_state=state, browser_click=click)
+        a.execute("open_url", {"url": "https://github.com/login"})
+        assert a.window_id == 7
+        a.observe()
+        out = a.execute("click", {"ref": "e3"})
+        assert not out.startswith("Error"), out
+        assert c.of("browser_click")[-1]["target_id"] == f"bt-{a.window_id}" and len(c.of("browser_click")) == 2
+        return a.window_id
+
+    login = "https://github.com/login"
+    # the old window stops binding exactly: the one that does is used
+    assert build({7: ("heuristic", False), 8: ("exact", True), 9: ("heuristic", False)}, {7: login, 8: "https://github.com/new"}) == 8
+    # several bind exactly: the one showing the page last read wins, even if it is not the newest
+    assert build({}, {7: "https://elsewhere.test/", 8: "https://github.com/new", 9: login}) == 9
+    # none shows it: the most recently created (highest window_id)
+    assert build({}, {7: "https://a.test/", 8: "https://b.test/", 9: "https://c.test/"}) == 9
+    # no big window binds exactly: the inexact-bind error, nothing mutated
+    c, a = web_adapter()
+    a.execute("open_url", {"url": login})
+    a.observe()
+    c.script["browser_click"] = [WRONG]
+    c.script["get_browser_state"] = _quality({7: ("heuristic", False)})
+    out = a.execute("click", {"ref": "e3"})
+    assert out == "Error: " + app.AGENT_INEXACT_BIND and len(c.of("browser_click")) == 1, out
 
 
 @check
