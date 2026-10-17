@@ -1895,12 +1895,12 @@ def _assemble(header, items, budget):
             eid = None
             if it["kind"] == "i":
                 eid = f"e{len(refs) + 1}"
-                refs[eid] = {"ref": it["ref"], "facts": it["facts"]}
+                refs[eid] = {"ref": it["ref"], "facts": it["facts"], "value": it.get("value")}
             lines.append(it["line"](eid))
     if len(chosen) < len(items):
         lines.append(f"(+{len(items) - len(chosen)} more not shown)")
     body = sum(len(it["line"]("e1")) for it in items)
-    return {"text": "\n".join(lines), "refs": refs, "interactive": len(refs),
+    return {"text": "\n".join(lines), "refs": refs, "interactive": len(refs), "head": len(header),
             "sparse": total < 5 or body < 200}                             # judged on the whole snapshot, not on what fit
 
 
@@ -1967,9 +1967,11 @@ def browser_view(state, dom=None, budget=6000):
         st = r.get("states") or {}
         flags = [f for f in _VIEW_FLAGS if _on(st.get(f))] + (["checked" if _on(st["checked"]) else "unchecked"] if "checked" in st else [])
         extra = (f" type={itype}" if itype and itype not in ("text", "submit", "button") else "") + (f" [{' '.join(flags)}]" if flags else "")
+        val = "" if r.get("value") in (None, "") else None           # None: it holds something that is withheld from the view
         if r.get("value") not in (None, "") and itype != "password" and not unknown and not _sensitive_ac(ac):
             extra += f' = "{_clip(r["value"], 80)}"'
-        items.append({"kind": "i", "vis": r.get("visibility") == "in_viewport", "ref": r["ref"], "line": _control_line(role, name, extra),
+            val = str(r["value"])
+        items.append({"kind": "i", "vis": r.get("visibility") == "in_viewport", "ref": r["ref"], "line": _control_line(role, name, extra), "value": val,
                       "facts": _facts(role, r.get("name"), itype, ac, in_form, submit, sensitive_unknown=unknown)})
     page = state.get("page") or {}
     title = page.get("title")
@@ -2578,6 +2580,7 @@ class Adapter:
         self._rebind_due = False
         self._history: list[str] = []                        # pages before the current one, for back()
         self._unconfirmed = False                            # self.url is the address we navigated to, not yet seen in a snapshot (a redirect is not a new page)
+        self._typed = set()                                  # refs typed into since the last page read
         self._viewport = AGENT_VIEWPORT
         self._actions: dict = {}                             # CuaDriver ref -> its actions, from the last semantic read
         self._last_res = None
@@ -2708,14 +2711,15 @@ class Adapter:
         if url:
             self.url, self.domain = url, _host(url) or None
 
-    def _read(self, query=None):
+    def _read(self):
         """DOM first, then the semantic snapshot (with its picture) last: every read supersedes the refs of the one before,
         and the refs the model is shown come from the semantic one, so it has to be the newest."""
         self._image_for = None
+        self._typed = set()                                  # fields typed into since this read: their value in the view is out of date
         dom = self._state({"snapshot_format": "dom_refs_v1"})        # input types, autocomplete, links; the gate depends on it
         if _cua_problem(dom) or not dom.get("data"):
             raise McpError("could not read the page's form fields: " + (_cua_problem(dom) or "no data"))
-        sem = self._state({"snapshot_format": "semantic_v2", "include_screenshot": True, **({"query": query} if query else {})})
+        sem = self._state({"snapshot_format": "semantic_v2", "include_screenshot": True})
         if _cua_problem(sem) or not sem.get("data"):
             raise McpError(_cua_problem(sem) or "the page could not be read")
         sd, dd = sem["data"], dom["data"]
@@ -2807,7 +2811,17 @@ class Adapter:
     def _read_page(self, args):
         self._ids()
         self._to_browser()
-        return self._read(str(args.get("query") or "").strip() or None)["text"]
+        view = self._read()                                  # always the full view: the eN numbers are the ones later clicks resolve against
+        query = str(args.get("query") or "").strip().lower()
+        lines = view["text"].split("\n")
+        if not query:
+            return view["text"]
+        head, body = lines[:view.get("head", 2)], lines[view.get("head", 2):]
+        hits = [ln for ln in body if query in ln.lower() and not ln.startswith("(+")]
+        if not hits:
+            return f'Nothing on the page matches "{_clip(query, 60)}". The start of the page:\n' + "\n".join(lines[:40])
+        more = [ln for ln in body if ln.startswith("(+")]
+        return "\n".join(head + hits + more)
 
     @staticmethod
     def _sig(hit):
@@ -2834,7 +2848,21 @@ class Adapter:
         if args.get("text") is None:
             raise McpError("text is needed")
         text, sig, submit = str(args["text"]), self._sig(hit), args.get("submit") is True
-        self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref(args, sig), "text": text, "replace": True}))
+        try:
+            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref(args, sig), "text": text, "replace": True}))
+        except McpError as e:
+            if "replace=true could not select" not in str(e).lower():
+                raise
+            # Chrome has no text selection on type=email, number, date...: replace can't clear the field. An empty one needs no clearing.
+            cur = self._ref(args)[1]
+            val = cur.get("value")
+            if short in self._typed:
+                val = None                                   # this view predates what was typed since
+            if val != "":
+                held = f'it holds "{_clip(val, 40)}"' if val else "it holds text that is not shown"
+                raise McpError(f"this field's text can't be replaced automatically ({held}). Use Take over to clear it, or ask_user.")
+            self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref(args, sig), "text": text}))
+        self._typed.add(short)
         if submit:                                           # Enter as a key press; an inserted "\n" would not submit
             self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref(args, sig), "text": "\n", "mode": "keystrokes"}))
         return f"Typed into {_clip(hit['facts']['name'], 60) or short}" + (" and pressed Enter" if submit else "") + "; read the page to see the result."

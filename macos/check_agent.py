@@ -2,6 +2,7 @@
 
     uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_agent.py [check_name ...]
 """
+import copy
 import json
 import os
 import sys
@@ -1231,6 +1232,95 @@ def type_and_submit():
     assert t[2] == {"target_id": BIND["target_id"], "tab_id": BIND["tabs"][0]["tab_id"], "ref": v["refs"][pw]["ref"], "text": "\n", "mode": "keystrokes", "session": "ls-abc123"}, t[2]
 
 
+def _email_client(value=None, pw=None, **over):
+    """A login page whose first field is read with `value`; typing with replace is refused the way Chrome does for type=email."""
+    sem, dom = copy.deepcopy(_fx("browser_semantic_login")), _fx("browser_domrefs_login")
+    for r in dom["refs"]:                                    # no password input in the DOM: the page is not one whose unmatched fields are withheld
+        r["label"] = r["label"] and r["label"].replace("type=password", "type=text")
+    next(r for r in sem["refs"] if r["name"] == "Username or email address")["value"] = value
+    next(r for r in sem["refs"] if r["name"] == "Password" and r["role"] == "textbox")["value"] = pw
+    refusal = ("refused (browser_action_unavailable): replace=true could not select the ref's content: the ref is not a text input, "
+               "textarea, or contenteditable element, so its content cannot be replaced")
+    refused = _tr({"status": "refused", "refusal": {"code": "browser_action_unavailable", "message": refusal}}, text=refusal)
+
+    def state(args):
+        if "pid" in args:
+            return _tr(_fx("browser_bind"))
+        return _tr(sem, image=b"PNG") if args.get("snapshot_format") == "semantic_v2" else _tr(dom)
+
+    return web_adapter(get_browser_state=state, browser_type=lambda a: refused if a.get("replace") else _tr(_fx("browser_type_result")), **over)
+
+
+@check
+def type_into_email_field_falls_back_without_replace():
+    c, a = _email_client()
+    a.execute("open_url", {"url": "https://github.com/login"})
+    v = a.observe()
+    e = next(k for k, r in v["refs"].items() if r["facts"]["name"] == "Username or email address")
+    assert v["refs"][e]["value"] == ""
+    out = a.execute("type", {"ref": e, "text": "me@example.com", "submit": True})
+    assert not out.startswith("Error") and "Enter" in out, out
+    t = c.of("browser_type")
+    ref = v["refs"][e]["ref"]
+    ids = {"target_id": BIND["target_id"], "tab_id": BIND["tabs"][0]["tab_id"], "session": "ls-abc123"}
+    assert t[-3:] == [{**ids, "ref": ref, "text": "me@example.com", "replace": True}, {**ids, "ref": ref, "text": "me@example.com"},
+                      {**ids, "ref": ref, "text": "\n", "mode": "keystrokes"}], t
+    # a field typed into since the last read is not known to be empty any more
+    c2, a2 = _email_client()
+    a2.execute("open_url", {"url": "https://github.com/login"})
+    a2.observe()
+    assert not a2.execute("type", {"ref": e, "text": "a@b.c"}).startswith("Error")
+    out = a2.execute("type", {"ref": e, "text": "d@e.f"})
+    assert out.startswith("Error: this field's text can't be replaced") and len(c2.of("browser_type")) == 3, (out, c2.of("browser_type"))
+
+
+@check
+def type_into_nonempty_unreplaceable_field_errors_clearly():
+    c, a = _email_client("old.address@example.com.and.some.more.text.to.clip")
+    a.execute("open_url", {"url": "https://github.com/login"})
+    v = a.observe()
+    e = next(k for k, r in v["refs"].items() if r["facts"]["name"] == "Username or email address")
+    out = a.execute("type", {"ref": e, "text": "me@example.com", "submit": True})
+    assert out.startswith("Error: this field's text can't be replaced automatically (it holds \"old.address@example.com.and.some.more") \
+        and out.endswith("). Use Take over to clear it, or ask_user.") and "to.clip" not in out, out
+    assert len(c.of("browser_type")) == 1 and c.of("browser_type")[0]["replace"] is True, c.of("browser_type")      # no retry, no Enter
+    # the password field's value is withheld: unknown, so no blind retry either
+    c2, a2 = _email_client(pw="hunter2")
+    a2.execute("open_url", {"url": "https://github.com/login"})
+    v2 = a2.observe()
+    pw = next(k for k, r in v2["refs"].items() if r["facts"]["name"] == "Password")
+    assert v2["refs"][pw]["value"] is None
+    out = a2.execute("type", {"ref": pw, "text": "x"})
+    assert out.startswith("Error: this field's text can't be replaced") and len(c2.of("browser_type")) == 1, (out, c2.of("browser_type"))
+    # any other refusal is not retried
+    c3, a3 = _email_client()
+    a3.execute("open_url", {"url": "https://github.com/login"})
+    a3.observe()
+    c3.script["browser_type"] = _tr(_fx("errors")["click_trust_unavailable"]["structuredContent"], text=_fx("errors")["click_trust_unavailable"]["content"][0]["text"])
+    assert a3.execute("type", {"ref": e, "text": "x"}).startswith("Error:") and len(c3.of("browser_type")) == 1
+
+
+@check
+def read_page_query_keeps_numbering():
+    c, a = web_adapter()
+    a.execute("open_url", {"url": "https://github.com/login"})
+    full = a.execute("read_page", {})
+    full_view = a.view
+    out = a.execute("read_page", {"query": "PASSWORD"})
+    lines = out.split("\n")
+    assert lines[:2] == full.split("\n")[:2] and a.view is not full_view, out                 # the page header is kept
+    body = lines[2:]
+    assert body and all("password" in ln.lower() for ln in body) and all(ln in full.split("\n") for ln in body), out
+    e = next(re.match(r"\[(e\d+)\]", ln).group(1) for ln in body if "textbox" in ln)
+    assert e != "e1" and "Password" in out
+    assert "semantic_v2" in [x.get("snapshot_format") for x in c.of("get_browser_state")] and all("query" not in x for x in c.of("get_browser_state"))
+    assert [x for x in a.view["text"].split("\n")] == full.split("\n")                       # the adapter's view is still the full one
+    a.execute("click", {"ref": e})
+    assert c.of("browser_click")[-1]["ref"] == a.view["refs"][e]["ref"] and a.view["refs"][e]["facts"]["name"] == "Password", c.of("browser_click")[-1]
+    out = a.execute("read_page", {"query": "no such words anywhere"})
+    assert out.startswith("Nothing on the page matches") and out.split("\n")[1:3] == full.split("\n")[:2] and len(out.split("\n")) <= 41, out
+
+
 @check
 def read_page_retries_route_unavailable():
     refusal = _tr({"status": "refused", "refusal": {"code": "browser_route_unavailable", "message": "no route"}})
@@ -1259,7 +1349,7 @@ def read_page_retries_route_unavailable():
     assert out.startswith("Error:") and sum(1 for x in calls if x.get("snapshot_format") == "semantic_v2") == 2, (out, calls)
     seq[:] = [_tr(sem)]
     a.execute("read_page", {"query": "password"})
-    assert [x for x in calls if x.get("snapshot_format") == "semantic_v2"][-1]["query"] == "password"
+    assert "query" not in [x for x in calls if x.get("snapshot_format") == "semantic_v2"][-1]          # filtered here, not by CuaDriver
 
 
 @check
