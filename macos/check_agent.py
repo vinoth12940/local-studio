@@ -2382,7 +2382,9 @@ def system_prompt_marks_page_text_untrusted():
                  "Never type passwords or payment details; use ask_user instead.",
                  "To search the web, open https://duckduckgo.com/html/?q=your+words.",     # Google serves the automated browser a captcha
                  "Long pages come in parts: use scroll to read the next part, or read_page with a few key words.",
-                 "If a cookie or consent dialog blocks the page, choose the option that rejects or refuses non-essential cookies."):
+                 "If a cookie or consent dialog blocks the page, choose the option that rejects or refuses non-essential cookies.",
+                 "Several controls with the same name can't be told apart by position; open the item's own page or pick a uniquely named control instead of guessing.",
+                 "Report what you actually saw; if the result doesn't match the task, say so plainly."):
         assert line in s, line
     assert "<<<VIEW" in s and "VIEW>>>" in s
     assert "click(\"e12\")" in s and "done(" in s
