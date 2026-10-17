@@ -459,7 +459,7 @@ def refs_are_short_and_stable():
 
 @check
 def facts_from_fixture():
-    keys = {"role", "name", "input_type", "autocomplete", "in_form", "is_submit", "href", "box", "sensitive_unknown"}
+    keys = {"role", "name", "input_type", "autocomplete", "in_form", "is_submit", "href", "download", "box", "sensitive_unknown"}
     login, dom = _fx("browser_semantic_login"), _fx("browser_domrefs_login")
     v = app.browser_view(login, dom)
     by = {r["facts"]["name"]: r["facts"] for r in v["refs"].values()}
@@ -3248,7 +3248,8 @@ def profile_crash_flag_repaired_before_prepare():
         assert not a.execute("open_url", {"url": "https://example.com"}).startswith("Error")
         assert seen == ["Normal"], seen                                      # fixed before Chrome was launched
         d = json.loads(prefs.read_text())
-        assert d == {"profile": {"exit_type": "Normal", "exited_cleanly": True, "name": "Me"}, "other": [1, 2]}, d
+        assert d == {"profile": {"exit_type": "Normal", "exited_cleanly": True, "name": "Me"}, "other": [1, 2],
+                     "download": {"prompt_for_download": True, "default_directory": str(app.AGENT_DOWNLOADS)}}, d
         assert [p.name for p in prefs.parent.iterdir()] == ["Preferences"]      # no temp file left behind
         # a missing or broken file is skipped silently
         prefs.write_text("{not json")
@@ -3267,6 +3268,86 @@ def profile_crash_flag_repaired_before_prepare():
         finally:
             app.subprocess.run = orig
         assert json.loads(prefs.read_text())["profile"]["exit_type"] == "Crashed"
+    finally:
+        app.AGENT_PROFILE = real
+
+
+@check
+def download_links_ask():
+    """A click on a link that downloads (a `download` attribute, or an href to a file type a browser saves) needs approval.
+    Links are joined to their DOM anchors by name, else by order when both sides have equally many (best effort)."""
+    G = app.gate
+    a = app._dom_attrs("aria-label=Get it download href=/files/r.zip")
+    assert a.get("href") == "/files/r.zip" and "download" in a, a
+    assert app._dom_attrs("href=/x download=report.pdf").get("download") == "report.pdf"
+    assert "download" not in app._dom_attrs("href=/downloads/page id=download-area")
+    rows = [
+        ("download attribute", _gf("link", "Report", download=True), "risky"),
+        ("zip", _gf("link", "Next", href="/files/report.ZIP"), "risky"),
+        ("dmg with query", _gf("link", "Get the app", href="https://x.example/App.dmg?v=2"), "risky"),
+        ("pdf", _gf("link", "Paper", href="https://arxiv.example/a/1.pdf"), "risky"),
+        ("docx", _gf("link", "Form", href="/f/form.docx#top"), "risky"),
+        ("csv", _gf("link", "Data", href="data.csv"), "risky"),
+        ("sh", _gf("link", "Install", href="https://get.example/install.sh"), "risky"),
+        ("html page", _gf("link", "About", href="/about.html"), "safe"),
+        ("folder", _gf("link", "Docs", href="/docs/"), "safe"),
+        ("no extension", _gf("link", "Blog", href="https://example.com/blog"), "safe"),
+        ("dotted host only", _gf("link", "Home", href="https://files.zip/"), "safe"),
+        ("unjoined link", _gf("link", "Pricing"), "safe"),
+    ]
+    bad = []
+    for label, facts, want in rows:
+        got, reason = G("click", {"ref": "e1"}, facts, _gc())
+        if got != want or (want == "risky" and reason != "this link downloads a file"):
+            bad.append(f"{label}: wanted {want}, got {got} ({reason!r})")
+    assert not bad, "\n".join(bad)
+    # the join: by name (aria-label, title, id), else by order when the counts match
+    sem = {"page": {"url": "https://example.com/", "title": "Files"}, "outline": "- link \"Annual report\"\n- link \"Blog\"",
+           "refs": [{"ref": "p1:0", "role": "link", "name": "Annual report", "actions": ["click"], "visibility": "in_viewport"},
+                    {"ref": "p1:1", "role": "link", "name": "Blog", "actions": ["click"], "visibility": "in_viewport"}]}
+    dom = {"refs": [{"node": "a", "label": "href=/blog", "ref": "d:0"},
+                    {"node": "a", "label": "title=Annual report download href=/r/2025.pdf", "ref": "d:1"}]}
+    by = {r["facts"]["name"]: r["facts"] for r in app.browser_view(sem, dom)["refs"].values()}
+    assert by["Annual report"]["download"] is True and by["Annual report"]["href"] == "/r/2025.pdf", by
+    assert by["Blog"]["href"] == "/blog" and by["Blog"]["download"] is False, by
+    assert G("click", {"ref": "e1"}, by["Annual report"], _gc())[0] == "risky" and G("click", {"ref": "e2"}, by["Blog"], _gc())[0] == "safe"
+    dom2 = {"refs": [{"node": "a", "label": "href=/files/a.zip", "ref": "d:0"}, {"node": "a", "label": "href=/about", "ref": "d:1"}]}
+    by = {r["facts"]["name"]: r["facts"] for r in app.browser_view(sem, dom2)["refs"].values()}
+    assert by["Annual report"]["href"] == "/files/a.zip" and by["Blog"]["href"] == "/about", by
+    # a link's DOM type attribute is never an input type
+    dom3 = {"refs": [{"node": "a", "label": "aria-label=Blog type=application/pdf href=/b", "ref": "d:0"}]}
+    by = {r["facts"]["name"]: r["facts"] for r in app.browser_view(sem, dom3)["refs"].values()}
+    assert by["Blog"]["input_type"] is None and by["Blog"]["is_submit"] is False and by["Blog"]["href"] == "/b", by
+
+
+@check
+def profile_downloads_always_ask():
+    """Before Chrome starts (and only while no Chrome uses the profile), the agent's profile is set to ask where to save every
+    download, in a folder of its own, so nothing lands in ~/Downloads silently."""
+    real = app.AGENT_PROFILE
+    prof = TMP / "DlProfile" / "local-studio"
+    (prof / "Default").mkdir(parents=True)
+    prefs = prof / "Default" / "Preferences"
+    prefs.write_text(json.dumps({"profile": {"exit_type": "Normal", "exited_cleanly": True}, "download": {"prompt_for_download": False, "x": 1}}))
+    app.AGENT_PROFILE = prof
+    try:
+        app._repair_agent_profile()
+        d = json.loads(prefs.read_text())
+        assert d["download"] == {"prompt_for_download": True, "default_directory": str(app.AGENT_DOWNLOADS), "x": 1}, d
+        assert app.AGENT_DOWNLOADS == app.STATE / "data" / "agent" / "downloads" and app.AGENT_DOWNLOADS.is_dir()
+        assert d["profile"] == {"exit_type": "Normal", "exited_cleanly": True}
+        before = prefs.stat().st_mtime_ns
+        app._repair_agent_profile()                              # already right: not rewritten
+        assert prefs.stat().st_mtime_ns == before
+        # a Chrome that is using the profile is left alone
+        prefs.write_text(json.dumps({"download": {"prompt_for_download": False}}))
+        orig = app.subprocess.run
+        app.subprocess.run = lambda *x, **k: type("R", (), {"stdout": b"123\n", "returncode": 0})()
+        try:
+            app._repair_agent_profile()
+        finally:
+            app.subprocess.run = orig
+        assert json.loads(prefs.read_text())["download"]["prompt_for_download"] is False
     finally:
         app.AGENT_PROFILE = real
 

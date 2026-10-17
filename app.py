@@ -70,6 +70,7 @@ SEARCH_DEFAULTS = {"enabled": False, "folders": [], "removed": [], "paused": Fal
 AGENT_DIR = (DATA / "agent").absolute()                      # LaunchServices starts CuaDriver elsewhere: never relative
 AGENT_RUNS = AGENT_DIR / "runs"
 AGENT_SOCK = AGENT_DIR / "cua.sock"                          # absolute; a unix socket path must stay under 104 bytes
+AGENT_DOWNLOADS = AGENT_DIR / "downloads"                    # the agent's browser saves here, and only after Chrome's save dialog
 CUA_DRIVER = shutil.which("cua-driver") or str(BIN / "cua-driver")
 CUA_MIN = (0, 28, 2)
 AGENT_DEFAULTS = {"enabled": False, "max_steps": 40, "max_minutes": 15, "tiers": {}}   # tiers: app name -> read|ask|allowed
@@ -1843,11 +1844,16 @@ def _dom_attrs(label):
     label = label or ""
     v = re.search(r"(?:^|\s)value=", label)
     head = label[:v.start()] if v else label
+    bare = re.search(r"(?:^|\s)download(?=\s+\w[\w-]*=|\s*$)", head, re.I)     # <a download>: a boolean attribute has no `=`
+    if bare:
+        head = head[:bare.start()] + head[bare.end():]
     out, ms = {}, list(_DOM_KEY.finditer(head))
     for i, m in enumerate(ms):
         out.setdefault(m.group(1).lower(), head[m.end():ms[i + 1].start() if i + 1 < len(ms) else len(head)].strip())
     if v:
         out["value"] = label[v.end():].strip()
+    if bare:
+        out.setdefault("download", "")
     if re.search(r"(?:^|\s)type=password\b", label, re.I):
         out["type"] = "password"
     sens = [m.strip() for m in re.findall(r"(?:^|\s)autocomplete=(.*?)(?=\s\w[\w-]*=|$)", label, re.I | re.S) if _sensitive_ac(m)]
@@ -1866,7 +1872,7 @@ def _dom_class(node, attrs):
 def _sem_class(role):
     if role in ("textbox", "searchbox", "spinbutton", "combobox") or role.startswith("input"):
         return "text"
-    return role if role in ("checkbox", "radio", "button") else None
+    return role if role in ("checkbox", "radio", "button", "link") else None
 
 
 def _dom_join(sem, dom):
@@ -1879,15 +1885,17 @@ def _dom_join(sem, dom):
             a = _dom_attrs(r.get("label"))
             if a.get("type") != "hidden":
                 cands.append((_dom_class(r["node"], a), a))
+        elif r.get("node") == "a":                            # anchors, for a link's href and download (best effort: they carry no text)
+            cands.append(("link", _dom_attrs(r.get("label"))))
     used, got = set(), {}
     for i, s in enumerate(sem):
         c, nm = _sem_class(s["role"]), (s.get("name") or "").strip().lower()
         if c and nm:
             for j, (k, a) in enumerate(cands):
-                if j not in used and k == c and nm in (a.get(f, "").strip().lower() for f in ("aria-label", "name", "id", "value", "placeholder")):
+                if j not in used and k == c and nm in (a.get(f, "").strip().lower() for f in ("aria-label", "name", "id", "value", "placeholder", "title")):
                     used.add(j); got[i] = a
                     break
-    for c in ("text", "button", "checkbox", "radio"):
+    for c in ("text", "button", "checkbox", "radio", "link"):
         left_s = [i for i, s in enumerate(sem) if i not in got and _sem_class(s["role"]) == c]
         left_d = [j for j, (k, _) in enumerate(cands) if j not in used and k == c]
         if left_s and len(left_s) == len(left_d):
@@ -1917,9 +1925,9 @@ def _guess_autocomplete(name):
     return None if not m else "cc-csc" if re.search(r"cvv|cvc|security", m.group(0), re.I) else "cc-exp" if m.group(0).lower().startswith("expir") else "cc-number"
 
 
-def _facts(role, name, input_type=None, autocomplete=None, in_form=False, is_submit=False, href=None, box=None, sensitive_unknown=False):
+def _facts(role, name, input_type=None, autocomplete=None, in_form=False, is_submit=False, href=None, box=None, sensitive_unknown=False, download=False):
     return {"role": role, "name": name, "input_type": input_type, "autocomplete": autocomplete,
-            "in_form": in_form, "is_submit": is_submit, "href": href, "box": box,
+            "in_form": in_form, "is_submit": is_submit, "href": href, "download": download, "box": box,   # href/download: a link's DOM anchor, when joined
             "sensitive_unknown": sensitive_unknown}              # editable, not matched to the DOM, on a page whose DOM holds a sensitive input
 
 
@@ -2020,14 +2028,15 @@ def browser_view(state, dom=None, budget=6000, start=0, part=1, joined=None):
         a = dom_of.get(id(r)) or {}
         role, name = r["role"], _clip(r.get("name"), 100)
         editable = _sem_class(role) == "text" or "type" in (r.get("actions") or ()) and role not in ("button", "link", "checkbox", "radio", "menuitem", "tab", "switch")
-        itype = a.get("type")
+        link = role == "link"
+        itype = None if link else a.get("type")                # <a type="application/pdf"> is no input type
         if editable and itype not in ("password", "search") and _PASSWORD_RE.search(name):      # a "show password" toggle turns type=password into text
             itype = "password"
         ac = a.get("autocomplete")
         if editable and not _sensitive_ac(ac):               # the label is the fallback unless the DOM already says it is sensitive
             ac = _guess_autocomplete(name) or ac
         unknown = bool(editable and (dom_sens or part > 1) and id(r) not in dom_of)     # a later part's field may be beyond what the DOM read held
-        submit = a.get("type") == "submit" or (role == "button" and a.get("type") is None and (in_form or bool(_SUBMIT_RE.match(name))))
+        submit = itype == "submit" or (role == "button" and itype is None and (in_form or bool(_SUBMIT_RE.match(name))))
         st = r.get("states") or {}
         flags = [f for f in _VIEW_FLAGS if _on(st.get(f))] + (["checked" if _on(st["checked"]) else "unchecked"] if "checked" in st else [])
         extra = (f" type={itype}" if itype and itype not in ("text", "submit", "button") else "") + (f" [{' '.join(flags)}]" if flags else "")
@@ -2036,7 +2045,8 @@ def browser_view(state, dom=None, budget=6000, start=0, part=1, joined=None):
             extra += f' = "{_clip(r["value"], 80)}"'
             val = str(r["value"])
         items.append({"kind": "i", "vis": part > 1 or r.get("visibility") == "in_viewport", "ref": r["ref"], "line": _control_line(role, name, extra), "value": val,
-                      "facts": _facts(role, r.get("name"), itype, ac, in_form, submit, sensitive_unknown=unknown)})
+                      "facts": _facts(role, r.get("name"), itype, ac, in_form, submit, href=a.get("href") if link else None,
+                                      sensitive_unknown=unknown, download=link and "download" in a)})
     page = state.get("page") or {}
     title = page.get("title")
     if not title or title == "about:blank":                  # the root web area carries the real title
@@ -2365,6 +2375,23 @@ def _domain_in(host, domains):
     return False
 
 
+DOWNLOAD_EXT = frozenset((
+    "zip 7z rar tar gz tgz bz2 xz dmg pkg mpkg iso img app exe msi apk deb rpm bin jar sh command bat ps1 py js "
+    "pdf doc docx xls xlsx ppt pptx csv odt ods rtf epub mp3 wav flac mp4 mov avi mkv webm torrent").split())
+
+
+def _file_href(href):
+    """True when a link's href names a file a browser downloads (by the extension of its path's last segment)."""
+    if not isinstance(href, str) or not href.strip():
+        return False
+    try:
+        path = unquote(urlsplit(_norm_url(href)).path)             # relative, //host/... and scheme://host/... alike
+    except ValueError:
+        return False
+    last = "" if path.endswith("/") else path.rsplit("/", 1)[-1]
+    return "." in last and last.rsplit(".", 1)[1].lower() in DOWNLOAD_EXT
+
+
 def _sensitive_field(facts):
     return (facts.get("input_type") or "").strip().lower() == "password" or _sensitive_ac(facts.get("autocomplete"))
 
@@ -2415,11 +2442,12 @@ def gate(tool, args, facts, ctx):
            app, tier       the app being acted on and its tier ("read" | "ask" | "allowed"); a missing tier counts as "ask"
            domain          host of the current page (open_url to it is safe)
            task_domains    set of hosts the task is about
-           link_domains    set of hosts of links seen on the page (from the DOM; facts["href"] is always None for the browser)
+           link_domains    set of hosts of links seen on the page (from the DOM; facts["href"] is set only for a link joined to its anchor)
            url_from_page   not used: the model writes every URL, so where it came from cannot be known
     open_url is safe only within task_domains | link_domains | {domain} (a subdomain counts as its parent; a domain with no dot
     never counts) or for a plain search on SEARCH_DOMAINS (_search_ok); anything else is risky, any scheme but http(s) is blocked. Typing that presses Enter (submit=True, or a newline in
-    the text) is risky unless the target is a search field."""
+    the text) is risky unless the target is a search field. This Mac (loopback) is never opened and the local network always
+    asks (_local_kind). A click on a link that downloads (download attribute, or a file href) is risky."""
     args = args if isinstance(args, dict) else {}
     ctx = ctx if isinstance(ctx, dict) else {}
     facts = facts if isinstance(facts, dict) else None
@@ -2517,6 +2545,8 @@ def _gate_acting(tool, args, facts, ctx):
             return "blocked", "the link goes to a page served by this Mac"
         if local:
             return "risky", "the link goes to your local network"
+    if facts.get("download") or _file_href(href):
+        return "risky", "this link downloads a file"
     if RISKY_WORDS.search(name):
         return "risky", f"{name!r} sounds irreversible"
     return "safe", "an ordinary control"
@@ -2746,21 +2776,32 @@ def _match_app(apps, name):
     return sorted(hits, key=lambda a: not a["running"])[0], None
 
 
+def _agent_profile_in_use():
+    """True while a Chrome (or anything) runs with the agent's profile folder on its command line."""
+    return bool(subprocess.run(["pgrep", "-f", re.escape(str(AGENT_PROFILE))], capture_output=True).stdout.strip())
+
+
 def _repair_agent_profile():
-    """If no Chrome is using the agent's profile, clear the crash flag an abrupt close left in its Preferences, so the next launch
-    does not open a "Restore pages?" bubble (which makes CuaDriver bind only heuristically). Touches that one file and nothing else."""
+    """If no Chrome is using the agent's profile, fix its Preferences before the next launch: clear the crash flag an abrupt close
+    left (a "Restore pages?" bubble makes CuaDriver bind only heuristically), and make every download ask where to save, in
+    AGENT_DOWNLOADS (nothing may land in ~/Downloads unseen). Touches that one file and nothing else; a profile Chrome has not
+    created yet is left to Chrome (its first launch has Chrome's defaults)."""
     prefs = AGENT_PROFILE / "Default" / "Preferences"
     try:
-        if not prefs.is_file() or subprocess.run(["pgrep", "-f", re.escape(str(AGENT_PROFILE))], capture_output=True).stdout.strip():
+        if not prefs.is_file() or _agent_profile_in_use():
             return
         data = json.loads(prefs.read_text(encoding="utf-8"))
         prof = data.get("profile") if isinstance(data, dict) else None
-        if not isinstance(data, dict) or (prof is not None and not isinstance(prof, dict)):
+        dl = data.get("download") if isinstance(data, dict) else None
+        if not isinstance(data, dict) or (prof is not None and not isinstance(prof, dict)) or (dl is not None and not isinstance(dl, dict)):
             return
-        prof = data.setdefault("profile", {})
-        if prof.get("exit_type") == "Normal" and prof.get("exited_cleanly") is True:
+        prof, dl = data.setdefault("profile", {}), data.setdefault("download", {})
+        AGENT_DOWNLOADS.mkdir(parents=True, exist_ok=True)
+        if (prof.get("exit_type") == "Normal" and prof.get("exited_cleanly") is True
+                and dl.get("prompt_for_download") is True and dl.get("default_directory") == str(AGENT_DOWNLOADS)):
             return
         prof["exit_type"], prof["exited_cleanly"] = "Normal", True
+        dl["prompt_for_download"], dl["default_directory"] = True, str(AGENT_DOWNLOADS)
         tmp = prefs.with_name(prefs.name + ".ls-tmp")
         tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
         os.replace(tmp, prefs)

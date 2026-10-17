@@ -355,3 +355,16 @@ as background data (`<<<CHAT … CHAT>>>`, every line indented) and never acts a
 With the pill off, chat gets one short system note (when Agent is on and CuaDriver ready) so it
 tells the user about the Agent switch instead of claiming it can act. Live tests also changed:
 the agent's time limit counts only time the Mac is awake (`time.monotonic`).
+
+## Amendment: final review fixes (17 Oct 2026)
+
+- **Downloads.** CuaDriver 0.28.2 gives the agent no download hook it can use in the background, so
+  downloads are not supported in v1. Before each launch (while no Chrome uses the profile) the
+  agent's profile is set to `download.prompt_for_download = true` with
+  `download.default_directory = <STATE>/data/agent/downloads`, so every download opens Chrome's
+  save dialog (the run stalls there; the user can Take over) and nothing lands in `~/Downloads`
+  unseen. A profile Chrome has not created yet keeps Chrome's defaults until its first launch. On
+  top of that, a `click` on a link whose DOM anchor has a `download` attribute or whose href ends
+  in a file extension (`.zip`, `.dmg`, `.pkg`, `.exe`, `.pdf`, `.docx`, `.csv`, `.mp4`, `.sh`, …)
+  is risky ("this link downloads a file"). Links are joined to anchors by name or by order, so
+  this check is best effort.
