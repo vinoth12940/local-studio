@@ -700,7 +700,7 @@ def gate_table():
         ("open_url current page domain", "open_url", {"url": "https://foo.org/p"}, None, _gc(domain="foo.org", task_domains=set(), link_domains=set()), "safe"),
         ("open_url search engine", "open_url", {"url": "https://www.google.com/search?q=x"}, None, _gc(task_domains=set(), link_domains=set()), "safe"),
         ("open_url duckduckgo", "open_url", {"url": "https://duckduckgo.com/?q=x"}, None, _gc(url_from_page=True, task_domains=set()), "safe"),
-        ("open_url single-label task domain", "open_url", {"url": "http://localhost/x"}, None, _gc(task_domains={"localhost"}, domain=None), "risky"),
+        ("open_url single-label task domain", "open_url", {"url": "http://localhost/x"}, None, _gc(task_domains={"localhost"}, domain=None), "blocked"),
         ("open_url bare tld task domain", "open_url", {"url": "https://evil.com/"}, None, _gc(task_domains={"com"}, link_domains={"com"}, domain="com"), "risky"),
         ("open_url tab inside host", "open_url", {"url": "https://exam\tple.com/"}, None, _gc(), "safe"),
         ("open_url control chars around", "open_url", {"url": "\x01 https://evil.net/ \x02"}, None, _gc(), "risky"),
@@ -997,6 +997,51 @@ def gate_table():
     before = {k: set(v) if isinstance(v, set) else v for k, v in c.items()}
     G("open_url", {"url": "https://shop.example.com"}, None, c)
     assert c == before
+
+
+@check
+def gate_never_vouches_for_this_mac():
+    """Pages served by this Mac (Local Studio's chats, file previews, its UI) are never opened; other local-network hosts ask.
+    A link on the page, the task, or the current domain vouches for none of them."""
+    G = app.gate
+    every = {"127.0.0.1", "127.1", "localhost", "::1", "0.0.0.0", "192.168.1.10", "10.0.0.1", "foo.localhost", "printer.local", "169.254.1.1"}
+    loose = lambda **kw: _gc(task_domains=set(every), link_domains=set(every), **kw)          # noqa: E731
+    rows = [
+        ("127.0.0.1", "http://127.0.0.1:7860/api/chats", "blocked"),
+        ("127.1", "http://127.1:7860/", "blocked"),
+        ("0x7f.1", "http://0x7f.1/", "blocked"),
+        ("decimal ip", "http://2130706433/", "blocked"),
+        ("octal ip", "http://0177.0.0.1/", "blocked"),
+        ("percent host", "http://127.0.0.%31:7860/", "blocked"),
+        ("fullwidth digits", "http://１２７.0.0.1/", "blocked"),
+        ("[::1]", "http://[::1]:7860/", "blocked"),
+        ("mapped v6", "http://[::ffff:127.0.0.1]:7860/", "blocked"),
+        ("localhost.", "http://localhost.:7860/", "blocked"),
+        ("LOCALHOST", "https://LOCALHOST/x", "blocked"),
+        ("sub.localhost", "http://app.localhost/", "blocked"),
+        ("0.0.0.0", "http://0.0.0.0:7860/", "blocked"),
+        ("[::]", "http://[::]/", "blocked"),
+        ("search port", f"http://127.0.0.1:{app.SEARCH_PORT}/preview/1", "blocked"),
+        ("192.168.1.10", "http://192.168.1.10/", "risky"),
+        ("10.0.0.1", "http://10.0.0.1/admin", "risky"),
+        ("link-local", "http://169.254.1.1/", "risky"),
+        (".local", "http://printer.local/", "risky"),
+        ("bad numeric host", "http://1.2.3.999/", "risky"),
+    ]
+    bad = []
+    for label, url, want in rows:
+        for ctx in (loose(domain=app._host(url)), _gc(domain=None, task_domains=set(), link_domains=set())):
+            got, reason = G("open_url", {"url": url}, None, ctx)
+            if got != want or not reason:
+                bad.append(f"{label}: wanted {want}, got {got} ({reason!r})")
+    assert not bad, "\n".join(bad)
+    assert "this Mac" in G("open_url", {"url": "http://127.0.0.1:7860/"}, None, loose())[1]
+    assert not app._domain_in("127.0.0.1", {"127.0.0.1"}) and not app._domain_in("192.168.1.10", ["192.168.1.10"])
+    assert app._domain_in("docs.example.com", {"example.com"})
+    # a link that goes to this Mac is never an ordinary click; one to the local network asks
+    assert G("click", {"ref": "e1"}, _gf("link", "Next", href="http://127.0.0.1:7860/api/chats"), _gc())[0] == "blocked"
+    assert G("click", {"ref": "e1"}, _gf("link", "Router", href="http://192.168.1.1/"), _gc())[0] == "risky"
+    assert G("click", {"ref": "e1"}, _gf("link", "Next", href="https://example.com/2"), _gc())[0] == "safe"
 
 
 @check
@@ -1449,6 +1494,74 @@ def link_domains_from_dom():
     a.observe()
     assert a.link_domains == {"one.example.org"}, a.link_domains
     assert "notalink.example.net" not in a.link_domains and "b.co" not in a.link_domains
+
+
+@check
+def loopback_pages_are_never_read():
+    """A page served by this Mac (a link click or a script redirect the gate never saw) yields no view: the tab goes to
+    about:blank and the read is an error. Nothing from it reaches the model, the history or the vouched domains."""
+    LOCAL = "http://127.0.0.1:7860/api/chats"
+    where = {"dom": "https://github.com/login", "sem": "https://github.com/login"}
+
+    def state(args):
+        if "pid" in args:
+            return _tr(_fx("browser_bind"))
+        if args.get("snapshot_format") == "semantic_v2":
+            sem = copy.deepcopy(_fx("browser_semantic_login"))
+            sem["page"]["url"] = where["sem"]
+            return _tr(sem, image=PNG if args.get("include_screenshot") else None)
+        dom = dict(_fx("browser_domrefs_login"), url=where["dom"])
+        dom["refs"] = dom["refs"] + [{"node": "a", "label": "href=http://127.0.0.1:7860/", "ref": "p1:999"}]
+        return _tr(dom)
+
+    c, a = web_adapter(get_browser_state=state)
+    a.execute("open_url", {"url": "https://github.com/login"})
+    a.observe()
+    assert a.domain == "github.com" and "127.0.0.1" not in a.link_domains, a.link_domains
+    # the page moved itself to this Mac: the DOM read says so before anything else is read
+    where.update(dom=LOCAL, sem=LOCAL)
+    sems = len([x for x in c.of("get_browser_state") if x.get("snapshot_format") == "semantic_v2"])
+    try:
+        a.observe()
+        raise AssertionError("a loopback page was read")
+    except app.McpError as e:
+        assert str(e) == app.AGENT_LOCAL_PAGE, e
+    assert app.AGENT_LOCAL_PAGE == "The agent can't read pages served by this Mac"
+    assert len([x for x in c.of("get_browser_state") if x.get("snapshot_format") == "semantic_v2"]) == sems, "no semantic read, no picture"
+    assert c.of("browser_navigate")[-1]["url"] == "about:blank", c.of("browser_navigate")
+    assert a.view is None and a.url is None and a.domain is None and a.link_domains == set() and a.last_image is None
+    assert all("127.0.0.1" not in u for u in a._history), a._history
+    out = a.execute("read_page", {})
+    assert out == "Error: " + app.AGENT_LOCAL_PAGE, out
+    assert a.screenshot() is None                              # the after-step picture re-reads: refused the same way
+    # only the semantic read says so (a redirect between the two reads)
+    where.update(dom="https://github.com/login", sem="http://localhost:7860/")
+    assert a.execute("read_page", {}) == "Error: " + app.AGENT_LOCAL_PAGE
+    assert c.of("browser_navigate")[-1]["url"] == "about:blank" and a.view is None
+    # open_url never navigates there, and a navigation that lands there is left at once
+    where.update(dom="https://github.com/login", sem="https://github.com/login")
+    n = len(c.of("browser_navigate"))
+    for u in ("http://127.0.0.1:7860/", "//localhost:7860/", "http://127.1/", "http://[::1]:7860/x", "http://0.0.0.0:7860/"):
+        assert a.execute("open_url", {"url": u}).startswith("Error: " + app.AGENT_LOCAL_PAGE), u
+    assert len(c.of("browser_navigate")) == n, c.of("browser_navigate")[n:]
+    c.script["browser_navigate"] = lambda args: _tr({"status": "ok", "url": LOCAL if args["url"] != "about:blank" else "about:blank"})
+    assert a.execute("open_url", {"url": "https://redirects.example/"}) == "Error: " + app.AGENT_LOCAL_PAGE
+    assert c.of("browser_navigate")[-1]["url"] == "about:blank" and a.url is None
+    # a run: the model hears that the page can't be read, and never sees it
+    c2 = png_client()
+    with Env(model=Model(tc("open_url", url="https://github.com/login"), tc("read_page"), tc("done", answer="ok")), client=c2) as e:
+        inner = c2.script["get_browser_state"]
+        def moved(args):
+            r = inner(args)
+            if e.model.calls and len(e.model.calls) >= 2 and isinstance(r.get("data"), dict) and args.get("snapshot_format") == "dom_refs_v1":
+                r = {**r, "data": {**r["data"], "url": LOCAL}}
+            return r
+        c2.script["get_browser_state"] = moved
+        e.start("Sign in on github.com")
+        e.finish()
+        assert e.end()["status"] == "done", e.run_.events
+        third = e.model.text(2)
+        assert app.AGENT_LOCAL_PAGE in third and "Username or email address" not in third, third
 
 
 @check

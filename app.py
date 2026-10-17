@@ -10,6 +10,7 @@ Image jobs run the mflux CLI one at a time. Also manages models, storage, update
 import asyncio
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import queue
@@ -23,7 +24,7 @@ import time
 import unicodedata
 import uuid
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, unquote, unquote_plus, urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -91,17 +92,22 @@ def _local_origin(host, origin):
     return name(host) in LOOPBACK and (not origin or name(origin.split("://", 1)[-1]) in LOOPBACK)
 
 
+LOCAL_ONLY_PATHS = ("/api/search", "/api/agent", "/api/chats", "/api/attachments", "/api/gallery", "/gallery")   # and /api/chat itself
+
+
 class LocalOnly:
-    """Search, "My files" and the agent return the text of the user's files or drive the Mac, so a
-    page on another site (or a rebound DNS name) must not be able to call them. Plain ASGI, so streaming is untouched."""
+    """Search, "My files", chats, attachments, the gallery and the agent return the user's data or drive the Mac, so a page
+    on another site, on another local port (Sec-Fetch-Site same-site) or behind a rebound DNS name must not be able to call
+    them. The app's own page is same-origin (or "none" for a navigation). Plain ASGI, so streaming is untouched."""
 
     def __init__(self, inner):
         self.inner = inner
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and (scope["path"].startswith(("/api/search", "/api/agent")) or scope["path"] == "/api/chat"):
+        if scope["type"] == "http" and (scope["path"].startswith(LOCAL_ONLY_PATHS) or scope["path"] == "/api/chat"):
             h = dict(scope["headers"])
-            if not _local_origin(h.get(b"host", b"").decode("latin-1"), h.get(b"origin", b"").decode("latin-1")):
+            site = h.get(b"sec-fetch-site", b"").decode("latin-1").strip().lower()
+            if site in ("cross-site", "same-site") or not _local_origin(h.get(b"host", b"").decode("latin-1"), h.get(b"origin", b"").decode("latin-1")):
                 return await JSONResponse({"detail": "Forbidden"}, status_code=403)(scope, receive, send)
         await self.inner(scope, receive, send)
 
@@ -2259,7 +2265,7 @@ def _host(s):
     if not s or "\\" in s:                                         # browsers read \ as /, urlsplit does not: https://evil.net\@example.com
         return ""
     try:
-        h = (_split_url(s).hostname or "").lower().rstrip(".")
+        h = unquote(_split_url(s).hostname or "").lower().rstrip(".")      # a browser decodes %31 in a host: 127.0.0.%31 is 127.0.0.1
         if not any(c in h for c in "ßς\u200c\u200d"):
             h = h.encode("idna").decode("ascii")
     except (ValueError, UnicodeError):
@@ -2292,10 +2298,69 @@ def _search_ok(url, host):
     return (path in ("", "/") and any(qs)) or path in ("/html", "/html/")
 
 
+def _ipv4_num(p):
+    """One part of a host that a browser reads as an IPv4 number (decimal, 0x hex or leading-0 octal); None if it is not one."""
+    try:
+        if p[:2] in ("0x", "0X"):
+            return int(p[2:] or "0", 16)
+        if len(p) > 1 and p[0] == "0":
+            return int(p, 8)
+        return int(p, 10) if p.isdigit() else None
+    except ValueError:
+        return None
+
+
+def _ipv4_whatwg(h):
+    """The IPv4 address a browser makes of a host (127.1, 0x7f.1, 2130706433, 0177.0.0.1 are all 127.0.0.1), the WHATWG way:
+    a host whose last label is a number is an address. None when it is not one; False when it ends in a number but is no valid
+    address (the browser refuses it, and nothing may vouch for it)."""
+    parts = h.split(".")
+    if parts and parts[-1] == "" and len(parts) > 1:
+        parts.pop()
+    last = parts[-1] if parts else ""
+    if not (last.isascii() and (last.isdigit() or re.fullmatch(r"0[xX][0-9a-fA-F]*", last))):
+        return None
+    nums = [_ipv4_num(p) for p in parts]
+    if len(parts) > 4 or any(n is None for n in nums) or any(n > 255 for n in nums[:-1]) or nums[-1] >= 256 ** (5 - len(nums)):
+        return False
+    v = nums[-1]
+    for i, n in enumerate(nums[:-1]):
+        v += n << (8 * (3 - i))
+    return ipaddress.IPv4Address(v)
+
+
+def _local_kind(host):
+    """"loopback" for an address served by this Mac (127/8, ::1, 0.0.0.0/8, ::, localhost and *.localhost, in any spelling a browser
+    accepts), "private" for the local network (private, link-local, reserved, *.local) and any host that ends in a number but is
+    no valid address; None for an ordinary public host. Neither kind is ever vouched for."""
+    h = str(host or "").strip().lower().strip("[]").rstrip(".")
+    if not h:
+        return None
+    if h == "localhost" or h.endswith(".localhost"):
+        return "loopback"
+    if h == "local" or h.endswith(".local"):
+        return "private"
+    try:
+        ip = ipaddress.ip_address(h.split("%", 1)[0])
+    except ValueError:
+        ip = _ipv4_whatwg(h)
+        if ip is None:
+            return None
+        if ip is False:
+            return "private"
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if ip.is_loopback or ip.is_unspecified or (ip.version == 4 and ip.packed[0] == 0):
+        return "loopback"
+    return None if ip.is_global else "private"
+
+
 def _domain_in(host, domains):
+    if _local_kind(host):                                           # this Mac and the local network never count as part of anything
+        return False
     for d in domains or ():
         d = _host(d)
-        if "." in d and (host == d or host.endswith("." + d)):          # a bare label ("com", "localhost") never vouches for anything
+        if "." in d and not _local_kind(d) and (host == d or host.endswith("." + d)):   # a bare label ("com", "localhost") never vouches for anything
             return True
     return False
 
@@ -2379,6 +2444,11 @@ def gate(tool, args, facts, ctx):
         host = _host(url)                                           # no scheme counts as https://<host>
         if not host:
             return "risky", "the address has no usable host"
+        local = _local_kind(host)
+        if local == "loopback":                                     # Local Studio's own chats, file previews and UI are served here
+            return "blocked", "the agent never opens pages served by this Mac"
+        if local:
+            return "risky", f"{host} is on your local network"
         if (_domain_in(host, ctx.get("task_domains")) or _domain_in(host, ctx.get("link_domains"))
                 or _domain_in(host, [ctx.get("domain")]) or _search_ok(url, host)):
             return "safe", f"{host} is part of the task, the page or a search engine"
@@ -2440,6 +2510,13 @@ def _gate_acting(tool, args, facts, ctx):
         return "safe", "ordinary typing"
     if facts.get("is_submit"):
         return "risky", "this control submits a form"
+    href = facts.get("href")
+    if href and _url_scheme(_norm_url(href)) in ("http", "https", ""):
+        local = _local_kind(_host(href))
+        if local == "loopback":
+            return "blocked", "the link goes to a page served by this Mac"
+        if local:
+            return "risky", "the link goes to your local network"
     if RISKY_WORDS.search(name):
         return "risky", f"{name!r} sounds irreversible"
     return "safe", "an ordinary control"
@@ -2546,8 +2623,15 @@ _STALE_MARKERS = ("browser_binding_stale", "browser_ref_stale", "browser_tab_not
 # The page's window stopped matching the native window (a popup or a new window appeared). Never a ref-stale retry: the same
 # call could land in another tab. The adapter re-binds the window exactly, re-reads, and retries once only if it is the same control.
 _WRONG_TARGET_MARKERS = ("browser_wrong_target_refused", "no longer has an exact geometry")
+AGENT_LOCAL_PAGE = "The agent can't read pages served by this Mac"   # Local Studio's own chats, previews and UI live on 127.0.0.1
 AGENT_WINDOW_LOST = ("the browser window changed in a way the agent can't follow. "
                      "Use Take over to close any popups, then Resume.")
+
+
+def _served_here(url):
+    """True for an http(s) page on this Mac (any loopback or unspecified address, localhost): never read, never kept."""
+    u = _norm_url(url)
+    return bool(u) and _url_scheme(u) in ("http", "https", "") and _local_kind(_host(u)) == "loopback"
 
 
 def _agent_sleep(s):
@@ -2774,6 +2858,9 @@ class Adapter:
             self._last_res = res
             why = _cua_problem(res)
             if why is None:
+                d = res.get("data") or {}
+                if _served_here(d.get("url")) or _served_here((d.get("page") or {}).get("url") if isinstance(d.get("page"), dict) else None):
+                    self._leave_local()
                 return res
             kind = "wrong" if _is_wrong_target(res) else "stale" if _is_stale(res) else None
             if kind is None:
@@ -2808,6 +2895,20 @@ class Adapter:
         if url:
             self.url, self.domain = url, _host(url) or None
 
+    def _leave_local(self):
+        """The tab shows a page served by this Mac (a link, a script or a redirect took it there): go to about:blank, forget the
+        page, and refuse. Nothing of it becomes a view, a picture, a history entry or a vouched domain."""
+        if self.target is not None:
+            try:
+                self.client.call("browser_navigate", {"target_id": self.target, "tab_id": self.tab, "url": "about:blank", "session": self.session})
+            except Exception:
+                pass
+        self.view, self._parts, self._page_more, self.page_part, self.found = None, [], False, 0, None
+        self.url = self.domain = self.title = None
+        self.link_domains, self._unconfirmed = set(), True
+        self.last_image = self.last_snapshot = self._image_for = None
+        raise McpError(AGENT_LOCAL_PAGE)
+
     def _read(self, search=False):
         """DOM first, then the semantic snapshot (with its picture) last: every read supersedes the refs of the one before,
         and the refs the model is shown come from the semantic one, so it has to be the newest. Then the next parts of that
@@ -2818,15 +2919,19 @@ class Adapter:
         dom = self._state({"snapshot_format": "dom_refs_v1"})        # input types, autocomplete, links; the gate depends on it
         if _cua_problem(dom) or not dom.get("data"):
             raise McpError("could not read the page's form fields: " + (_cua_problem(dom) or "no data"))
+        if _served_here(dom["data"].get("url")):            # before anything else is read from it
+            self._leave_local()
         sem = self._state({"snapshot_format": "semantic_v2", "include_screenshot": True})
         if _cua_problem(sem) or not sem.get("data"):
             raise McpError(_cua_problem(sem) or "the page could not be read")
         sd, dd = sem["data"], dom["data"]
+        if _served_here((sd.get("page") or {}).get("url")):  # it moved between the two reads
+            self._leave_local()
         links = set()                                        # anchors only (not <link> head tags), and only those on this page
         for r in dd.get("refs") or []:
             if r.get("node") == "a":
                 href = _dom_attrs(r.get("label")).get("href") or ""
-                if re.match(r"^(?:https?:)?//", href, re.I) and _host(href):
+                if re.match(r"^(?:https?:)?//", href, re.I) and _host(href) and not _local_kind(_host(href)):
                     links.add(_host(href))
         self.link_domains = links
         url = (sd.get("page") or {}).get("url") or dd.get("url")
@@ -2923,6 +3028,8 @@ class Adapter:
             raise McpError(f"only http and https addresses can be opened, not {sch}:")
         if not sch:
             url = "https:" + url if url.startswith("//") else "https://" + url        # the gate read it as https://<host>
+        if _served_here(url):                                # the gate blocks it too; this never even navigates
+            raise McpError(AGENT_LOCAL_PAGE)
         if self.target is None:
             self._bind()
         out = f"Opened {self._navigate(url)}; read the page to see it."

@@ -249,6 +249,28 @@ def foreign_pages_cannot_drive_search():
 
 
 @check
+def private_data_routes_are_local_only():
+    """Chats, attachments and the gallery hold the user's data: a page of another site, another local port (same-site) or a
+    rebound DNS name gets 403; the app's own page (same-origin, or a navigation: none) still works."""
+    from fastapi.testclient import TestClient
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    app.GALLERY.mkdir(parents=True, exist_ok=True)
+    (app.GALLERY / "x.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    for path in ("/api/chats", "/api/chats/0123456789abcdef", "/api/gallery", "/gallery/x.png", "/api/attachments/0123456789abcdef/a.png"):
+        own = c.get(path).status_code
+        assert own != 403, (path, own)
+        assert c.get(path, headers={"sec-fetch-site": "same-origin"}).status_code == own, path
+        assert c.get(path, headers={"sec-fetch-site": "none"}).status_code == own, path
+        assert c.get(path, headers={"host": "evil.example:7860"}).status_code == 403, ("DNS rebinding", path)
+        assert c.get(path, headers={"origin": "https://evil.example"}).status_code == 403, path
+        for site in ("cross-site", "same-site", "Cross-Site"):
+            assert c.get(path, headers={"sec-fetch-site": site}).status_code == 403, (site, path)
+    assert c.get("/api/search/status", headers={"sec-fetch-site": "same-site"}).status_code == 403, "a page on another local port"
+    assert c.get("/api/agent/status", headers={"sec-fetch-site": "cross-site"}).status_code == 403
+    assert c.get("/api/busy", headers={"sec-fetch-site": "cross-site"}).status_code == 200, "routes without user data are unchanged"
+
+
+@check
 def search_is_not_started_twice():
     """While the service is still loading (process up, /health not yet answering), a second
     "turn on" must not launch another copy."""
