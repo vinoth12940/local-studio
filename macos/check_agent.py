@@ -2501,8 +2501,10 @@ class Model:
         self.replies, self.calls = list(replies), []
 
     def __call__(self, mode, m, messages, tools):
-        assert tools is app.AGENT_TOOLS
-        self.calls.append({"mode": mode, "model": m["id"], "messages": json.loads(json.dumps(messages)), "engine": dict(app.agent_engine)})
+        names = [t["function"]["name"] for t in tools]
+        assert tools is app.AGENT_TOOLS or names == ["done"], names       # every tool, or only done for the wrap-up at a limit
+        self.calls.append({"mode": mode, "model": m["id"], "messages": json.loads(json.dumps(messages)), "engine": dict(app.agent_engine),
+                           "tools": names})
         assert self.replies, "the model was asked more often than scripted"
         r = self.replies.pop(0)
         r = r(mode, messages) if callable(r) else r
@@ -2829,10 +2831,79 @@ def step_limit():
     with Env(FakeAdapter(), Model(*[tc("note", text=f"fact {i}") for i in range(5)]), max_steps=3) as e:
         e.start()
         e.finish()
-        assert len(e.ev("step")) == 3 and len(e.model.calls) == 3
+        assert len(e.ev("step")) == 3 and len(e.model.calls) == 4                  # 3 steps, then one wrap-up call that wrote no answer
+        assert e.model.calls[-1]["tools"] == ["done"]
         assert e.end()["status"] == "failed" and e.end()["reason"] == "step limit"
-        assert "step limit" in e.ev("error")[-1]["message"]
+        assert "step limit" in e.ev("error")[-1]["message"] and not e.ev("answer")
         assert e.saved_run()["notes"] == ["fact 0", "fact 1", "fact 2"]
+
+
+@check
+def limits_end_with_a_partial_answer():
+    """At the step or time limit: ONE more model call with the notes and history, offered only done; its answer ends the run as
+    done (reason "limit") with a "Partial answer" prefix. No answer, or a failing call, fails as before; Stop never wraps up."""
+    view = fview(("e1", "button", "Next"), text="Page: Shop\nURL: https://shop.example/\ntext \"Blue Top Rs. 500\"")
+    replies = [tc("note", text="price of Blue Top is Rs. 500"), tc("note", text="Men Tshirt is Rs. 400"), tc("done", answer="Blue Top costs Rs. 500; Men Tshirt not checked")]
+    with Env(FakeAdapter(view), Model(*replies), max_steps=2) as e:
+        e.start()
+        e.finish()
+        assert len(e.ev("step")) == 2 and len(e.model.calls) == 3
+        last = e.model.calls[-1]
+        assert last["tools"] == ["done"]
+        text = e.model.text(2)
+        assert "You have reached the step limit. Write your best answer now from your notes with done(answer); say what is missing." in text
+        assert "price of Blue Top is Rs. 500" in text and "Men Tshirt is Rs. 400" in text and "Steps so far:\n1." in text
+        assert "Blue Top Rs. 500" in text and "Nothing is open yet" not in text                 # the last view, never "start with open_url"
+        assert [m["role"] for m in last["messages"]] == ["system", "user"]                      # one user turn: strict chat templates
+        assert e.end()["status"] == "done" and e.end()["reason"] == "limit", e.end()
+        ans = e.ev("answer")[-1]["markdown"]
+        assert ans == "**Partial answer** (stopped at the step limit):\n\nBlue Top costs Rs. 500; Men Tshirt not checked", ans
+        assert e.saved_run()["answer"] == ans and e.saved_run()["status"] == "done" and not e.ev("error")
+    # the time limit, the same way
+    clock = [1000.0]
+
+    def note(mode, msgs):
+        clock[0] += 400
+        return tc("note", text="x")
+    with Env(FakeAdapter(view), Model(note, note, note, tc("done", answer="best so far")), max_minutes=15) as e:
+        app._agent_now = lambda: clock[0]
+        e.start()
+        e.finish()
+        assert len(e.model.calls) == 4 and "You have reached the time limit." in e.model.text(3)
+        assert e.end()["status"] == "done" and e.end()["reason"] == "limit"
+        assert e.ev("answer")[-1]["markdown"] == "**Partial answer** (stopped at the time limit):\n\nbest so far"
+    # the wrap-up call fails, or answers with nothing: failed, as before
+    for bad in (RuntimeError("engine gone"), tc("done", answer="   "), {"role": "assistant", "content": "I can't"}):
+        with Env(FakeAdapter(view), Model(tc("note", text="a"), bad), max_steps=1) as e:
+            e.start()
+            e.finish()
+            assert e.end()["status"] == "failed" and e.end()["reason"] == "step limit" and not e.ev("answer"), (bad, e.run_.events)
+    # Stop pressed during the wrap-up call: stopped, no answer
+    def stop_then_done(mode, msgs):
+        app._agent_current.stop = True                  # the route sets it the same way
+        return tc("done", answer="late")
+    with Env(FakeAdapter(view), Model(tc("note", text="a"), stop_then_done), max_steps=1) as e:
+        e.start()
+        e.finish()
+        assert e.end()["status"] == "stopped" and not e.ev("answer"), e.run_.events
+    # Stop pressed before the limit: no wrap-up call at all
+    def stop_now(mode, msgs):
+        app._agent_current.stop = True                  # the route sets it the same way
+        return tc("note", text="a")
+    with Env(FakeAdapter(view), Model(stop_now, tc("done", answer="never")), max_steps=1) as e:
+        e.start()
+        e.finish()
+        assert e.end()["status"] == "stopped" and len(e.model.calls) == 1 and not e.ev("answer"), (len(e.model.calls), e.run_.events)
+    # secrets typed into a sensitive field never reach the answer
+    with Env(FakeAdapter(fview(("e1", "textbox", "Password", {"input_type": "password"}))),
+             Model(tc("type", ref="e1", text="hunter22"), tc("done", answer="typed hunter22")), max_steps=1) as e:
+        e.start()
+        e.status("waiting", "failed", "done")
+        if e.run_.status == "waiting":
+            e.post("reply", decision="allow")
+        e.finish()
+        assert "hunter22" not in json.dumps(e.run_.events), e.run_.events
+        assert e.ev("answer")[-1]["markdown"].endswith("typed •••"), e.run_.events
 
 
 @check
@@ -2935,7 +3006,7 @@ def time_limit():
         app._agent_now = lambda: clock[0]
         e.start()
         e.finish()
-        assert len(e.model.calls) == 3, len(e.model.calls)                       # 0, 400, 800 s in; at 1200 s it stops
+        assert len(e.model.calls) == 4, len(e.model.calls)                       # 0, 400, 800 s in; at 1200 s it stops (+1 wrap-up, no answer)
         assert e.end()["status"] == "failed" and e.end()["reason"] == "time limit" and "time limit" in e.ev("error")[-1]["message"]
     # time spent waiting for the user does not count
     clock = [1000.0]
