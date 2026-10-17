@@ -2547,6 +2547,10 @@ class Adapter:
         self.app_pid = self.app_window = self.bundle_id = None    # the Mac app being driven (surface "app"); the browser keeps pid/window_id
         self._app_rebind_due = False
         self._shot, self._shot_fresh = None, False           # the picture that came with the last app read; good until something acts
+        # CuaDriver browser refs (pN:M) work only for the tab's newest snapshot, and every get_browser_state read makes a new one.
+        # So the picture comes with the view's own read, and between observe() and the action nothing reads the page again.
+        self.last_image = self.last_snapshot = None          # the picture from the last browser read and the snapshot id it came from
+        self._image_for = None                               # the view that read made; the picture is current while self.view is it
 
     def _call(self, name, args):
         return self.client.call(name, {**args, "session": self.session})
@@ -2629,12 +2633,15 @@ class Adapter:
             self.url, self.domain = url, _host(url) or None
 
     def _read(self, query=None):
-        sem = self._state({"snapshot_format": "semantic_v2", **({"query": query} if query else {})})
-        if _cua_problem(sem) or not sem.get("data"):
-            raise McpError(_cua_problem(sem) or "the page could not be read")
+        """DOM first, then the semantic snapshot (with its picture) last: every read supersedes the refs of the one before,
+        and the refs the model is shown come from the semantic one, so it has to be the newest."""
+        self._image_for = None
         dom = self._state({"snapshot_format": "dom_refs_v1"})        # input types, autocomplete, links; the gate depends on it
         if _cua_problem(dom) or not dom.get("data"):
             raise McpError("could not read the page's form fields: " + (_cua_problem(dom) or "no data"))
+        sem = self._state({"snapshot_format": "semantic_v2", "include_screenshot": True, **({"query": query} if query else {})})
+        if _cua_problem(sem) or not sem.get("data"):
+            raise McpError(_cua_problem(sem) or "the page could not be read")
         sd, dd = sem["data"], dom["data"]
         links = set()                                        # anchors only (not <link> head tags), and only those on this page
         for r in dd.get("refs") or []:
@@ -2654,6 +2661,7 @@ class Adapter:
         self._viewport = (round(w / 2), round(h / 2)) if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0 else AGENT_VIEWPORT
         self._actions = {r.get("ref"): set(r.get("actions") or ()) for r in sd.get("refs") or []}
         self.view = browser_view(sd, dd)
+        self.last_image, self.last_snapshot, self._image_for = sem.get("image"), (sd.get("snapshot") or {}).get("id"), self.view
         return self.view
 
     def observe(self):
@@ -2668,14 +2676,20 @@ class Adapter:
         return hit["facts"] if hit else None
 
     def screenshot(self):
+        """The picture of the page. While the view is current (nothing acted since the read that made it) it is that read's
+        own picture, or None if it came without one: a new snapshot would supersede the refs the model is about to use.
+        Once something has acted the view is out of date anyway, so the page is read again in full (DOM, then semantic with
+        its picture) and that read becomes the view: its refs, facts and picture all belong to the newest snapshot."""
         if self.surface == "app":
             return self._app_screenshot()
         if self.target is None:
             return None
-        try:
-            return self._state({"snapshot_format": "semantic_v2", "include_screenshot": True}).get("image")
-        except Exception:                                    # a screenshot is optional; nothing here may end the run
-            return None
+        if self.view is None or self._image_for is not self.view:
+            try:
+                self._read()
+            except Exception:                                # a screenshot is optional; nothing here may end the run
+                return None
+        return self.last_image
 
     # -- acting
     def _ref(self, args):
@@ -2788,7 +2802,7 @@ class Adapter:
               "menu": self._menu, "hotkey": self._hotkey}.get(tool)
         if fn is None:
             return f"Error: {tool} is not a web tool"
-        self._shot_fresh = False                             # whatever this does, the picture from the last read is out of date
+        self._shot_fresh, self._image_for = False, None      # whatever this does, the picture from the last read is out of date
         if tool in _BROWSER_ONLY and self.surface == "app":
             return f"Error: {tool} is for the browser and a Mac app is open; use click_app / type_app, or open_url / read_page to go back to the browser"
         if tool in _APP_ONLY and self.surface != "app":
@@ -2799,6 +2813,9 @@ class Adapter:
             return f"Error: {_clip(e, 300)}"
         except Exception as e:                               # the loop counts these lines; nothing the adapter does may end the run
             return f"Error: {type(e).__name__}: {_clip(e, 200)}"
+        finally:
+            if tool != "read_page":                          # a stale-ref retry re-reads before it acts: that picture is from before the action
+                self._shot_fresh, self._image_for = False, None
 
     # -- Mac apps: their own pid/window, their own recovery (a stale snapshot is re-read, never re-bound like the browser)
     def _to_browser(self):
@@ -2897,7 +2914,9 @@ class Adapter:
         return self.view
 
     def _app_screenshot(self):
-        if self._shot_fresh and self._shot:                  # the picture of the snapshot the refs came from; no new snapshot, so the tokens stay valid
+        """Like the browser's: the read's own picture (or None) while its view is current; a picture-only get_window_state
+        replaces the element map too, so it is taken only once something has acted (the next observe re-reads anyway)."""
+        if self._shot_fresh:                                 # the picture of the snapshot the refs came from; no new snapshot, so the tokens stay valid
             return self._shot
         if self.app_pid is None:
             return None
@@ -3020,6 +3039,7 @@ AGENT_SYSTEM = (
     "Each element of the current view looks like [e12] button \"Buy\"; to use it call click(\"e12\") or type with ref \"e12\". Only refs in the newest view work.\n"
     "For a Mac app: open_app(name), then click_app and type_app with refs from its view; menu(app, path) and hotkey(keys) work in the open app; open_url or read_page goes back to the browser.\n"
     "After you act, read the page again to see the result. Use note() to save facts you will need for the answer.\n"
+    "To search the web, open https://duckduckgo.com/html/?q=your+words.\n"
     "Never type passwords or payment details; use ask_user instead.\n"
     "When you have the answer, call done(answer) with a short markdown answer that cites the page URLs you used."
 )
