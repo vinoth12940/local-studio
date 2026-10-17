@@ -48,7 +48,16 @@ uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-m
 uv run -q --no-project --python 3.12 --with-requirements search-requirements.txt python search.py --eval build/search_samples
 ```
 
-The first two run in `macos/build.sh`. The third needs the model and a sample folder built by
+The agent has `macos/check_agent.py` (gate table, view trimmer, history folding, MCP client with a fake
+`cua-driver`, scripted runs; no model, no CuaDriver), run with the same `uv run` dependencies as
+`check_app.py`:
+
+```sh
+uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_agent.py [check_name ...]
+```
+
+The first two and `check_agent.py` run in `macos/build.sh` (it also needs a short `TMPDIR`, since the
+daemon's socket path has a 104-byte limit). The search eval needs the model and a sample folder built by
 `macos/make_search_samples.py build/search_samples`.
 
 The backend has no project/venv: `start.sh` runs it with
@@ -108,9 +117,50 @@ library and numpy so `macos/check_search.py` can run without a model. For develo
 `LOCAL_STUDIO_SEARCH_ROOTS` to a sample folder so the real default folders are never crawled, and
 `LOCAL_STUDIO_SEARCH_PORT` (for example 8093) so a development server gets its own search
 service and can never reach or stop the one in the app the user is running.
-Because these routes return the text of the user's files, `/api/search*` and `/api/chat` reject
-requests with a non-loopback `Host` or a foreign `Origin` (`LocalOnly` in `app.py`), and the
-service itself refuses any request that carries an `Origin` (`_local_request`).
+Because these routes return the text of the user's files, `LocalOnly` in `app.py` (now a guard on
+every route and static file) rejects requests with a non-loopback `Host`, a foreign `Origin`, or
+`Sec-Fetch-Site: cross-site|same-site`; the service itself refuses any request that carries an
+`Origin` or is cross-site (`_local_request`).
+
+### Agent
+
+The `# ---- agent` section of `app.py` lets a local model drive a browser and Mac apps through
+CuaDriver (`com.trycua.driver`, https://github.com/trycua/cua, >= 0.28.2), used as an MCP server over
+stdio (`cua-driver mcp --socket ...`, hand-written JSON-RPC client, no dependency). It is off by
+default (`data/settings.json` → `agent`) and independent of the chat engine rule except that a run
+holds `agent_lock`, which `/api/chat`, `/api/image`, `/api/engine/*` and `/api/busy` respect.
+
+- **Daemon.** Local Studio starts its own, never Hermes's or the default one:
+  `open -n -g -a CuaDriver --args serve --socket <STATE>/data/agent/cua.sock --permission-mode standard`
+  (LaunchServices, so CuaDriver's own Accessibility/Screen Recording grants apply; no manifest). The
+  stop pattern `cua-driver serve --socket <re.escape(socket path)>` is duplicated in `stop.sh` and
+  `agent_daemon_pattern()`; keep them in sync. It has no `^` anchor because the bundled path has
+  spaces. The socket path must stay under 104 bytes. The daemon idles out after 10 minutes.
+- **Fence.** `AGENT_CUA_TOOLS` is the MCP client's allowlist: `McpClient.call` refuses any other
+  CuaDriver tool before sending. The gate (safe / risky / blocked) decides from facts about the target
+  (role, DOM input type and autocomplete, label, URL, app tier), never from the model's claims; page and
+  app text is untrusted. Per-app tiers (`APP_TIERS_DEFAULT`, `APP_TIERS_BUNDLE_DEFAULT`, user
+  overrides in `agent.tiers`) are read-only / ask / allowed, the stricter match wins. Pages served by
+  this Mac (loopback) are never opened or read.
+- **Runs.** One MCP connection and one session label per run (the browser closes with the session).
+  Snapshot order: `dom_refs_v1` first, `semantic_v2` last, and no new snapshot between observe and
+  execute, or the refs go stale. A long page comes as continuation pages of one snapshot (scrolling
+  does not work in the background). Runs and screenshots are saved in `STATE/data/agent/runs/`; a run
+  left active by a dead process is marked `interrupted` at import. Approvals and `ask_user` are bound
+  to the step number; Take over/Resume and Stop are flags the loop reads.
+- **Browser profile.** CuaDriver's isolated profile: `~/Library/Application Support/CuaDriver/BrowserProfiles/local-studio`
+  for the Mac app's `STATE`, `local-studio-<8 hex of the STATE path>` for any other, so a dev server never
+  touches the app's sign-ins. Before each launch (no Chrome using the profile) the crash flag is repaired
+  and downloads are set to prompt, into `STATE/data/agent/downloads`.
+- **Routes.** `/api/agent/*` (status, enable, settings, permissions, telemetry/disable, run, runs/{id}/
+  events|reply|stop|takeover|resume, runs, shots, profile/reset). `LocalOnly` guards them with every other
+  route. The Agent view and Settings → Agent are in `index.html`.
+- **Chat.** The **Agent** pill next to My files turns a message into a run (`/api/agent/run` with `chat_id`
+  and fenced `context`); the card is drawn in the thread. With the pill off and CuaDriver ready, chat
+  gets `AGENT_CHAT_NOTE` as a system note so the model points to the switch.
+- **Dev isolation.** Test on port 7861 with its own `LOCAL_STUDIO_HOME` (and a short path): it gets its own
+  daemon, socket, stop pattern and browser profile. Never run `stop.sh`, start an engine or a daemon against
+  the user's running Mac app.
 
 ### Models
 
@@ -142,7 +192,7 @@ runs `setup.sh --migrate` (copies data from `~/local-studio`), then `start.sh`, 
 `http://127.0.0.1:7860` in a WKWebView. On quit it runs `stop.sh` unless "Keep Running After Quit"
 is on. `setup.sh` talks to the app through a line protocol on stdout (`@check`, `@step`, `@log`,
 `@done`, `@error`), so keep that format intact when editing it. `macos/build.sh` copies a fixed list
-of files into the bundle (`app.py index.html catalog.json search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh`).
+of files into the bundle (`app.py index.html catalog.json search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh`); the agent added none.
 Any new runtime file must be added to that list.
 
 ## Versioning and releases

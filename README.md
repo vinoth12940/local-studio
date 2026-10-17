@@ -7,7 +7,7 @@ accelerated by **DFlash/DSpark** speculative decoding or any **GGUF** model on *
 about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Image Turbo** or
 **FLUX.2 Klein**. Everything runs locally; nothing leaves your Mac.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.3.0**
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.4.0**
 
 ![Chat](docs/chat.jpg)
 
@@ -23,6 +23,8 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 - **Attachments (multimodal)**: attach with the paperclip, drag and drop, or paste. Ask about
   images (Qwen3.8 vision), PDFs, Word (.docx), Excel (.xlsx), and text/code files. Scanned PDFs
   are read as page images.
+- **Agent**: hand a task to a local model that uses an isolated browser and your Mac apps, and
+  asks before anything risky (see "Agent" below). Off until you turn it on.
 - **Images**: text-to-image with aspect presets, steps, seed, guidance and step caching; live
   progress with ETA and cancel; a library with full-size view, reuse settings, download and delete.
 - **Model library**: one-click download, switch and delete for a curated set of chat and image
@@ -44,7 +46,7 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 
 ### The easy way (recommended)
 
-1. Download **Local-Studio-1.3.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+1. Download **Local-Studio-1.4.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
 2. Open it and drag **Local Studio** into **Applications**.
 3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
    engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
@@ -135,6 +137,56 @@ Not indexed: hidden files, `Library`, apps and other packages (including the Pho
 developer folders such as `node_modules` and `.git`, Python environments (recognised by their
 contents, whatever they are called), copied `node_modules` contents, and private keys. Unrecognised types and
 iCloud files that are not downloaded to this Mac are found by name only.
+
+## Agent
+
+Turn on **Agent** in Settings → Agent and a local model can carry out a task for you on this Mac,
+step by step, while you watch: look something up, read and summarize pages, fill in a form,
+add things to a cart, or work in a Mac app ("make a note called Groceries with milk and eggs").
+It browses in its own isolated Chrome profile (never your everyday browser or its sign-ins) and
+operates other apps through macOS Accessibility, in the background. The Agent view shows a live
+picture beside the step log. Anything risky (submit, send, buy, post, delete, a site you did not
+name, a changing action in some apps) stops and asks first: Allow once, Deny, or Stop. It never
+types into password, card or one-time-code fields. **Take over** brings its browser or app
+forward so you can sign in or sort something out, then Resume. With the **Agent** switch next to
+My files in chat, a message becomes a task and the run appears inside the conversation.
+
+Agent is off by default. It uses the active chat model, so a task that needs to read an image
+wants a vision model.
+
+Requirements:
+
+- [CuaDriver](https://github.com/trycua/cua) 0.28.2 or newer, installed on the Mac. Local Studio
+  runs its own CuaDriver, separate from any other, and never changes its settings without your click.
+- macOS **Accessibility** and **Screen Recording** for CuaDriver. Settings → Agent shows the
+  status and a Grant button.
+- Google Chrome, for the agent's isolated browser.
+
+Privacy: everything runs on this Mac, and pages and app contents go only to your local model.
+CuaDriver's own telemetry is **on by default**; Settings → Agent shows its state and a
+**Turn off** button. The agent's browser profile lives in
+`~/Library/Application Support/CuaDriver/BrowserProfiles`; Settings has Reset browser profile.
+Runs and their screenshots are saved in `data/agent/runs/` and can be deleted from the Agent view.
+
+Which Mac apps it may touch (Settings → Agent, editable):
+
+| Tier | What it can do | Default apps |
+|---|---|---|
+| Read-only | Look, never act | Banking and finance apps, Keychain Access, System Settings, Terminal and other shells, password managers, Local Studio itself |
+| Ask first | Every changing click or keystroke asks | Mail, Messages, chat apps, Calendar, Finder, your own browsers (Safari, Chrome, Firefox, …) |
+| Allowed | Acts freely; risky wording such as send or delete still asks | Every other app |
+
+Limits in this release:
+
+- Downloads are not supported: Chrome opens its save dialog and the task waits there (you can Take over).
+- The agent can't open or read pages served by this Mac (such as Local Studio itself).
+- Controls that share a name are listed as "position uncertain", and it avoids clicking them blindly.
+- One task at a time, and chat and image generation wait while it runs. Tasks stop at a step
+  limit (40) or time limit (15 minutes, counted while the Mac is awake); a long research task may
+  end with an answer labelled **Partial answer**.
+- Mac-app control depends on the app exposing accessibility. If an app doesn't respond, quit and
+  reopen it, or switch CuaDriver off and on in System Settings → Privacy & Security → Accessibility.
+- Small local models misread pages sometimes; check the answer, and watch tasks that matter.
 
 ## Models
 
@@ -252,6 +304,7 @@ The active chat and image models and any models added from Hugging Face are stor
 | Images | `<data>/gallery/` |
 | Conversations | `<data>/data/chats/` |
 | Attachments | `uploads/` |
+| Agent runs | `<data>/data/agent/runs/` |
 | Logs | `logs/` |
 
 `<data>` is `~/Library/Application Support/Local Studio` for the Mac app, or the checkout folder
