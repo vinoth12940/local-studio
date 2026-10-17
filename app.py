@@ -1869,12 +1869,12 @@ def _facts(role, name, input_type=None, autocomplete=None, in_form=False, is_sub
             "sensitive_unknown": sensitive_unknown}              # editable, not matched to the DOM, on a page whose DOM holds a sensitive input
 
 
-def _assemble(header, items, budget):
+def _assemble(header, items, budget, start=0):
     """items (document order): {kind: "i"|"t", vis, line: fn(id) -> str, ref, facts}. Keeps interactive-and-visible, then
-    visible text, then off-screen interactive, then off-screen text, until the budget is spent; ids e1..eN are then handed
-    out in document order to the interactive items that made it."""
+    visible text, then off-screen interactive, then off-screen text, until the budget is spent; ids e1..eN (counting on from
+    e<start>, for a later part of a long page) are then handed out in document order to the interactive items that made it."""
     total = sum(1 for it in items if it["kind"] == "i")
-    idw = len(str(max(total, 1)))
+    idw = len(str(max(start + total, 1)))
     room = int(budget * 3.2) - len("\n".join(header)) - 1 - 32           # 32 = the "(+N more not shown)" footer
     chosen = set()
     for tier in ((True, "i"), (True, "t"), (False, "i"), (False, "t")):
@@ -1894,7 +1894,7 @@ def _assemble(header, items, budget):
         if n in chosen:
             eid = None
             if it["kind"] == "i":
-                eid = f"e{len(refs) + 1}"
+                eid = f"e{start + len(refs) + 1}"
                 refs[eid] = {"ref": it["ref"], "facts": it["facts"], "value": it.get("value")}
             lines.append(it["line"](eid))
     if len(chosen) < len(items):
@@ -1908,11 +1908,21 @@ def _control_line(role, name, extras=""):
     return lambda eid: f"[{eid}] {role}" + (f' "{name}"' if name else "") + extras
 
 
-def browser_view(state, dom=None, budget=6000):
+def _view_controls(refs):
+    return [r for r in refs or [] if r.get("role") not in _VIEW_TEXT_ROLES and r.get("role") not in _VIEW_PLAIN_ROLES]
+
+
+def browser_view(state, dom=None, budget=6000, start=0, part=1, joined=None):
+    """The view of one part of a page's semantic snapshot (CuaDriver pages a long one); part > 1 is a later part, which the
+    model has scrolled to, so all of it counts as visible. Its eN numbers start after `start`. joined ({CuaDriver ref: DOM
+    attrs}) is the DOM pairing made over every part read, so a control is never paired with another part's element."""
     refs = state.get("refs") or []
-    sem = [r for r in refs if r.get("role") not in _VIEW_TEXT_ROLES and r.get("role") not in _VIEW_PLAIN_ROLES]
-    joined = _dom_join(sem, dom)
-    dom_of = {id(s): joined[i] for i, s in enumerate(sem) if i in joined}
+    sem = _view_controls(refs)
+    if joined is None:
+        pairs = _dom_join(sem, dom)
+        dom_of = {id(s): pairs[i] for i, s in enumerate(sem) if i in pairs}
+    else:
+        dom_of = {id(s): joined[s.get("ref")] for s in sem if s.get("ref") in joined}
     dom_sens = _dom_sensitive(dom)
     sem_ids = {id(r) for r in sem}
     # walk the outline for document order, text and <form> scope; refs are matched to outline lines in order
@@ -1950,7 +1960,7 @@ def browser_view(state, dom=None, budget=6000):
     items = []
     for e in seq:
         if e[0] == "t":
-            items.append({"kind": "t", "vis": e[3] == "in_viewport", "line": (lambda t, n: lambda eid: f'{t} "{_clip(n, 160)}"')("heading" if e[2] == "heading" else "text", e[1])})
+            items.append({"kind": "t", "vis": part > 1 or e[3] == "in_viewport", "line": (lambda t, n: lambda eid: f'{t} "{_clip(n, 160)}"')("heading" if e[2] == "heading" else "text", e[1])})
             continue
         r, in_form = e[1], e[2]
         a = dom_of.get(id(r)) or {}
@@ -1962,7 +1972,7 @@ def browser_view(state, dom=None, budget=6000):
         ac = a.get("autocomplete")
         if editable and not _sensitive_ac(ac):               # the label is the fallback unless the DOM already says it is sensitive
             ac = _guess_autocomplete(name) or ac
-        unknown = bool(editable and dom_sens and id(r) not in dom_of)
+        unknown = bool(editable and (dom_sens or part > 1) and id(r) not in dom_of)     # a later part's field may be beyond what the DOM read held
         submit = a.get("type") == "submit" or (role == "button" and a.get("type") is None and (in_form or bool(_SUBMIT_RE.match(name))))
         st = r.get("states") or {}
         flags = [f for f in _VIEW_FLAGS if _on(st.get(f))] + (["checked" if _on(st["checked"]) else "unchecked"] if "checked" in st else [])
@@ -1971,16 +1981,45 @@ def browser_view(state, dom=None, budget=6000):
         if r.get("value") not in (None, "") and itype != "password" and not unknown and not _sensitive_ac(ac):
             extra += f' = "{_clip(r["value"], 80)}"'
             val = str(r["value"])
-        items.append({"kind": "i", "vis": r.get("visibility") == "in_viewport", "ref": r["ref"], "line": _control_line(role, name, extra), "value": val,
+        items.append({"kind": "i", "vis": part > 1 or r.get("visibility") == "in_viewport", "ref": r["ref"], "line": _control_line(role, name, extra), "value": val,
                       "facts": _facts(role, r.get("name"), itype, ac, in_form, submit, sensitive_unknown=unknown)})
     page = state.get("page") or {}
     title = page.get("title")
     if not title or title == "about:blank":                  # the root web area carries the real title
         title = next((c.get("name") for c in state.get("content_refs") or [] if c.get("role") == "rootwebarea" and c.get("name")), title)
     header = [f"Page: {_clip(title, 120)}", f"URL: {_clip(page.get('url'), 200)}"]
-    if (state.get("snapshot") or {}).get("complete") is False:
-        header.append("(the page continues below the part listed here)")
-    return _assemble(header, items, budget)
+    if _snap_more(state):
+        header.append(f"Part {part} of the page; scroll down for more")
+    elif part > 1:
+        header.append(f"Part {part} of the page; end of the page")
+    return _assemble(header, items, budget, start)
+
+
+def _snap_more(state):
+    """The continuation token for the next part of this snapshot, or None at its end."""
+    snap = state.get("snapshot") or {}
+    tok = snap.get("continuation")
+    return tok if snap.get("complete") is False and isinstance(tok, str) and tok else None
+
+
+_QUERY_STOP = frozenset(("the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "with", "is", "are", "best", "page"))
+
+
+def _query_words(q):
+    """The words of a read_page query worth looking for: lowercase, at least 2 characters, no stopwords."""
+    out = []
+    for w in re.split(r"[^a-z0-9]+", str(q or "").lower()):
+        if len(w) >= 2 and w not in _QUERY_STOP and w not in out:
+            out.append(w)
+    return out
+
+
+def _line_score(line, words):
+    """How many of the query words a view line has (a plural or singular form counts too); the [eN] role prefix is not part
+    of what is matched."""
+    body = re.sub(r"^(?:\[e\d+\]\s+)?[\w-]+\s*", "", line).lower()
+    have = {t for t in re.split(r"[^a-z0-9]+", body) if t}
+    return sum(1 for w in words if have & {w, w + "s", w + "es"} or w.endswith("s") and w[:-1] in have)
 
 
 def app_view(state, budget=6000):
@@ -2447,8 +2486,9 @@ AGENT_MIN_WINDOW = 300                                       # a window smaller 
 AGENT_INEXACT_BIND = ("Couldn't attach to the agent's browser window exactly. Close any dialogs in it (Take over), "
                       "or reset the browser profile in Settings.")
 AGENT_BIND_TRIES = 10                                        # list_windows polls for the isolated browser's window (0.5 s apart)
-AGENT_SCROLL_PX = 600
-AGENT_VIEWPORT = (600, 400)                                  # where a scroll is aimed when the snapshot did not give the viewport size
+AGENT_SEARCH_PARTS = 12                                      # read_page(query) reads at most this many parts of a long page...
+AGENT_SEARCH_SECONDS = 3.0                                   # ...and stops reading further parts after this long
+AGENT_FOUND_LINES = 60                                       # the most matching lines read_page(query) returns
 _STALE_MARKERS = ("browser_binding_stale", "browser_ref_stale", "browser_tab_not_found")
 # The page's window stopped matching the native window (a popup or a new window appeared). Never a ref-stale retry: the same
 # call could land in another tab. The adapter re-binds the window exactly, re-reads, and retries once only if it is the same control.
@@ -2581,8 +2621,12 @@ class Adapter:
         self._history: list[str] = []                        # pages before the current one, for back()
         self._unconfirmed = False                            # self.url is the address we navigated to, not yet seen in a snapshot (a redirect is not a new page)
         self._typed = set()                                  # refs typed into since the last page read
-        self._viewport = AGENT_VIEWPORT
-        self._actions: dict = {}                             # CuaDriver ref -> its actions, from the last semantic read
+        # A long page comes in parts of one snapshot (CuaDriver's continuation), and the browser can't be scrolled in the
+        # background: scroll pages through the parts instead. page_part is the part the view shows (0 = the first).
+        self.page_part = 0
+        self._page_more = False                              # the part in the view has a next part
+        self._parts: list = []                               # the view of every part the last read fetched, in order
+        self.found = None                                    # what read_page(query) found: the model's next view shows it once
         self._last_res = None
         self.app_pid = self.app_window = self.bundle_id = None    # the Mac app being driven (surface "app"); the browser keeps pid/window_id
         self._app_rebind_due = False
@@ -2711,9 +2755,11 @@ class Adapter:
         if url:
             self.url, self.domain = url, _host(url) or None
 
-    def _read(self):
+    def _read(self, search=False):
         """DOM first, then the semantic snapshot (with its picture) last: every read supersedes the refs of the one before,
-        and the refs the model is shown come from the semantic one, so it has to be the newest."""
+        and the refs the model is shown come from the semantic one, so it has to be the newest. Then the next parts of that
+        same snapshot up to page_part (every part, within AGENT_SEARCH_PARTS / AGENT_SEARCH_SECONDS, for a search); they
+        mint no new snapshot, so the refs of every part read stay good and all of them are in the view's ref map."""
         self._image_for = None
         self._typed = set()                                  # fields typed into since this read: their value in the view is out of date
         dom = self._state({"snapshot_format": "dom_refs_v1"})        # input types, autocomplete, links; the gate depends on it
@@ -2731,18 +2777,39 @@ class Adapter:
                     links.add(_host(href))
         self.link_domains = links
         url = (sd.get("page") or {}).get("url") or dd.get("url")
-        if url and self.url and url != self.url and not self._unconfirmed:          # a click (or script) moved the tab: back() can return
-            self._history = (self._history + [self.url])[-50:]
+        if url and self.url and url != self.url:
+            self.page_part = 0                               # another page starts at its first part
+            if not self._unconfirmed:                        # a click (or script) moved the tab: back() can return
+                self._history = (self._history + [self.url])[-50:]
         if url:
             self._unconfirmed = False
         self._set_page(url)
         self.title = (sd.get("page") or {}).get("title") or self.title
-        shot = sd.get("screenshot") or {}
-        w, h = shot.get("viewport_css_width"), shot.get("viewport_css_height")
-        self._viewport = (round(w / 2), round(h / 2)) if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0 else AGENT_VIEWPORT
-        self._actions = {r.get("ref"): set(r.get("actions") or ()) for r in sd.get("refs") or []}
-        self.view = browser_view(sd, dd)
-        self.last_image, self.last_snapshot, self._image_for = sem.get("image"), (sd.get("snapshot") or {}).get("id"), self.view
+        chunks, snap_id = [sd], (sd.get("snapshot") or {}).get("id")
+        want = max(self.page_part, AGENT_SEARCH_PARTS - 1) if search else self.page_part
+        deadline = time.monotonic() + AGENT_SEARCH_SECONDS
+        while len(chunks) <= want:
+            tok = _snap_more(chunks[-1])
+            if not tok or len(chunks) > self.page_part and time.monotonic() > deadline:
+                break
+            res = self._state({"snapshot_format": "semantic_v2", "continuation": tok})
+            d = res.get("data")
+            if _cua_problem(res) or not isinstance(d, dict) or (d.get("snapshot") or {}).get("id") != snap_id:
+                break                                        # the rest of the page can't be read: show what was
+            chunks.append(d)
+        self.page_part = min(self.page_part, len(chunks) - 1)
+        every = [r for c in chunks for r in _view_controls(c.get("refs"))]
+        joined = {every[i].get("ref"): a for i, a in _dom_join(every, dd).items()}
+        parts, refs, n = [], {}, 0
+        for k, c in enumerate(chunks):                       # the page header (title, URL) comes with the first part only
+            v = browser_view(c if k == 0 else {**c, "page": sd.get("page"), "content_refs": sd.get("content_refs")}, dd, start=n, part=k + 1, joined=joined)
+            n += v["interactive"]
+            refs.update(v["refs"])
+            parts.append(v)
+        cur = parts[self.page_part]
+        self._parts, self._page_more = parts, bool(_snap_more(chunks[self.page_part]))
+        self.view = {**cur, "refs": refs, "sparse": parts[0]["sparse"]}      # sparse is about the page, not a text-only later part
+        self.last_image, self.last_snapshot, self._image_for = sem.get("image"), snap_id, self.view
         return self.view
 
     def observe(self):
@@ -2790,6 +2857,7 @@ class Adapter:
             self._history = (self._history + [self.url])[-50:]
         self.view = None                                     # the old page's refs are gone
         self._unconfirmed = True
+        self.page_part = 0
         self._set_page(new)
         return new
 
@@ -2809,19 +2877,35 @@ class Adapter:
         return out
 
     def _read_page(self, args):
+        """The current part of the page, read again. With a query: the whole page (every part, within the caps) searched by
+        words, best lines first; the eN numbers are those the parts get in any view, and all of them work. The adapter's view
+        stays the current part; `found` is what the model sees in its place for the next step."""
         self._ids()
         self._to_browser()
-        view = self._read()                                  # always the full view: the eN numbers are the ones later clicks resolve against
-        query = str(args.get("query") or "").strip().lower()
-        lines = view["text"].split("\n")
+        query = str(args.get("query") or "").strip()
+        view = self._read(search=bool(query))
         if not query:
             return view["text"]
-        head, body = lines[:view.get("head", 2)], lines[view.get("head", 2):]
-        hits = [ln for ln in body if query in ln.lower() and not ln.startswith("(+")]
+        words, hits, order = _query_words(query), [], 0
+        for part in self._parts:
+            for ln in part["text"].split("\n")[part.get("head", 2):]:
+                order += 1
+                score = _line_score(ln, words) if words and not ln.startswith("(+") else 0
+                if score:
+                    hits.append((-score, order, ln))
+        lines = view["text"].split("\n")
         if not hits:
-            return f'Nothing on the page matches "{_clip(query, 60)}". The start of the page:\n' + "\n".join(lines[:40])
-        more = [ln for ln in body if ln.startswith("(+")]
-        return "\n".join(head + hits + more)
+            self.found = f'Nothing on the page matches "{_clip(query, 60)}". The start of this part of the page:\n' + "\n".join(lines[:40])
+            return self.found
+        head = lines[:2] + [f'Lines matching "{_clip(query, 60)}", best first:']
+        room, out = int(6000 * 3.2) - len("\n".join(head)), []
+        for _, _, ln in sorted(hits)[:AGENT_FOUND_LINES]:
+            if len(ln) + 1 > room:
+                break
+            room -= len(ln) + 1
+            out.append(ln)
+        self.found = "\n".join(head + out)
+        return self.found
 
     @staticmethod
     def _sig(hit):
@@ -2867,27 +2951,25 @@ class Adapter:
             self._act(lambda: ("browser_type", {**self._ids(), "ref": self._same_ref(args, sig), "text": "\n", "mode": "keystrokes"}))
         return f"Typed into {_clip(hit['facts']['name'], 60) or short}" + (" and pressed Enter" if submit else "") + "; read the page to see the result."
 
-    def _scroll_ref(self):
-        """A ref in the current view that takes pointer input, for the dom_event scroll route."""
-        for r in ((self.view or {}).get("refs") or {}).values():
-            if self._actions.get(r["ref"], set()) & {"scroll", "pointer"}:
-                return r["ref"]
-        raise McpError("the page cannot be scrolled without bringing the browser forward")
-
     def _scroll(self, args):
+        """Pages through the parts of a long page (the browser can't be scrolled without bringing it forward). Nothing is
+        sent to the browser: the next read shows the part asked for."""
         d = args.get("direction")
         if d not in ("up", "down"):
             raise McpError('direction must be "up" or "down"')
-        dy = AGENT_SCROLL_PX if d == "down" else -AGENT_SCROLL_PX
-        try:                                                 # the trusted route first; it is refused when it would foreground the window
-            self._act(lambda: ("browser_pointer", {**self._ids(), "action": "scroll", "delta_y": dy, "input_route": "trusted",
-                                                   "x": self._viewport[0], "y": self._viewport[1]}))
-        except McpError as e:
-            blob = _cua_blob(self._last_res) if self._last_res else str(e).lower()
-            if "browser_input_trust_unavailable" not in blob and "trusted" not in blob:
-                raise
-            self._act(lambda: ("browser_pointer", {**self._ids(), "action": "scroll", "delta_y": dy, "input_route": "dom_event", "ref": self._scroll_ref()}))
-        return f"Scrolled {d}; read the page to see more."
+        if self.target is None:
+            raise McpError("no page is open; use open_url first")
+        if self.view is None:
+            raise McpError("read the page first")
+        if d == "down":
+            if not self._page_more:
+                return "You're at the end of the page."
+            self.page_part += 1
+            return "Showing the next part of the page; read it in the current view."
+        if self.page_part == 0:
+            return "You're at the top of the page."
+        self.page_part -= 1
+        return "Showing the previous part of the page; read it in the current view."
 
     def _back(self, args):
         if not self._history:
@@ -2897,6 +2979,7 @@ class Adapter:
         self._history.pop()
         self.view = None
         self._unconfirmed = True
+        self.page_part = 0
         self._set_page((res.get("data") or {}).get("url") or prev)
         return f"Went back to {self.url}; read the page to see it."
 
@@ -2908,6 +2991,7 @@ class Adapter:
         if fn is None:
             return f"Error: {tool} is not a web tool"
         self._shot_fresh, self._image_for = False, None      # whatever this does, the picture from the last read is out of date
+        self.found = None
         if tool in _BROWSER_ONLY and self.surface == "app":
             return f"Error: {tool} is for the browser and a Mac app is open; use click_app / type_app, or open_url / read_page to go back to the browser"
         if tool in _APP_ONLY and self.surface != "app":
@@ -3145,6 +3229,8 @@ AGENT_SYSTEM = (
     "For a Mac app: open_app(name), then click_app and type_app with refs from its view; menu(app, path) and hotkey(keys) work in the open app; open_url or read_page goes back to the browser.\n"
     "After you act, read the page again to see the result. Use note() to save facts you will need for the answer.\n"
     "To search the web, open https://duckduckgo.com/html/?q=your+words.\n"
+    "Long pages come in parts: use scroll to read the next part, or read_page with a few key words.\n"
+    "If a cookie or consent dialog blocks the page, choose the option that rejects or refuses non-essential cookies.\n"
     "Never type passwords or payment details; use ask_user instead.\n"
     "When you have the answer, call done(answer) with a short markdown answer that cites the page URLs you used."
 )
@@ -3443,7 +3529,7 @@ def _agent_summary(tool, args, facts):
 
 def _agent_short(tool, result):
     """The result as the history shows it: "ok" for a plain success, else its first line."""
-    if tool in ("click", "type", "scroll", "read_page", "click_app", "type_app") and not result.startswith(("Error", "Blocked", "The user", "Not done")):
+    if tool in ("click", "type", "read_page", "click_app", "type_app") and not result.startswith(("Error", "Blocked", "The user", "Not done")):
         return "ok"
     return _clip(re.sub(r";\s*read the (?:page|app)[^\n]*", "", result.split("\n", 1)[0]), 400)
 
@@ -3553,7 +3639,8 @@ class _AgentLoop:
     def look(self):
         if self.reuse and getattr(self.ad, "view", None):      # read_page just read it (maybe with a query): don't read again
             self.reuse = False
-            return self.ad.view
+            found = getattr(self.ad, "found", None)          # a query's matches stand in for the view this once; their refs are in it
+            return {**self.ad.view, "text": found} if found else self.ad.view
         self.reuse = False
         app_s = getattr(self.ad, "surface", "browser") == "app"          # an unbinding read leaves the browser surface behind
         try:
