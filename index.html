@@ -202,6 +202,7 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .pillbtn:hover { background: var(--hover); }
 .pillbtn.on { background: color-mix(in srgb, var(--ok) 12%, transparent); border-color: color-mix(in srgb, var(--ok) 40%, transparent); color: var(--ok); }
 .pillbtn svg { width: 16px; height: 16px; }
+.pillbtn[hidden] { display: none; }
 .crow .grow { flex: 1; }
 .sendbtn { width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--accent); color: var(--on-accent); cursor: pointer; display: grid; place-items: center; }
 .sendbtn:disabled { opacity: .25; cursor: default; }
@@ -438,6 +439,21 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .agans .agcardh { color: var(--ink-2); }
 .agans .sources a.chip { text-decoration: none; }
 .agans .agact { margin-top: 14px; }
+.agchat { border: 1px solid var(--line); border-radius: 14px; background: var(--raised); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.agchst { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink-2); }
+.agchshot { width: 240px; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; line-height: 0; cursor: zoom-in; }
+.agchshot img { width: 100%; display: block; }
+.agchshot[hidden], .agchsteps[hidden], .agchctl[hidden] { display: none; }
+.agchsteps { margin: 0; }
+.agchsteps .tb { white-space: normal; max-height: 380px; font-size: 13px; }
+.agchsteps .aglog { margin-top: 0; }
+.agchcards { display: flex; flex-direction: column; gap: 8px; }
+.agchcards:empty { display: none; }
+.agchctl { display: flex; gap: 8px; }
+.agtask { margin-top: 8px; }
+.agidle { font-size: 13.5px; color: var(--muted); }
+.linkbtn { border: 0; background: none; padding: 0; color: var(--muted); font-size: 12.5px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.linkbtn:hover { color: var(--ink); }
 .aglive { border: 1px solid var(--line); border-radius: 16px; background: var(--raised); overflow: hidden; }
 .agstate { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 13px; color: var(--ink-2); }
 .agshotbox { background: var(--soft); min-height: 150px; display: grid; place-items: center; color: var(--muted); font-size: 13px; text-align: center; padding: 14px; border-top: 1px solid var(--line); }
@@ -625,6 +641,7 @@ dialog::backdrop { background: var(--overlay); }
             <button class="pillbtn on" id="thinkPill"><svg class="i"><use href="#i-bulb"/></svg>Think</button>
             <div class="sel"><select id="effortSel" title="Effort"><option value="">Auto effort</option><option value="low">Low effort</option><option value="high">High effort</option><option value="xhigh">Max effort</option></select></div>
             <button class="pillbtn" id="filesPill"><svg class="i"><use href="#i-file"/></svg>My files</button>
+            <button class="pillbtn" id="agentPill" hidden><svg class="i"><use href="#i-agent"/></svg>Agent</button>
             <div class="grow"></div>
             <button class="sendbtn" id="send" title="Send"><svg class="i"><use href="#i-up" id="sendIcon"/></svg></button>
           </div>
@@ -966,7 +983,7 @@ function showView(v) {
   if (v === "manage") loadManage();
   if (v === "search") { loadSearch(); setTimeout(() => $("srQuery").focus(), 0); }
   if (v === "agent") agOpen();
-  if (v === "chat") setTimeout(() => $("input").focus(), 0);
+  if (v === "chat") { setTimeout(() => $("input").focus(), 0); agFetchStatus(); }
   renderHistory();
   if (innerWidth < 820) setCollapsed(true);
 }
@@ -1040,6 +1057,8 @@ $("engToggle").onclick = toggleEngine;
 
 // ---------------- chats
 let chats = [], current = null, streaming = null, ctxWindow = 32768;
+let chRun = null;          // the task this chat started in Agent mode: { chat, msg, starting, s (run state, see agFresh), el, ui }
+const chLive = () => !!(chRun && (chRun.starting || chRun.s.live));
 let thinking = store.get("think", true), effort = store.get("effort", "");
 async function loadChats() { try { chats = await api("/api/chats"); } catch { chats = []; } renderHistory(); }
 function groupOf(ts) {
@@ -1086,16 +1105,18 @@ $("history").onclick = async (e) => {
 };
 async function openChat(id) {
   if (streaming) return toast("Wait for the reply to finish");
-  try { current = await api(`/api/chats/${id}`); } catch { return toast("Could not open chat"); }
+  let c; try { c = await api(`/api/chats/${id}`); } catch { return toast("Could not open chat"); }
+  chDetach(); current = c;
   showView("chat"); renderThread(); scrollBottom(true);
+  chResume();
 }
-function newChat() { if (streaming) return; current = null; showView("chat"); renderThread(); }
+function newChat() { if (streaming) return; chDetach(); current = null; showView("chat"); renderThread(); }
 $("newChat").onclick = newChat;
 document.addEventListener("keydown", (e) => { if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); newChat(); } });
-async function saveChat() {
-  if (!current) return;
-  const msgs = current.messages.map(({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources }) => ({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources }));
-  await jpost(`/api/chats/${current.id}`, { title: current.title, messages: msgs }, "PUT");
+async function saveChat(chat = current) {
+  if (!chat) return;
+  const msgs = chat.messages.map(({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources, agent_run, agentLink }) => ({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources, agent_run, agentLink }));
+  await jpost(`/api/chats/${chat.id}`, { title: chat.title, messages: msgs }, "PUT");
   loadChats();
 }
 
@@ -1125,6 +1146,7 @@ function renderThread() {
     wrap.style.display = "";
     scroll.style.display = "";
     $("thread").innerHTML = current.messages.map((m, i) => turnHTML(m, i)).join("");
+    if (chRun && chRun.chat === current) { const el = $("thread").querySelector(".agchat")?.closest(".turn"); if (el) chBind(chRun, el); }   // a task in progress keeps its card
     $("input").placeholder = `Message ${activeChat()?.name || ""}`;
     const last = [...current.messages].reverse().find((m) => m.stats);
     showPerf(last?.stats); drawSpark();
@@ -1186,18 +1208,29 @@ function turnHTML(m, i, live = false) {
     const docs = atts.filter((a) => a.kind !== "image" || a.scanned).map((a) => `<div class="att"><div class="ic">${a.scanned ? `<img src="${attThumb(a)}" alt="">` : icon(DOC_ICON(a.name))}</div><div style="min-width:0"><div class="nm">${esc(a.name)}</div><div class="mt">${esc(attMeta(a))}</div></div></div>`).join("");
     return `<div class="turn user">${imgs || docs ? `<div class="uatts">${imgs}${docs}</div>` : ""}${m.content ? `<div class="bubble">${esc(m.content)}</div>` : ""}</div>`;
   }
+  if (chRun && chRun.msg === m) return chCardHTML(i);
   const waiting = live && !m.content && !m.reasoning;
-  const body = m.switching ? `<span class="shimmer">${m.switching === "vision" ? `Loading ${esc(m.switchModel || "the vision engine")} with vision… (about 10 s)` : `Loading ${esc(m.switchModel || "the model")}… (first load takes 10–30 s)`}</span>` : waiting ? `<span class="shimmer">${(current?.messages || []).some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span>` : md(m.content);
+  const agentRid = typeof m.agent_run === "string" && AG_RID.test(m.agent_run) ? m.agent_run : "";
+  const idle = m.agent_run && !m.content && !m.error;                                  // saved while the task was still running
+  const body = idle ? `<span class="agidle">This Agent task has no saved result yet.</span>` : m.switching ? `<span class="shimmer">${m.switching === "vision" ? `Loading ${esc(m.switchModel || "the vision engine")} with vision… (about 10 s)` : `Loading ${esc(m.switchModel || "the model")}… (first load takes 10–30 s)`}</span>` : waiting ? `<span class="shimmer">${(current?.messages || []).some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span>` : md(m.content);
   const tail = live && m.content ? '<span class="caret"></span>' : "";
-  const actions = live ? "" : `<div class="actions"><button class="iconbtn" data-act="copy" title="Copy">${icon("i-copy")}</button><button class="iconbtn" data-act="regen" title="Regenerate">${icon("i-redo")}</button>${perfLine(m.stats)}</div>${perfGrid(m.stats)}`;
+  const actions = live ? "" : `<div class="actions"><button class="iconbtn" data-act="copy" title="Copy">${icon("i-copy")}</button>${m.agent_run ? "" : `<button class="iconbtn" data-act="regen" title="Regenerate">${icon("i-redo")}</button>`}${perfLine(m.stats)}</div>${perfGrid(m.stats)}`;
+  const agentTail = (agentRid ? `<div class="agtask"><button class="linkbtn" data-agview="${esc(agentRid)}">Agent task · view steps</button></div>` : "")
+    + (m.agentLink ? `<div class="agtask"><button class="linkbtn" data-agopen>Open Agent</button></div>` : "");
   const cut = !live && m.finish === "length" ? `<div class="cutoff">${icon("i-x", "width:14px;height:14px")}The reply hit the length limit. <button class="btn sm" data-act="continue">Continue</button></div>` : "";
-  return `<div class="turn bot" data-i="${i}">${thoughtHTML(m, live)}<div class="content">${body}${tail}</div>${live ? "" : sourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
+  return `<div class="turn bot" data-i="${i}">${thoughtHTML(m, live)}<div class="content">${body}${tail}</div>${agentTail}${live ? "" : sourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
 }
+$("thread").addEventListener("keydown", agLogKey);
 $("thread").onclick = (e) => {
   const full = e.target.closest(".uatts img[data-full]");
   if (full) { window.open(full.dataset.full, "_blank"); return; }
   const src = e.target.closest(".sources [data-open]");
   if (src) { srOpen(src); return; }
+  const task = e.target.closest("[data-agview]");
+  if (task) { const rid = task.dataset.agview; if (AG_RID.test(rid)) { showView("agent"); agOpenSaved(rid); } return; }
+  if (e.target.closest("[data-agopen]")) { showView("agent"); return; }
+  const card = e.target.closest(".agchat");
+  if (card) { if (chRun?.el?.contains(card)) chCardClick(chRun, e); return; }
   const turn = e.target.closest(".turn.bot"); if (!turn) return;
   if (e.target.closest("[data-perf]")) { turn.querySelector(".perfgrid")?.classList.toggle("on"); return; }
   const act = e.target.closest("[data-act]")?.dataset.act, m = current.messages[+turn.dataset.i];
@@ -1206,7 +1239,7 @@ $("thread").onclick = (e) => {
     noFilesOnce = true;                                    // "continue" is not a question to look up in the user's files
     $("input").value = "Continue exactly where you left off."; autosize(); send(); return;
   }
-  if (act === "regen" && !streaming) {
+  if (act === "regen" && !streaming && !m.agent_run) {
     current.messages = current.messages.slice(0, +turn.dataset.i); renderThread(); generate();
   }
 };
@@ -1289,13 +1322,13 @@ function autosize() { const t = $("input"); t.style.height = "auto"; t.style.hei
 $("input").addEventListener("input", autosize);
 $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
 function updateSend() {
-  const b = $("send");
-  $("sendIcon").setAttribute("href", streaming ? "#i-stop" : "#i-up");
-  b.title = streaming ? "Stop" : "Send";
+  const b = $("send"), working = !!streaming || chLive();
+  $("sendIcon").setAttribute("href", working ? "#i-stop" : "#i-up");
+  b.title = working ? "Stop" : "Send";
   const ready = pending.filter((p) => p.meta).length, busy = pending.some((p) => p.busy);
-  b.disabled = !streaming && (busy || (!$("input").value.trim() && !ready));
+  b.disabled = !working && (busy || (!$("input").value.trim() && !ready));
 }
-$("send").onclick = () => streaming ? streaming.abort() : send();
+$("send").onclick = () => streaming ? streaming.abort() : chLive() ? chStop() : send();
 function syncThink() {
   const can = modelThinks();
   $("thinkPill").classList.toggle("on", thinking && can);
@@ -1314,11 +1347,19 @@ async function send() {
   const text = $("input").value.trim();
   const atts = pending.filter((p) => p.meta).map((p) => p.meta);
   if ((!text && !atts.length) || streaming || pending.some((p) => p.busy)) return;
+  const agentMode = useAgent && agentReady();
+  if (agentMode) {
+    if (chLive()) return toast("The Agent is already working on a task");
+    if (!text) return toast("Describe the task for the Agent");
+    if (atts.length) toast("Attachments aren't sent to the Agent yet");
+  }
+  const context = agentMode ? chContextText(current?.messages || []) : "";      // the turns before this message
   $("input").value = ""; pending = []; renderPending(); autosize();
   const title = (text || atts.map((a) => a.name).join(", ")).replace(/\s+/g, " ").slice(0, 48);
   if (!current) current = { id: newId(), title, messages: [] };
-  current.messages.push({ role: "user", content: text, attachments: atts.length ? atts : undefined });
+  current.messages.push({ role: "user", content: text, attachments: !agentMode && atts.length ? atts : undefined });
   renderThread(); scrollBottom(true);
+  if (agentMode) return chAgentStart(text, context);
   generate();
 }
 async function generate() {
@@ -1342,7 +1383,7 @@ async function generate() {
   const s = store.get("settings", {});
   const messages = [];
   if (s.sys) messages.push({ role: "system", content: s.sys });
-  current.messages.slice(0, -1).forEach((m) => messages.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map((a) => a.id) } : {}) }));
+  current.messages.slice(0, -1).filter((m) => !(m.agent_run && !m.content)).forEach((m) => messages.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map((a) => a.id) } : {}) }));
   const body = { messages, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
   if (effort && modelThinks()) body.reasoning_effort = effort;
   if (s.temp) body.temperature = +s.temp;
@@ -1416,6 +1457,147 @@ async function generate() {
   const ntb = done.querySelector(".thought .tb"); if (ntb) ntb.scrollTop = tbScroll;
   showPerf(bot.stats); drawSpark(); scrollBottom();
   await saveChat(); poll();
+}
+
+// ---------------- agent runs started from chat
+// The Agent switch: a message becomes a task for the Agent. Its card lives in the thread (same building blocks as the Agent view, see agFresh);
+// when the run ends the card is replaced by the run's answer as an ordinary reply that links back to the steps.
+const AG_RID = /^[a-f0-9]{12}$/, CH_STATUS = { done: "Done", stopped: "Stopped", failed: "Failed", interrupted: "Interrupted" };
+// The last few turns of the chat as plain text for the Agent, newest last, at most ~6000 characters.
+function chContextText(msgs) {
+  const lines = [];
+  for (const m of msgs) {
+    if (!m || (m.role !== "user" && m.role !== "assistant")) continue;
+    const t = String(m.content || "").trim(); if (!t) continue;
+    lines.push(`${m.role === "user" ? "User" : "Assistant"}: ${t.length > 2000 ? t.slice(0, 2000) + "…" : t}`);
+  }
+  let out = "";
+  for (const line of lines.slice(-6).reverse()) {
+    const next = out ? line + "\n" + out : line;
+    if (next.length > 6000) break;
+    out = next;
+  }
+  return out;
+}
+const chCardHTML = (i) => `<div class="turn bot agturn" data-i="${i}"><div class="agchat">
+  <div class="agchst"><span class="dot ok"></span><span class="agchtx">Starting…</span></div>
+  <div class="agchshot" hidden></div>
+  <details class="thought agchsteps" hidden><summary>Steps <span class="tw"></span>${icon("i-right")}</summary><div class="tb"><div class="aglog"></div></div></details>
+  <div class="agchcards"></div>
+  <div class="agchctl"><button class="btn sm" data-chtake>Take over</button><button class="btn sm danger" data-chstop>Stop</button></div>
+</div></div>`;
+function chNewRun(chat, msg) {
+  const c = { chat, msg, starting: false, el: null, ui: null, shotShown: undefined, s: null };
+  c.s = { ...agFresh(), es: null, timer: 0, replay: false, log: null, cardBox: null, answerCard: false,
+    scroller: () => stick ? $("chatScroll") : null,
+    hooks: { sync: () => chSync(c), ended: () => chEnded(c), retry: () => chRetry(c) } };
+  return c;
+}
+// Point the run at a (new) card element. What it has received so far is drawn again into it.
+function chBind(c, el) {
+  const s = c.s, root = el.querySelector(".agchat");
+  c.el = el; c.shotShown = undefined;
+  c.ui = { dot: root.querySelector(".dot"), tx: root.querySelector(".agchtx"), shot: root.querySelector(".agchshot"), steps: root.querySelector(".agchsteps"), count: root.querySelector(".tw"),
+    ctl: root.querySelector(".agchctl"), take: root.querySelector("[data-chtake]"), stop: root.querySelector("[data-chstop]") };
+  s.log = root.querySelector(".aglog"); s.cardBox = root.querySelector(".agchcards");
+  Object.assign(s, { cards: {}, urls: [], shot: null, where: "", answer: "", engine: "" });
+  const was = s.replay; s.replay = true;
+  for (const e of s.events) agRender(s, e);
+  s.replay = was;
+  chSync(c);
+}
+function chSync(c) {
+  const s = c.s, ui = c.ui; if (!ui) return;
+  agDerive(s);
+  let [txt, dot] = agStateText(s, "Running…", "Starting…");
+  if (!s.live && s.status) txt = CH_STATUS[s.status] || txt;
+  if (s.lost) [txt, dot] = ["Lost connection. Reconnecting…", "warn"];
+  ui.tx.textContent = txt; ui.dot.className = "dot " + dot;
+  const url = s.shot && s.rid ? agShotUrl(s, s.shot) : "";
+  if (url !== c.shotShown) {
+    c.shotShown = url; ui.shot.hidden = !url;
+    ui.shot.innerHTML = url ? `<img src="${esc(url)}" alt="Latest screenshot" data-full="${esc(url)}" title="Open full size">` : "";
+  }
+  const steps = s.log.querySelectorAll(".agstep").length;
+  ui.steps.hidden = !s.log.childElementCount; ui.count.textContent = steps ? `· ${steps}` : "";
+  ui.ctl.hidden = !s.live;
+  ui.take.disabled = !s.live || s.pausing || s.stopping; ui.take.textContent = s.paused ? "Resume" : s.pausing ? "Pausing…" : "Take over";
+  ui.stop.disabled = !s.live || s.stopping; ui.stop.textContent = s.stopping ? "Stopping…" : "Stop";
+  agAttnNow(); updateSend();
+}
+function chCardClick(c, e) {
+  if (e.target.closest("[data-chstop]")) return agStopRun(c.s);
+  if (e.target.closest("[data-chtake]")) return agTakeoverRun(c.s);
+  const img = e.target.closest(".agchshot img[data-full]");
+  if (img) { window.open(img.dataset.full, "_blank"); return; }
+  agLogClick(c.s, e);
+}
+function chStop() { if (!chRun?.s.rid) return toast("The Agent is still starting"); agStopRun(chRun.s); }
+// Leave the card behind (another chat opens): the task keeps running, and opening this chat again reattaches to it.
+function chDetach() { if (chRun) { agClose(chRun.s); chRun = null; agAttnNow(); updateSend(); } }
+async function chAgentStart(task, context) {
+  const chat = current, bot = { role: "assistant", content: "" };
+  chat.messages.push(bot);
+  const c = chRun = Object.assign(chNewRun(chat, bot), { starting: true });
+  $("thread").insertAdjacentHTML("beforeend", chCardHTML(chat.messages.length - 1));
+  chBind(c, $("thread").lastElementChild); scrollBottom(true);
+  let r;
+  try { r = await jpost("/api/agent/run", { task, model_id: activeChat()?.id, context, chat_id: chat.id }); }
+  catch (e) {
+    bot.error = e.message; bot.agentLink = true;
+    if (chRun === c) chRun = null;
+    if (current === chat) { renderThread(); scrollBottom(true); }
+    updateSend(); agAttnNow();
+    return saveChat(chat);
+  }
+  c.starting = false; bot.agent_run = r.run_id;
+  await saveChat(chat);                                      // the placeholder carries the run id, so reopening the chat can find the task
+  if (chRun !== c) return;
+  Object.assign(c.s, { rid: r.run_id, live: true, task });
+  agConnect(c.s); chSync(c); loadAgentRuns();
+}
+async function chEnded(c) {
+  if (chRun !== c) return;
+  chRun = null;
+  loadAgentRuns(); loadAgent();
+  const m = c.msg;
+  m.content = safeMd(agFinalText(agOutcome(c.s.events))); m.agent_run = c.s.rid;
+  if (current === c.chat) { renderThread(); scrollBottom(); }
+  updateSend(); agAttnNow();
+  await saveChat(c.chat);
+}
+async function chRetry(c) {                                  // lost the stream: look at the task, then follow it again or show how it ended
+  const s = c.s; if (!s.lost) return;
+  let d; try { d = await api(`/api/agent/runs/${s.rid}`); } catch { return; }
+  if (!s.lost || chRun !== c) return;
+  const evs = Array.isArray(d.events) ? d.events : [];
+  s.lost = false;
+  evs.forEach((e) => agEvent(s, e));
+  if (!evs.some((e) => e?.type === "end")) {
+    if (["done", "stopped", "failed", "interrupted"].includes(d.status)) agEvent(s, { i: evs.length, type: "end", status: d.status });
+    else { s.live = true; s.status = ""; agConnect(s); chSync(c); }
+  }
+}
+// A saved chat whose last Agent task had no result yet: follow it if it is still running, else fill in how it ended.
+async function chResume() {
+  const chat = current, ms = chat?.messages || [];
+  let i = -1; for (let k = ms.length - 1; k >= 0; k--) if (ms[k].role === "assistant" && typeof ms[k].agent_run === "string" && !ms[k].content && !ms[k].error) { i = k; break; }
+  if (i < 0) return;
+  const m = ms[i], rid = m.agent_run; if (!AG_RID.test(rid)) return;
+  let d; try { d = await api(`/api/agent/runs/${rid}`); } catch { return; }
+  const evs = Array.isArray(d.events) ? d.events : [];
+  let live = false;
+  if (!evs.some((e) => e?.type === "end")) { const st = await agFetchStatus(); live = st?.running === rid; }
+  if (current !== chat || m.content || chRun) return;
+  if (live) {
+    const c = chRun = chNewRun(chat, m);
+    Object.assign(c.s, { rid, live: true, task: d.task || "" });
+    renderThread();                                          // draws the card for chRun and binds it
+    agConnect(c.s); updateSend(); scrollBottom(true);
+    return;
+  }
+  m.content = safeMd(agFinalText(agOutcome(evs, d.status || "interrupted")));
+  renderThread(); await saveChat(chat);
 }
 
 // ---------------- images
@@ -1679,7 +1861,7 @@ async function loadStorage() {
     const [, t] = STORAGE.find(([k]) => k === b.dataset.clear);
     if (!(await confirmBox(`Clear ${t.toLowerCase()}?`, "This permanently deletes the files and can't be undone.", "Clear"))) return;
     try { await jpost("/api/storage/clear", { what: b.dataset.clear }); toast(`${t} cleared`); } catch (err) { toast(err.message); }
-    if (b.dataset.clear === "chats") { current = null; loadChats(); }
+    if (b.dataset.clear === "chats") { chDetach(); current = null; loadChats(); }
     loadStorage();
   };
 }
@@ -1893,9 +2075,24 @@ const AG_EXAMPLES = [
 ];
 const AG_TIER = { read: "Read-only", ask: "Ask first", allowed: "Allowed" }, AG_TIER_ORDER = ["read", "ask", "allowed"];
 const AG_STATUS = { done: "Finished", stopped: "Stopped", failed: "Failed", interrupted: "Interrupted", running: "Running", waiting: "Waiting for you", paused: "Paused" };
-const ag = { st: null, runs: [], rid: null, es: null, events: [], last: -1, live: false, pinned: false, replay: false, retries: 0, timer: 0,
-  cards: {}, pending: null, paused: false, pausing: false, stopping: false, replyingN: null, engine: "", shot: null, shotShown: null,
-  where: "", urls: [], answer: "", task: "", status: "", reason: "", setSig: "", runsSig: "", lost: false, bgWait: false };
+// One run's state. The Agent view keeps a single one (`ag`); a task started from chat keeps its own (`chRun.s`); every agXxx(s, …) below works on either.
+function agFresh() {
+  return { rid: null, events: [], last: -1, live: false, retries: 0, cards: {}, pending: null, paused: false, pausing: false, stopping: false, replyingN: null,
+    engine: "", shot: null, where: "", urls: [], answer: "", task: "", status: "", reason: "", lost: false };
+}
+const ag = { ...agFresh(), st: null, runs: [], es: null, pinned: false, replay: false, timer: 0, shotShown: null, setSig: "", runsSig: "", bgWait: false,
+  log: $("agLog"), scroller: () => document.querySelector("#v-agent .scroll"),
+  hooks: { sync: () => agSync(), ended: () => { loadAgentRuns(); loadAgent(); }, retry: () => loadAgent() } };
+
+let useAgent = store.get("useAgent", false);
+const agentReady = () => { const c = ag.st?.cua || {}; return !!(ag.st?.enabled && c.installed && c.ok_version); };
+function syncAgentPill() {                                    // only offered while Agent is on and CuaDriver is ready
+  const can = agentReady(), p = $("agentPill");
+  p.hidden = !can; p.classList.toggle("on", useAgent && can);
+  p.title = "Run your message as a task for the Agent: it works in a browser and Mac apps";
+  store.set("useAgent", useAgent);
+}
+$("agentPill").onclick = () => { useAgent = !useAgent; syncAgentPill(); };
 
 // Pure helpers (also run under plain node by the author's checks).
 // An approval title is markdown the server has already escaped: **bold** and \x escapes are all that is honoured, the rest is text.
@@ -1953,7 +2150,22 @@ function agMd(s) {
   const d = document.createElement("div"); d.appendChild(t.content);
   return d.innerHTML;
 }
-const agShotUrl = (n) => `/api/agent/runs/${ag.rid}/shots/${encodeURIComponent(n)}`;
+const agShotUrl = (s, n) => `/api/agent/runs/${s.rid}/shots/${encodeURIComponent(n)}`;
+// What a run ended with, from its events: the answer markdown (if any), the final status and reason.
+function agOutcome(events, fallback = "") {
+  let answer = "", status = "", reason = "";
+  for (const e of events || []) {
+    if (!e || typeof e !== "object") continue;
+    if (e.type === "answer") answer = String(e.markdown || "");
+    else if (e.type === "end") { status = e.status || ""; reason = e.reason || ""; }
+  }
+  return { answer, status: status || fallback, reason };
+}
+function agFinalText(o) {
+  if (o.answer.trim()) return o.answer;
+  if (o.status === "done") return "The agent finished without giving an answer.";
+  return `The agent stopped: ${o.reason || (AG_STATUS[o.status] || o.status || "it was interrupted").toLowerCase()}`;
+}
 const agWhen = (t) => t ? new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
 const agNoteEl = (text) => { const d = document.createElement("div"); d.className = "agnote"; d.textContent = text; return d; };
 const agTierKey = (n) => {                       // like the server's _norm_label: no invisible or format characters, then whitespace, case
@@ -1963,10 +2175,15 @@ const agTierKey = (n) => {                       // like the server's _norm_labe
 };
 
 // ---- status, navigation, attention
-async function loadAgent() {
-  let st; try { st = await api("/api/agent/status"); } catch { return; }
+async function agFetchStatus() {
+  let st; try { st = await api("/api/agent/status"); } catch { return null; }
   ag.st = st;
   $("navAgent").hidden = !st.enabled;
+  syncAgentPill();
+  return st;
+}
+async function loadAgent() {
+  const st = await agFetchStatus(); if (!st) return;
   agRenderSettings(); agRenderSetup(); agSync();
   if (st.running && !ag.live && !ag.pinned && (st.running !== ag.rid || ag.lost)) agAttach(st.running);   // a task is in progress (or we lost it): follow it from its start
   else if (ag.lost && ag.rid && !st.running) agOpenSaved(ag.rid);                                         // it ended while we were away: show it as saved
@@ -1984,6 +2201,31 @@ function agOpen() {
 }
 setInterval(() => { if (view === "agent" || view === "manage") loadAgent(); }, 5000);
 function agAttn(on) { document.title = on ? "⏸ Agent needs your OK" : AG_TITLE; $("navAgent").classList.toggle("attn", on); }
+// Needs the user: the Agent view's task, another task waiting in the background, or the task started from chat.
+function agAttnNow() { const w = (s) => !!s && s.live && !!s.pending && !s.paused; agAttn(w(ag) || ag.bgWait || w(chRun?.s)); }
+// Shared by both places that show a run: which step waits for the user, whether the user holds the controls, and which cards still take an answer.
+function agDerive(s) {
+  s.pending = s.live ? agPendingOf(s.events) : null;
+  s.paused = s.live && agPausedOf(s.events);
+  if (s.paused) s.pausing = false;
+  if (s.replyingN != null && s.pending?.n !== s.replyingN) s.replyingN = null;
+  for (const [n, el] of Object.entries(s.cards)) {
+    const active = !!s.pending && String(s.pending.n) === n;
+    el.classList.toggle("done", !active);
+    el.querySelectorAll(".agact button, .agact input").forEach((x) => { x.disabled = s.replyingN === s.pending?.n || (s.paused && x.dataset.agreply !== "stop"); });   // Stop run stays available while paused
+  }
+}
+function agStateText(s, working, idle) {
+  if (s.live) {
+    if (s.paused) return ["Paused: you have control", "warn"];
+    if (s.pending) return [s.pending.type === "question" ? "Waiting for your answer" : "Waiting for your OK", "warn"];
+    if (s.stopping) return ["Stopping after this step…", "ok"];
+    if (s.pausing) return ["Pausing…", "ok"];
+    return [s.engine || working, "ok"];
+  }
+  if (s.status) return [AG_STATUS[s.status] || s.status, s.status === "done" ? "ok" : s.status === "failed" ? "bad" : ""];
+  return [idle, ""];
+}
 
 // ---- the view
 function agRenderModels() {
@@ -2012,30 +2254,14 @@ $("agSetup").onclick = async (e) => {
 function agSetErr(msg) { const el = $("agErr"); el.textContent = msg || ""; el.hidden = !msg; }
 function agSync() {
   const st = ag.st, live = ag.live, c = st?.cua || {};
-  ag.pending = live ? agPendingOf(ag.events) : null;
-  ag.paused = live && agPausedOf(ag.events);
-  if (ag.paused) ag.pausing = false;
-  if (ag.replyingN != null && ag.pending?.n !== ag.replyingN) ag.replyingN = null;
-  for (const [n, el] of Object.entries(ag.cards)) {
-    const active = !!ag.pending && String(ag.pending.n) === n;
-    el.classList.toggle("done", !active);
-    el.querySelectorAll(".agact button, .agact input").forEach((x) => { x.disabled = ag.replyingN === ag.pending?.n || (ag.paused && x.dataset.agreply !== "stop"); });   // Stop run stays available while paused
-  }
-  agAttn((live && !!ag.pending && !ag.paused) || ag.bgWait);
+  agDerive(ag);
+  agAttnNow();
   $("agBack").style.display = ag.pinned && !live && st?.running && st.running !== ag.rid ? "" : "none";
   // state line
-  let txt = "Ready", dot = "";
-  if (live) {
-    dot = "ok";
-    if (ag.paused) { txt = "Paused: you have control"; dot = "warn"; }
-    else if (ag.pending) { txt = ag.pending.type === "question" ? "Waiting for your answer" : "Waiting for your OK"; dot = "warn"; }
-    else if (ag.stopping) txt = "Stopping after this step…";
-    else if (ag.pausing) txt = "Pausing…";
-    else txt = ag.engine || "Working…";
-  } else if (ag.status) { txt = AG_STATUS[ag.status] || ag.status; dot = ag.status === "done" ? "ok" : ag.status === "failed" ? "bad" : ""; }
+  const [txt, dot] = agStateText(ag, "Working…", "Ready");
   $("agState").textContent = txt; $("agDot").className = "dot " + dot;
   // live view
-  const url = ag.shot && ag.rid ? agShotUrl(ag.shot) : "";
+  const url = ag.shot && ag.rid ? agShotUrl(ag, ag.shot) : "";
   if (url !== ag.shotShown) {
     ag.shotShown = url;
     const box = $("agShotBox"); box.classList.toggle("has", !!url);
@@ -2065,11 +2291,10 @@ $("agBack").onclick = () => { if (ag.st?.running) { ag.pinned = false; agAttach(
 $("agNew").onclick = () => { agClear(); ag.pinned = false; $("agTask").value = ""; agSize(); agSync(); $("agTask").focus(); };
 
 // ---- a run
-function agClose() { if (ag.es) { ag.es.onmessage = ag.es.onerror = ag.es.onopen = null; ag.es.close(); ag.es = null; } clearTimeout(ag.timer); }
+function agClose(s) { if (s.es) { s.es.onmessage = s.es.onerror = s.es.onopen = null; s.es.close(); s.es = null; } clearTimeout(s.timer); }
 function agClear() {
-  agClose();
-  Object.assign(ag, { rid: null, events: [], last: -1, live: false, retries: 0, cards: {}, pending: null, paused: false, pausing: false, stopping: false,
-    replyingN: null, engine: "", shot: null, where: "", urls: [], answer: "", task: "", status: "", reason: "", lost: false, bgWait: false });
+  agClose(ag);
+  Object.assign(ag, agFresh(), { bgWait: false });
   $("agLog").innerHTML = ""; agSetErr("");
 }
 async function agStart() {
@@ -2080,7 +2305,7 @@ async function agStart() {
     const r = await jpost("/api/agent/run", { task, model_id });
     store.set("agModel", model_id);
     agClear(); Object.assign(ag, { rid: r.run_id, live: true, pinned: false, task });
-    agConnect(); loadAgentRuns();
+    agConnect(ag); loadAgentRuns();
   } catch (e) { agSetErr(e.message); toast(e.message); }
   agSync();
 }
@@ -2088,42 +2313,43 @@ async function agAttach(rid) {
   agClear(); Object.assign(ag, { rid, live: true, pinned: false });
   agSync();
   try { const d = await api(`/api/agent/runs/${rid}`); if (ag.rid === rid) { ag.task = d.task || ""; if (!$("agTask").value.trim()) { $("agTask").value = ag.task; agSize(); } } } catch {}
-  if (ag.rid === rid && ag.live) agConnect();
+  if (ag.rid === rid && ag.live) agConnect(ag);
 }
 // One EventSource per (re)connect: the browser's own reconnect would replay from the original URL. `after` is inclusive.
-function agConnect() {
-  agClose();
-  const rid = ag.rid; if (!rid || !ag.live) return;
-  const es = new EventSource(`/api/agent/runs/${rid}/events?after=${ag.last + 1}`);
-  ag.es = es;
-  es.onopen = () => { ag.retries = 0; };                          // the heartbeat is an SSE comment: an open stream is a healthy one
-  es.onmessage = (m) => { let e; try { e = JSON.parse(m.data); } catch { return; } ag.retries = 0; agEvent(e); };
+function agConnect(s) {
+  agClose(s);
+  const rid = s.rid; if (!rid || !s.live) return;
+  const es = new EventSource(`/api/agent/runs/${rid}/events?after=${s.last + 1}`);
+  s.es = es;
+  es.onopen = () => { s.retries = 0; };                          // the heartbeat is an SSE comment: an open stream is a healthy one
+  es.onmessage = (m) => { let e; try { e = JSON.parse(m.data); } catch { return; } s.retries = 0; agEvent(s, e); };
   es.onerror = () => {
-    if (ag.es !== es) return;
-    agClose();
-    if (!ag.live || ag.rid !== rid) return;
-    if (++ag.retries > 8) { agLost(); return; }
-    ag.timer = setTimeout(() => { if (ag.live && ag.rid === rid) agConnect(); }, Math.min(5000, 700 * ag.retries));
+    if (s.es !== es) return;
+    agClose(s);
+    if (!s.live || s.rid !== rid) return;
+    if (++s.retries > 8) { agLost(s); return; }
+    s.timer = setTimeout(() => { if (s.live && s.rid === rid) agConnect(s); }, Math.min(5000, 700 * s.retries));
   };
 }
-function agLost() {                                  // keep trying: the poll reattaches as soon as the task can be reached, or shows it as saved
-  ag.live = false; ag.lost = true; ag.status = "interrupted";
-  $("agLog").append(agNoteEl("Lost connection to the task. Trying to reconnect…"));
-  agSync();
-  const again = () => { if (!ag.lost) return; loadAgent(); ag.timer = setTimeout(again, 5000); };
-  ag.timer = setTimeout(again, 3000);
+function agLost(s) {                                  // keep trying: the retry hook reattaches as soon as the task can be reached, or shows it as saved
+  s.live = false; s.lost = true; s.status = "interrupted";
+  s.log.append(agNoteEl("Lost connection to the task. Trying to reconnect…"));
+  s.hooks.sync();
+  const again = () => { if (!s.lost) return; s.hooks.retry(); s.timer = setTimeout(again, 5000); };
+  s.timer = setTimeout(again, 3000);
 }
-function agEvent(e) {
+function agEvent(s, e) {
   if (!e || typeof e !== "object") return;
-  if (typeof e.i === "number") { if (e.i <= ag.last) return; ag.last = e.i; }           // a replayed event is dropped
-  const sc = document.querySelector("#v-agent .scroll"), near = !ag.replay && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 200;
-  ag.events.push(e);
-  const before = $("agLog").lastElementChild;
-  agRender(e);
-  if (ag.replay) return;
-  agSync();
-  const added = $("agLog").lastElementChild;
-  if (added && added !== before) { if (e.type === "approval" || e.type === "question") added.scrollIntoView({ block: "nearest", behavior: "smooth" }); else if (near) sc.scrollTop = sc.scrollHeight; }
+  if (typeof e.i === "number") { if (e.i <= s.last) return; s.last = e.i; }           // a replayed event is dropped
+  const sc = s.scroller?.(), near = !!sc && !s.replay && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 200;
+  s.events.push(e);
+  const before = s.log.lastElementChild;
+  agRender(s, e);
+  if (s.replay) return;
+  s.hooks.sync();
+  const card = (e.type === "approval" || e.type === "question") ? s.cards[e.n] : null, added = s.log.lastElementChild;
+  if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  else if (added && added !== before && near) sc.scrollTop = sc.scrollHeight;
 }
 function agDecision(e) {
   const d = e.decision || "", failed = typeof e.result === "string" && /^(Error|Blocked)/.test(e.result);
@@ -2136,54 +2362,54 @@ function agDecision(e) {
   if (d === "allowed") return ["✓", "ok", "approved"];
   return ["✓", "ok", ""];
 }
-function agRender(e) {
-  const log = $("agLog");
-  if (e.type === "x_engine") ag.engine = e.status === "switching" ? `Loading ${e.model || "the model"}…` : "";
-  else if (e.type === "step") agStepRow(e);
-  else if (e.type === "approval") agApprovalCard(e);
-  else if (e.type === "question") agQuestionCard(e);
-  else if (e.type === "note") { log.append(agNoteEl(e.text || "")); if (/^Stopping/.test(e.text || "")) ag.stopping = true; }
-  else if (e.type === "answer") agAnswerCard(e);
+function agRender(s, e) {
+  const log = s.log;
+  if (e.type === "x_engine") s.engine = e.status === "switching" ? `Loading ${e.model || "the model"}…` : "";
+  else if (e.type === "step") agStepRow(s, e);
+  else if (e.type === "approval") agApprovalCard(s, e);
+  else if (e.type === "question") agQuestionCard(s, e);
+  else if (e.type === "note") { log.append(agNoteEl(e.text || "")); if (/^Stopping/.test(e.text || "")) s.stopping = true; }
+  else if (e.type === "answer") agAnswerCard(s, e);
   else if (e.type === "error") { const d = document.createElement("div"); d.className = "err agerr"; d.textContent = e.message || "Something went wrong."; log.append(d); }
   else if (e.type === "end") {
-    Object.assign(ag, { status: e.status, reason: e.reason || "", live: false, lost: false, stopping: false, pausing: false }); agClose();
+    Object.assign(s, { status: e.status, reason: e.reason || "", live: false, lost: false, stopping: false, pausing: false }); agClose(s);
     if (e.status !== "done") { const d = document.createElement("div"); d.className = "agend"; d.textContent = (AG_STATUS[e.status] || e.status) + (e.reason ? ` · ${e.reason}` : ""); log.append(d); }
-    if (!ag.replay) { loadAgentRuns(); loadAgent(); }
+    if (!s.replay) s.hooks.ended(s);
   }
 }
-function agStepRow(e) {
-  const log = $("agLog");
+function agStepRow(s, e) {
+  const log = s.log;
   if (e.n == null) { log.append(agNoteEl(e.result || e.summary || "")); return; }
   const [ic, cls, tag] = agDecision(e), el = document.createElement("div");
   el.className = "agstep"; el.dataset.n = e.n; el._e = e;
   el.innerHTML = `<button class="agrow" data-agrow title="Show the screenshot and the call"><span class="agic ${cls}">${ic}</span><span class="agsum">${esc(e.summary || e.tool || "Step")}</span>${tag ? `<span class="agtag">${tag}</span>` : ""}</button>`
     + (e.thought ? `<details class="thought"><summary>Reasoning${icon("i-right")}</summary><div class="tb">${esc(e.thought)}</div></details>` : "");
   log.append(el);
-  if (e.shot) ag.shot = e.shot;
+  if (e.shot) s.shot = e.shot;
   const a = e.args && typeof e.args === "object" ? e.args : {}, visited = e.decision === "safe" || e.decision === "allowed";
   if (e.tool === "open_url" && typeof a.url === "string" && visited && !/^(Error|Blocked)/.test(e.result || "")) {
-    ag.where = a.url; if (agWeb(a.url) && !ag.urls.includes(a.url)) ag.urls.push(a.url);
-  } else if ((e.tool === "open_app" || e.tool === "read_app") && typeof a.name === "string" && visited) ag.where = "App: " + a.name;
-  const card = ag.cards[e.n]; if (card) agResolve(card, e);
+    s.where = a.url; if (agWeb(a.url) && !s.urls.includes(a.url)) s.urls.push(a.url);
+  } else if ((e.tool === "open_app" || e.tool === "read_app") && typeof a.name === "string" && visited) s.where = "App: " + a.name;
+  const card = s.cards[e.n]; if (card) agResolve(card, e);
 }
-function agDetail(e) {
+function agDetail(s, e) {
   const d = document.createElement("div"); d.className = "agdet";
   const call = e.tool ? `${e.tool}(${e.args && Object.keys(e.args).length ? JSON.stringify(e.args, null, 1) : ""})` : "(no tool call)";
-  d.innerHTML = (e.shot ? `<img loading="lazy" alt="Screenshot after this step" src="${esc(agShotUrl(e.shot))}">` : "")
+  d.innerHTML = (e.shot ? `<img loading="lazy" alt="Screenshot after this step" src="${esc(agShotUrl(s, e.shot))}">` : "")
     + `<div><div class="sub">Call</div><pre>${esc(call)}</pre></div><div><div class="sub">Result</div><pre>${esc(e.result || "")}</pre></div>`;
   return d;
 }
-function agCardEl(e, kind, inner) {
+function agCardEl(s, e, kind, inner) {
   const el = document.createElement("div"); el.className = "agcard"; el.dataset.n = e.n; el.dataset.kind = kind;
-  el.innerHTML = inner; $("agLog").append(el); ag.cards[e.n] = el; return el;
+  el.innerHTML = inner; (s.cardBox || s.log).append(el); s.cards[e.n] = el; return el;
 }
-function agApprovalCard(e) {
+function agApprovalCard(s, e) {
   const box = agBoxOf(e.box);
-  const el = agCardEl(e, "approval", `<div class="agcardh">⏸ Needs your OK</div><div class="agtitle">${agTitleHTML(e.title)}</div>`
-    + (e.shot ? `<div class="agshot"><img alt="Screenshot of the page before this action" src="${esc(agShotUrl(e.shot))}">${box ? `<i class="agbox" hidden></i>` : ""}</div>` : "")
+  const el = agCardEl(s, e, "approval", `<div class="agcardh">⏸ Needs your OK</div><div class="agtitle">${agTitleHTML(e.title)}</div>`
+    + (e.shot ? `<div class="agshot"><img alt="Screenshot of the page before this action" src="${esc(agShotUrl(s, e.shot))}">${box ? `<i class="agbox" hidden></i>` : ""}</div>` : "")
     + `<div class="agact"><button class="btn primary sm" data-agreply="allow">Allow once</button><button class="btn sm" data-agreply="deny">Deny</button><button class="btn sm danger" data-agreply="stop">Stop run</button></div><div class="agres"></div>`);
   const img = el.querySelector("img");
-  if (e.shot) ag.shot = e.shot;
+  if (e.shot) s.shot = e.shot;
   if (img && box) {
     const place = () => {                               // the outline is a share of the picture, so it follows the picture's size
       const W = img.naturalWidth, H = img.naturalHeight, o = el.querySelector(".agbox"); if (!W || !H || !o) return;
@@ -2193,8 +2419,8 @@ function agApprovalCard(e) {
     if (img.complete && img.naturalWidth) place(); else img.addEventListener("load", place);
   }
 }
-function agQuestionCard(e) {
-  const el = agCardEl(e, "question", `<div class="agcardh">⏸ The agent has a question</div><div class="agtitle"></div>`
+function agQuestionCard(s, e) {
+  const el = agCardEl(s, e, "question", `<div class="agcardh">⏸ The agent has a question</div><div class="agtitle"></div>`
     + `<div class="agact"><input placeholder="Your answer" autocomplete="off"><button class="btn primary sm" data-agsend>Send</button><button class="btn sm danger" data-agreply="stop">Stop run</button></div><div class="agres"></div>`);
   el.querySelector(".agtitle").textContent = e.text || "";
 }
@@ -2203,50 +2429,57 @@ function agResolve(card, e) {
   res.textContent = card.dataset.kind === "question" ? (d === "safe" ? "You answered: " + String(e.result || "").replace(/^The user answered: /, "") : "Not answered.")
     : { allowed: "You allowed this.", denied: "You denied this.", skipped: "Skipped because you took over.", stopped: "Stopped." }[d] || "";
 }
-function agAnswerCard(e) {
-  ag.answer = String(e.markdown || "");
-  const pages = ag.urls.slice(0, 8).map((u) => `<a class="chip" href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="${esc(u)}">${esc(agWeb(u)?.host || u)}</a>`).join("");
+function agAnswerCard(s, e) {
+  s.answer = String(e.markdown || "");
+  if (s.answerCard === false) return;                    // a task started from chat shows its answer as the chat reply instead
+  const pages = s.urls.slice(0, 8).map((u) => `<a class="chip" href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="${esc(u)}">${esc(agWeb(u)?.host || u)}</a>`).join("");
   const el = document.createElement("div"); el.className = "agcard agans";
-  el.innerHTML = `<div class="agcardh">Answer</div><div class="content">${agMd(ag.answer)}</div>${pages ? `<div class="sources"><span class="sub" style="align-self:center">Pages used</span>${pages}</div>` : ""}`
+  el.innerHTML = `<div class="agcardh">Answer</div><div class="content">${agMd(s.answer)}</div>${pages ? `<div class="sources"><span class="sub" style="align-self:center">Pages used</span>${pages}</div>` : ""}`
     + `<div class="agact"><button class="btn primary sm" data-agcont>Continue in chat</button></div>`;
-  $("agLog").append(el);
+  s.log.append(el);
 }
-$("agLog").onclick = (e) => {
+// Clicks and keys inside a run's log or cards (the Agent view's log, or a card in the chat thread).
+function agLogClick(s, e) {
   const row = e.target.closest("[data-agrow]");
-  if (row) { const step = row.closest(".agstep"); let det = step.querySelector(".agdet"); if (!det) { det = agDetail(step._e); step.insertBefore(det, step.querySelector(".thought")); } else det.hidden = !det.hidden; return; }
-  if (e.target.closest("[data-agcont]")) return agContinue();
+  if (row) { const step = row.closest(".agstep"); let det = step.querySelector(".agdet"); if (!det) { det = agDetail(s, step._e); step.insertBefore(det, step.querySelector(".thought")); } else det.hidden = !det.hidden; return; }
+  if (s === ag && e.target.closest("[data-agcont]")) return agContinue();
   const card = e.target.closest(".agcard[data-n]"), n = card && +card.dataset.n;
-  const r = e.target.closest("[data-agreply]"); if (r && card) return agReply(n, { decision: r.dataset.agreply });
-  if (e.target.closest("[data-agsend]") && card) { const v = card.querySelector("input").value.trim(); if (v) agReply(n, { text: v }); }
-};
-$("agLog").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.matches(".agact input")) { e.preventDefault(); e.target.closest(".agcard").querySelector("[data-agsend]").click(); } });
-async function agReply(n, body) {
-  const rid = ag.rid; if (!rid || !ag.live) return;
-  ag.replyingN = n; agSync();
+  const r = e.target.closest("[data-agreply]"); if (r && card) return agReply(s, n, { decision: r.dataset.agreply });
+  if (e.target.closest("[data-agsend]") && card) { const v = card.querySelector("input").value.trim(); if (v) agReply(s, n, { text: v }); }
+}
+function agLogKey(e) { if (e.key === "Enter" && e.target.matches(".agact input")) { e.preventDefault(); e.target.closest(".agcard").querySelector("[data-agsend]").click(); } }
+$("agLog").onclick = (e) => agLogClick(ag, e);
+$("agLog").addEventListener("keydown", agLogKey);
+async function agReply(s, n, body) {
+  const rid = s.rid; if (!rid || !s.live) return;
+  s.replyingN = n; s.hooks.sync();
   try { await jpost(`/api/agent/runs/${rid}/reply`, { n, ...body }); }
   catch (err) {                                                      // maybe answered elsewhere or already past: show what the run really waits for
-    toast(err.message); ag.replyingN = null;
-    try { const d = await api(`/api/agent/runs/${rid}`); if (ag.rid === rid) (d.events || []).forEach(agEvent); } catch {}
-    agSync();
+    toast(err.message); s.replyingN = null;
+    try { const d = await api(`/api/agent/runs/${rid}`); if (s.rid === rid) (d.events || []).forEach((x) => agEvent(s, x)); } catch {}
+    s.hooks.sync();
   }
 }
 async function agContinue() {
   if (streaming) return toast("Wait for the reply to finish");
   if (!ag.answer) return;
   const task = ag.task || $("agTask").value.trim();
+  chDetach();
   current = { id: newId(), title: task.replace(/\s+/g, " ").slice(0, 48) || "Agent task", messages: [{ role: "user", content: task }, { role: "assistant", content: safeMd(ag.answer) }] };
   await saveChat(); showView("chat"); renderThread(); scrollBottom(true);
 }
-$("agStop").onclick = async () => {
-  if (!ag.rid || !ag.live) return;
-  ag.stopping = true; agSync();
-  try { await jpost(`/api/agent/runs/${ag.rid}/stop`); } catch (e) { toast(e.message); ag.stopping = false; agSync(); }
-};
-$("agTakeover").onclick = async () => {
-  if (!ag.rid || !ag.live) return;
-  const resume = ag.paused; if (!resume) { ag.pausing = true; agSync(); }
-  try { await jpost(`/api/agent/runs/${ag.rid}/${resume ? "resume" : "takeover"}`); } catch (e) { toast(e.message); ag.pausing = false; agSync(); }
-};
+async function agStopRun(s) {
+  if (!s.rid || !s.live) return;
+  s.stopping = true; s.hooks.sync();
+  try { await jpost(`/api/agent/runs/${s.rid}/stop`); } catch (e) { toast(e.message); s.stopping = false; s.hooks.sync(); }
+}
+async function agTakeoverRun(s) {
+  if (!s.rid || !s.live) return;
+  const resume = s.paused; if (!resume) { s.pausing = true; s.hooks.sync(); }
+  try { await jpost(`/api/agent/runs/${s.rid}/${resume ? "resume" : "takeover"}`); } catch (e) { toast(e.message); s.pausing = false; s.hooks.sync(); }
+}
+$("agStop").onclick = () => agStopRun(ag);
+$("agTakeover").onclick = () => agTakeoverRun(ag);
 
 // ---- recent tasks
 async function loadAgentRuns() { try { ag.runs = await api("/api/agent/runs"); } catch { return; } agRenderRuns(); }
@@ -2276,8 +2509,8 @@ async function agOpenSaved(rid) {
   agClear(); Object.assign(ag, { rid, pinned: true, task: d.task || "", replay: true });
   $("agTask").value = ag.task; agSize();
   const evs = Array.isArray(d.events) ? d.events : [];
-  evs.forEach(agEvent);
-  if (!evs.some((x) => x.type === "end")) agEvent({ i: evs.length, type: "end", status: d.status || "interrupted" });
+  evs.forEach((x) => agEvent(ag, x));
+  if (!evs.some((x) => x.type === "end")) agEvent(ag, { i: evs.length, type: "end", status: d.status || "interrupted" });
   ag.replay = false; ag.live = false; ag.status = ag.status || d.status || "";
   agSync();
   document.querySelector("#v-agent .scroll").scrollTop = 0;
