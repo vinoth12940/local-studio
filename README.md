@@ -8,7 +8,7 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 **FLUX.2 Klein**. Model inference runs locally. Web requests go to the search provider and
 sites you ask about; local file tools read your on-device index.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.4.3**
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.5.0**
 
 ![Chat](docs/chat.jpg)
 
@@ -21,20 +21,26 @@ sites you ask about; local file tools read your on-device index.
 - **Chat**: streaming replies, step-by-step per-round collapsible "thinking" and intermediate
   notes, effort control, saved conversations with search/rename/delete, copy and regenerate, and
   per-reply performance details (tok/s, speed-up, accept length, time to first token, cached tokens).
+  A reply keeps running while you open other chats or views (a dot marks it in the sidebar), and a
+  meter under the message box shows how much of the context is used and free.
 - **Agent Harness in chat**: local models work like a full coding and research agent harness across up
   to 12 tool-calling rounds:
   - **Workspace & codebase tools**: pick a workspace folder per conversation (`list_directory`,
     `find_files`, `grep_files`, `read_file`), create or edit files (`write_file`, `edit_file`) with
     unified diff previews, tolerant block matching, automatic backups, and 1-click **Undo**.
   - **Local execution**: run Python (`run_python`) and shell commands (`run_shell`) in your active
-    workspace with interactive approval cards (**Allow once**, **Allow in this chat**, **Deny**) and
-    strict path/command safety fences.
+    workspace with numbered permission prompts (**Yes**, **Yes, and don't ask again in this chat**,
+    **No, and tell the agent what to do instead**; keys 1/2/3, Esc declines) and strict path/command
+    safety fences. **Shift+Tab** switches to *Accept edits* until you quit (commands still ask).
   - **Planning, memory & clarifying questions**: live step-by-step task checklist (`todo_write`),
     persistent cross-chat memory (`memory_store`, `memory_recall`, manageable in Settings), and
     interactive clarifying question cards with option chips (`ask_user`).
   - **Clock, web & indexed local files**: check the real date/time (`get_current_datetime`), search
     and verify public web pages (`web_search`, `read_webpage`), and search/read indexed personal
     documents and PDFs with on-device OCR (`search_files`, `read_file`).
+- **Code view**: a workspace view with a file explorer (Files, Changes, Outline), an editor with
+  Code/Diff modes and syntax checks on save, a real terminal (your login shell, in the workspace), and
+  the agent beside it with one-click `/review`, `/test`, `/commit`, `/simplify`, `/init` and `/compact`.
 - **Attachments (multimodal)**: attach with the paperclip, drag and drop, or paste. Ask about
   images (Qwen3.8 vision), PDFs, Word (.docx), Excel (.xlsx), and text/code files. Scanned PDFs
   are read as page images.
@@ -62,7 +68,7 @@ sites you ask about; local file tools read your on-device index.
 
 ### The easy way (recommended)
 
-1. Download **Local-Studio-1.4.3.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+1. Download **Local-Studio-1.5.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
 2. Open it and drag **Local Studio** into **Applications**.
 3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
    engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
@@ -170,7 +176,8 @@ folder (or leave it on the default workspace):
   browse directories, find files by glob or substring, search code with regexes, and read file line
   ranges (with line numbers) or local PDFs/DOCX/XLSX.
 - **Create & edit files**: `write_file` and `edit_file` show a unified diff preview and require your
-  approval (**Allow once**, **Allow in this chat**, or **Deny**). Edits use whitespace- and
+  approval (**Yes**, **Yes, and don't ask again in this chat**, or **No** with a note on what to do
+  instead), unless *Accept edits* is on. Edits use whitespace- and
   line-number-tolerant block matching so local models succeed reliably. Every file modification saves
   an automatic backup first and displays a 1-click **Undo** button on the completed tool step.
 - **Run Python & shell commands**: `run_python` (20 s timeout) and `run_shell` (30 s timeout) run in

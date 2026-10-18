@@ -47,7 +47,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.5.0"
 
 ROOT = Path(__file__).resolve().parent                       # code (inside the .app when bundled)
 STATE = Path(os.environ.get("LOCAL_STUDIO_HOME", ROOT))      # user data: images, chats, logs
