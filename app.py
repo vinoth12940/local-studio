@@ -9,22 +9,28 @@ Image jobs run the mflux CLI one at a time. Also manages models, storage, update
 
 import ast
 import asyncio
+import atexit
 import base64
 import contextvars
 import difflib
+import fcntl
 import fnmatch
 import hashlib
 import ipaddress
 import json
 import os
+import pty
 import queue
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
+import termios
 import textwrap
 import threading
 import time
@@ -185,6 +191,8 @@ def load_settings():
     s.setdefault("chat_model", next(m["id"] for m in CATALOG["chat"] if m.get("default")))
     s.setdefault("image_model", next(m["id"] for m in CATALOG["image"] if m.get("default")))
     s.setdefault("custom", [])
+    s.setdefault("mcp_servers", [])
+    s["harness"] = {"auto_approve_readonly": True, **(s.get("harness") or {})}
     s["search"] = {**SEARCH_DEFAULTS, **(s.get("search") or {})}
     s["agent"] = {**AGENT_DEFAULTS, **(s.get("agent") or {})}
     return s
@@ -713,7 +721,7 @@ async def llm_get(route: str):
         if route == "health" and isinstance(j, dict):
             j.update(model_id=m["id"], model_name=m["name"])
         return JSONResponse(j, status_code=r.status_code)
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, ValueError) as e:                 # ValueError: an answer that isn't JSON (an engine still starting, a proxy page)
         return JSONResponse({"status": "starting" if mode else "down", "model_id": m["id"], "model_name": m["name"],
                              "error": str(e)}, status_code=503)
 
@@ -784,45 +792,59 @@ def _chat_schema(name, description, properties=None, required=()):
 
 
 CHAT_READ_TOOLS = [
-    _chat_schema("get_current_datetime", "Get the real current date, time and timezone. Use for today/now and to anchor latest-information requests.",
-                 {"timezone": {"type": "string", "description": "Optional IANA timezone, e.g. America/Chicago or UTC"}}),
-    _chat_schema("web_search", "Search the public web for current facts. Read primary sources with read_webpage before answering. Never search for private local documents.",
+    _chat_schema("get_current_datetime", "Get current date, time and timezone.",
+                 {"timezone": {"type": "string"}}),
+    _chat_schema("web_search", "Search the public web for current facts. Never use for private local files.",
                  {"query": {"type": "string"}}, ("query",)),
-    _chat_schema("read_webpage", "Read a public HTTP(S) page to verify facts and dates. Does not access this Mac or local network.",
+    _chat_schema("read_webpage", "Read a public HTTP(S) page to verify facts and dates.",
                  {"url": {"type": "string"}}, ("url",)),
-    _chat_schema("search_files", "Search the user's LOCAL indexed files. Use sort=newest for latest documents and verify candidates with read_file.",
+    _chat_schema("search_files", "Search local indexed files. Use sort=newest for latest documents.",
                  {"query": {"type": "string"}, "sort": {"type": "string", "enum": ["relevance", "newest"]}}, ("query",)),
-    _chat_schema("read_file", "Read a local file by search_files file_id (with OCR for scanned PDFs/images) or by file path (text, code, PDF, DOCX, XLSX).",
+    _chat_schema("read_file", "Read a local file by search_files file_id (with OCR) or by path.",
                  {"file_id": {"type": "integer"}, "path": {"type": "string"},
                   "start_page": {"type": "integer"}, "max_pages": {"type": "integer"},
                   "start_line": {"type": "integer"}, "max_lines": {"type": "integer"}}),
-    _chat_schema("list_directory", "List files and folders in a local directory with types and sizes.",
+    _chat_schema("list_directory", "List files and folders in a local directory.",
                  {"path": {"type": "string"}, "show_hidden": {"type": "boolean"}}),
-    _chat_schema("find_files", "Find local files by filename glob or substring pattern under a directory.",
+    _chat_schema("find_files", "Find local files by filename glob or substring pattern.",
                  {"pattern": {"type": "string"}, "path": {"type": "string"}}, ("pattern",)),
-    _chat_schema("grep_files", "Search text/code files for a string or regex pattern, returning matching paths and line numbers.",
+    _chat_schema("grep_files", "Search text/code files for a pattern, returning paths and line numbers.",
                  {"query": {"type": "string"}, "path": {"type": "string"}, "glob": {"type": "string"}}, ("query",)),
-    _chat_schema("todo_write", "Create or update the step-by-step task plan checklist for multi-step work.",
+    _chat_schema("code_outline", "List classes, functions, methods, and section banners with line numbers.",
+                 {"path": {"type": "string"}}, ("path",)),
+    _chat_schema("git_status", "Show git branch and modified/staged/untracked files.",
+                 {"path": {"type": "string"}}),
+    _chat_schema("git_diff", "Show git diff of uncommitted or staged changes.",
+                 {"path": {"type": "string"}, "staged": {"type": "boolean"}, "commit": {"type": "string"}}),
+    _chat_schema("delegate_task", "Run an isolated sub-agent (researcher, verifier, simplifier) in a fresh context.",
+                 {"task": {"type": "string"}, "role": {"type": "string", "enum": ["researcher", "verifier", "simplifier"]}}, ("task",)),
+    _chat_schema("manage_process", "List, inspect logs, or stop background shell processes.",
+                 {"action": {"type": "string", "enum": ["list", "status", "logs", "stop"]}, "process_id": {"type": "string"}}),
+    _chat_schema("todo_write", "Update the step-by-step task plan checklist.",
                  {"todos": {"type": "array", "items": {"type": "object", "properties": {
                      "content": {"type": "string"}, "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]}},
                      "required": ["content", "status"]}}}, ("todos",)),
-    _chat_schema("memory_store", "Save a durable user preference, convention, or project fact to persistent local memory.",
+    _chat_schema("memory_store", "Save a user preference or project fact to persistent memory.",
                  {"key": {"type": "string"}, "value": {"type": "string"}}, ("key", "value")),
-    _chat_schema("memory_recall", "Search or list persistent local memories saved across conversations.",
+    _chat_schema("memory_recall", "Search persistent local memories.",
                  {"query": {"type": "string"}}),
 ]
 
 CHAT_ACTION_TOOLS = [
-    _chat_schema("write_file", "Create or overwrite a local file. Shows a diff preview for user approval.",
+    _chat_schema("write_file", "Create or overwrite a local file with syntax check and diff preview.",
                  {"path": {"type": "string"}, "content": {"type": "string"}}, ("path", "content")),
-    _chat_schema("edit_file", "Replace exact text in a local file. Shows a unified diff for user approval.",
+    _chat_schema("edit_file", "Replace exact text in a local file with syntax check and diff preview.",
                  {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"},
                   "replace_all": {"type": "boolean"}}, ("path", "old_text", "new_text")),
-    _chat_schema("run_python", "Run a Python 3 snippet locally for calculations, data processing, or verification. Asks approval first.",
+    _chat_schema("multi_edit_file", "Apply multiple non-contiguous replacements to a file atomically.",
+                 {"path": {"type": "string"}, "edits": {"type": "array", "items": {"type": "object", "properties": {
+                     "old_text": {"type": "string"}, "new_text": {"type": "string"}, "replace_all": {"type": "boolean"}},
+                     "required": ["old_text", "new_text"]}}}, ("path", "edits")),
+    _chat_schema("run_python", "Run a Python 3 snippet locally.",
                  {"code": {"type": "string"}}, ("code",)),
-    _chat_schema("run_shell", "Run a local zsh command in the workspace (git, pytest, ls, build). Asks approval first.",
-                 {"command": {"type": "string"}, "cwd": {"type": "string"}}, ("command",)),
-    _chat_schema("ask_user", "Ask the user a clarifying question with optional choices before proceeding.",
+    _chat_schema("run_shell", "Run a local zsh command (read-only commands auto-run; background=true for daemons).",
+                 {"command": {"type": "string"}, "cwd": {"type": "string"}, "background": {"type": "boolean"}, "timeout": {"type": "integer"}}, ("command",)),
+    _chat_schema("ask_user", "Ask the user a clarifying question with optional choices.",
                  {"question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}}, ("question",)),
 ]
 
@@ -837,6 +859,7 @@ _HARNESS_SENSITIVE_NAMES = frozenset((".ssh", ".aws", ".gnupg", ".kube", ".npmrc
 _HARNESS_SECRET_GLOBS = ("*.pem", "*.p12", "*.pfx", "*.keychain*", "id_rsa*", "id_ed25519*", "id_ecdsa*", "credentials.json", "secrets.json")
 _HARNESS_ALLOWED_ENV = frozenset((".env.example", ".env.sample", ".env.template"))
 _HARNESS_SYS_PREFIXES = ("/System", "/Library", "/usr", "/bin", "/sbin", "/etc", "/var", "/private/etc", "/Applications")
+_WORKSPACE_INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md", ".localstudio.md", ".claude/CLAUDE.md", ".cursorrules")
 _SHELL_BLOCKED_RE = re.compile(
     r"(?:^|[;&|`\n\s])(?:sudo|su|doas|csrutil|diskutil|launchctl|shutdown|reboot|halt|mkfs)\b"
     r"|\bsecurity\s+(?:find-|dump-|delete-|export|unlock-)"
@@ -847,12 +870,15 @@ _SHELL_BLOCKED_RE = re.compile(
     r"|\b(?:chmod|chown)\b[^;\n]+(?:/etc|/System|/usr|/bin|/sbin|/Library|/var|/private)"
     r"|(?:/|\b)(?:\.ssh|\.aws|\.gnupg|Keychains)(?:/|\b)", re.I)
 
-_chat_session_perms: dict[str, set[str]] = {}                # chat_id -> {"edit", "exec"} granted for the session
+_chat_session_perms: dict[str, set[str]] = {}                # chat_id -> {"edit", "exec", "mcp"} granted for the session
 _chat_sessions: dict[str, "_ChatSession"] = {}               # session_id -> active _ChatSession waiting for approval/question
 _memory_lock = threading.Lock()
+_bg_processes: dict[str, dict] = {}                          # proc_id -> background terminal process entry
+_bg_lock = threading.Lock()
 # The chat's workspace folder. Set only inside the worker thread of one tool call (asyncio.to_thread copies the
 # context), so it never leaks between requests; _chat_read_tool keeps its 3-argument signature.
 _chat_workspace: contextvars.ContextVar = contextvars.ContextVar("_chat_workspace", default=None)
+_chat_turn_id: contextvars.ContextVar = contextvars.ContextVar("_chat_turn_id", default=None)
 
 
 def _harness_root() -> Path:
@@ -863,10 +889,51 @@ def _harness_root() -> Path:
     return HOME if any(part.endswith(".app") for part in ROOT.parts) else ROOT
 
 
-def _in_workspace(workspace, fn, *args):
+def _in_workspace(workspace, fn, *args, turn_id=None):
     """Run fn(*args) with the chat's workspace set; meant for asyncio.to_thread so the setting stays in that thread."""
     _chat_workspace.set(workspace)
+    if turn_id is not None:
+        _chat_turn_id.set(turn_id)
     return fn(*args)
+
+
+def _load_workspace_instructions(workspace=None) -> list[dict]:
+    """Read AGENTS.md, CLAUDE.md, .localstudio.md, .claude/CLAUDE.md, or .cursorrules from the active workspace."""
+    ws = workspace or _chat_workspace.get()
+    if not ws:
+        return []
+    try:
+        base = _harness_path_fence(str(ws), write=False)
+    except ValueError:
+        return []
+    if not base.is_dir():
+        return []
+    loaded, total_chars = [], 0
+    seen_resolved = set()
+    for rel_name in _WORKSPACE_INSTRUCTION_FILES:
+        cand = base / rel_name
+        if not cand.exists() or not cand.is_file() or cand.is_symlink():
+            continue
+        try:
+            resolved = _harness_path_fence(str(cand), write=False)
+        except ValueError:
+            continue
+        if resolved in seen_resolved:
+            continue
+        try:
+            raw = resolved.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        seen_resolved.add(resolved)
+        budget = min(4000, 6000 - total_chars)
+        if budget <= 0:
+            break
+        snippet = raw[:budget] + ("\n... (truncated)" if len(raw) > budget else "")
+        loaded.append({"name": rel_name, "path": str(resolved), "content": snippet})
+        total_chars += len(snippet)
+    return loaded
 
 
 class _ChatSession:
@@ -995,6 +1062,14 @@ def _normalize_harness_args(name, args):
         "edit_file": (("path", ("filepath", "file_path", "file", "filename", "target_file")),
                       ("old_text", ("old_str", "old_string", "search", "target", "find", "old", "old_content")),
                       ("new_text", ("new_str", "new_string", "replace", "replacement", "new", "new_content"))),
+        "multi_edit_file": (("path", ("filepath", "file_path", "file", "filename", "target_file")),
+                            ("edits", ("changes", "replacements", "patches", "chunks"))),
+        "code_outline": (("path", ("filepath", "file_path", "file", "filename")),),
+        "git_status": (("path", ("dir", "directory", "folder", "cwd")),),
+        "git_diff": (("path", ("filepath", "file_path", "file", "dir")),),
+        "delegate_task": (("task", ("prompt", "query", "instruction", "description", "goal")),
+                          ("role", ("agent", "type", "worker", "subagent"))),
+        "manage_process": (("process_id", ("pid", "id", "proc_id")), ("action", ("cmd", "command", "op"))),
         "list_directory": (("path", ("dir", "directory", "folder", "dirpath")),),
         "find_files": (("pattern", ("query", "glob", "name", "filename")), ("path", ("dir", "directory", "folder"))),
         "grep_files": (("query", ("pattern", "search", "text", "regex")), ("path", ("dir", "directory", "folder", "file")),
@@ -1015,7 +1090,7 @@ def _normalize_harness_args(name, args):
                 if out.get(alt) is not None:
                     out[canonical] = out.pop(alt)
                     break
-    for int_key in ("file_id", "start_page", "max_pages", "start_line", "max_lines"):
+    for int_key in ("file_id", "start_page", "max_pages", "start_line", "max_lines", "timeout"):
         val = out.get(int_key)
         if isinstance(val, str) and val.strip().lstrip("-").isdigit():
             out[int_key] = int(val.strip())
@@ -1024,6 +1099,12 @@ def _normalize_harness_args(name, args):
             out["start_page"] = max(1, out["start_page"])
         if type(out.get("max_pages")) is int:
             out["max_pages"] = max(1, min(4, out["max_pages"]))
+    if name == "multi_edit_file" and isinstance(out.get("edits"), list):
+        norm_edits = []
+        for ed in out["edits"]:
+            if isinstance(ed, dict):
+                norm_edits.append(_normalize_harness_args("edit_file", ed))
+        out["edits"] = norm_edits
     if name == "todo_write" and isinstance(out.get("todos"), list):
         norm_todos = []
         for item in out["todos"][:25]:
@@ -1093,6 +1174,107 @@ def _gate_shell_command(cmd):
     return True, "Runs a local shell command in the workspace."
 
 
+_SAFE_READONLY_BINS = frozenset(("ls", "pwd", "which", "whoami", "uname", "date", "wc", "head", "tail", "cat", "stat", "file"))
+_SAFE_GIT_SUBCMDS = frozenset(("status", "diff", "log", "show", "branch", "rev-parse", "ls-files", "blame", "shortlog"))
+
+
+def _is_safe_readonly_shell(cmd: str) -> bool:
+    """True when cmd is a single, non-chained read-only inspection or test verification command."""
+    if not isinstance(cmd, str) or not cmd.strip():
+        return False
+    ok, _ = _gate_shell_command(cmd)
+    if not ok:
+        return False
+    s = cmd.strip()
+    if any(op in s for op in (";", "&&", "||", "|", ">", "<", "`", "$(", "\n", "\r", "&")):
+        return False
+    try:
+        tokens = shlex.split(s)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+    # Check any path-like arguments against the path fence so cat ~/.ssh/id_rsa is never auto-approved
+    for tok in tokens[1:]:
+        if not tok.startswith("-") and ("/" in tok or tok.startswith("~") or tok.startswith(".")):
+            try:
+                _harness_path_fence(tok, write=False)
+            except ValueError:
+                return False
+    prog = Path(tokens[0]).name
+    if prog == "git":
+        if len(tokens) < 2:
+            return False
+        # Skip harmless global flags like --no-pager
+        idx = 1
+        while idx < len(tokens) and tokens[idx] in ("--no-pager",):
+            idx += 1
+        if idx >= len(tokens):
+            return False
+        sub = tokens[idx]
+        if sub not in _SAFE_GIT_SUBCMDS:
+            return False
+        if sub == "branch" and any(a in ("-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move") for a in tokens[idx + 1:]):
+            return False
+        if any(a.startswith(("--output", "--ext-diff", "--exec", "-c")) for a in tokens[idx + 1:]):
+            return False
+        return True
+    if prog in _SAFE_READONLY_BINS:
+        return True
+    if prog in ("pytest", "py.test"):
+        return True
+    if prog in ("python", "python3") and len(tokens) >= 3 and tokens[1] == "-m" and tokens[2] in ("pytest", "unittest", "py_compile"):
+        return True
+    if prog == "node" and len(tokens) == 3 and tokens[1] in ("--check", "-c"):
+        return True
+    if prog == "cargo" and len(tokens) >= 2 and tokens[1] in ("check", "test", "clippy"):
+        return True
+    if prog == "go" and len(tokens) >= 2 and tokens[1] in ("test", "vet"):
+        return True
+    if prog == "npm" and len(tokens) >= 2 and (tokens[1] in ("test", "t") or (tokens[1] == "run" and len(tokens) >= 3 and tokens[2] in ("test", "lint", "check", "typecheck"))):
+        return True
+    return False
+
+
+def _post_edit_diagnostics(target: Path) -> dict:
+    """Run fast, deterministic syntax/lint verification on a modified file so the model can self-heal in the next round."""
+    ext = target.suffix.lower()
+    try:
+        if ext == ".py":
+            src = target.read_text(encoding="utf-8", errors="replace")
+            try:
+                ast.parse(src, filename=str(target))
+                return {"syntax_check": "OK", "syntax_ok": True, "checker": "ast.parse"}
+            except SyntaxError as err:
+                msg = f"SyntaxError at line {err.lineno}: {err.msg}"
+                return {"syntax_check": msg, "syntax_ok": False, "checker": "ast.parse",
+                        "line": err.lineno, "offset": err.offset, "error": msg}
+        if ext == ".json":
+            src = target.read_text(encoding="utf-8", errors="replace")
+            try:
+                json.loads(src)
+                return {"syntax_check": "OK", "syntax_ok": True, "checker": "json.loads"}
+            except json.JSONDecodeError as err:
+                msg = f"JSONDecodeError at line {err.lineno}, column {err.colno}: {err.msg}"
+                return {"syntax_check": msg, "syntax_ok": False, "checker": "json.loads",
+                        "line": err.lineno, "column": err.colno, "error": msg}
+        if ext in (".js", ".mjs", ".cjs") and shutil.which("node"):
+            res = subprocess.run(["node", "--check", str(target)], capture_output=True, text=True, timeout=4)
+            if res.returncode == 0:
+                return {"syntax_check": "OK", "syntax_ok": True, "checker": "node --check"}
+            err_line = "\n".join((res.stderr or res.stdout or "Syntax error").strip().splitlines()[:4])
+            return {"syntax_check": err_line[:400], "syntax_ok": False, "checker": "node --check", "error": err_line[:400]}
+        if ext == ".swift" and shutil.which("swiftc"):
+            res = subprocess.run(["swiftc", "-parse", str(target)], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0:
+                return {"syntax_check": "OK", "syntax_ok": True, "checker": "swiftc -parse"}
+            err_line = "\n".join((res.stderr or res.stdout or "Swift syntax error").strip().splitlines()[:4])
+            return {"syntax_check": err_line[:400], "syntax_ok": False, "checker": "swiftc -parse", "error": err_line[:400]}
+    except Exception as exc:
+        return {"syntax_check": f"skipped ({exc})", "syntax_ok": True}
+    return {"syntax_check": "OK", "syntax_ok": True, "checker": "none"}
+
+
 def _make_diff_preview(path_str, old_content, new_content, max_lines=80):
     diff = list(difflib.unified_diff(
         old_content.splitlines(), new_content.splitlines(),
@@ -1159,7 +1341,7 @@ def _match_edit_block(current, old_s, new_s, replace_all=False):
     raise ValueError("old_text was not found in the file. Call read_file with path first and copy the exact lines (without line numbers).")
 
 
-def _backup_file(target):
+def _backup_file(target, turn_id=None):
     """Snapshot a file (or its absence) before the model changes it; returns the backup id for Undo."""
     AGENT_BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
     existed = target.is_file()
@@ -1167,11 +1349,30 @@ def _backup_file(target):
     if existed and len(content) > 2_000_000:
         return None                                          # too large to keep a copy of; the edit still runs
     bid = uuid.uuid4().hex[:16]
-    (AGENT_BACKUPS_DIR / f"{bid}.json").write_text(json.dumps({"id": bid, "path": str(target), "existed": existed,
-                                                              "content": content, "created": time.time()}))
+    tid = turn_id or _chat_turn_id.get()
+    (AGENT_BACKUPS_DIR / f"{bid}.json").write_text(json.dumps({
+        "id": bid, "turn_id": tid, "path": str(target), "existed": existed,
+        "content": content, "created": time.time()
+    }))
     for old in sorted(AGENT_BACKUPS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)[:-100]:
         old.unlink(missing_ok=True)                          # keep the newest 100
     return bid
+
+
+def _restore_backup_snap(p: Path) -> dict:
+    snap = json.loads(p.read_text())
+    target = _harness_path_fence(snap.get("path"), write=True)
+    if target.is_symlink():
+        raise ValueError("Cannot undo over a symbolic link.")
+    if snap.get("existed"):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:6]}.tmp")
+        tmp.write_text(snap.get("content") or "", encoding="utf-8")
+        os.replace(tmp, target)
+    else:
+        target.unlink(missing_ok=True)
+    p.unlink(missing_ok=True)
+    return {"ok": True, "backup_id": snap.get("id"), "path": str(target), "name": target.name, "restored": bool(snap.get("existed"))}
 
 
 @app.post("/api/agent/undo")
@@ -1181,29 +1382,63 @@ def agent_undo(backup_id: str = Body(..., embed=True)):
         raise HTTPException(400, "bad backup id")
     p = AGENT_BACKUPS_DIR / f"{backup_id}.json"
     try:
-        snap = json.loads(p.read_text())
-        target = _harness_path_fence(snap.get("path"), write=True)
-    except (OSError, ValueError):
+        return _restore_backup_snap(p)
+    except (OSError, ValueError) as exc:
+        if "symbolic link" in str(exc):
+            raise HTTPException(400, str(exc))
         raise HTTPException(404, "This change can no longer be undone.")
-    if target.is_symlink():
-        raise HTTPException(400, "Cannot undo over a symbolic link.")
-    if snap.get("existed"):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:6]}.tmp")
-        tmp.write_text(snap.get("content") or "", encoding="utf-8")
-        os.replace(tmp, target)
-    else:
-        target.unlink(missing_ok=True)
-    p.unlink(missing_ok=True)
-    return {"ok": True, "path": str(target), "name": target.name, "restored": bool(snap.get("existed"))}
 
 
-def harness_gate(name, args, chat_id=None):
-    """Classify a chat harness tool call as ('safe'|'risky'|'blocked', reason, preview_meta)."""
+@app.post("/api/agent/undo-turn")
+def agent_undo_turn(body: dict = Body(...)):
+    """Revert all file edits made during a turn in reverse chronological order (1-click Turn Checkpoint)."""
+    turn_id = str(body.get("turn_id") or "").strip()
+    backup_ids = [str(b).strip() for b in (body.get("backup_ids") or []) if re.fullmatch(r"[a-f0-9]{16}", str(b).strip())]
+    if not turn_id and not backup_ids:
+        raise HTTPException(400, "Provide turn_id or backup_ids to revert.")
+    candidates = []
+    if backup_ids:
+        for bid in backup_ids:
+            p = AGENT_BACKUPS_DIR / f"{bid}.json"
+            if p.is_file():
+                try:
+                    snap = json.loads(p.read_text())
+                    candidates.append((snap.get("created", 0), p))
+                except Exception:
+                    continue
+    elif turn_id and AGENT_BACKUPS_DIR.is_dir():
+        for p in AGENT_BACKUPS_DIR.glob("*.json"):
+            try:
+                snap = json.loads(p.read_text())
+                if snap.get("turn_id") == turn_id:
+                    candidates.append((snap.get("created", 0), p))
+            except Exception:
+                continue
+    if not candidates:
+        raise HTTPException(404, "No reversible backups found for this turn.")
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    restored = []
+    for _, p in candidates:
+        try:
+            res = _restore_backup_snap(p)
+            restored.append(res)
+        except Exception:
+            continue
+    if not restored:
+        raise HTTPException(404, "Could not restore turn changes.")
+    files = list(dict.fromkeys(r["name"] for r in restored))
+    return {"ok": True, "turn_id": turn_id or None, "restored_count": len(restored), "files": files, "items": restored}
+
+
+def harness_gate(name, args, chat_id=None, extra_perms=()):
+    """Classify a chat harness tool call as ('safe'|'risky'|'blocked', reason, preview_meta).
+    extra_perms are granted for this request only (the composer's "Accept edits" mode sends {"edit"})."""
     args = _normalize_harness_args(name, args)
     if not isinstance(args, dict):
         return "blocked", "Tool arguments must be a JSON object.", None
-    perms = _chat_session_perms.get(chat_id, set()) if chat_id else set()
+    perms = (_chat_session_perms.get(chat_id, set()) if chat_id else set()) | set(extra_perms)
+    if name.startswith("mcp__"):
+        return _gate_custom_mcp_tool(name, args, perms)
     if name == "write_file":
         try:
             target = _harness_path_fence(args.get("path"), write=True)
@@ -1250,6 +1485,36 @@ def harness_gate(name, args, chat_id=None):
             return "safe", None, meta
         return "risky", f"Modify {target} ({count} replacement{'s' if count > 1 else ''})", meta
 
+    if name == "multi_edit_file":
+        try:
+            target = _harness_path_fence(args.get("path"), write=True)
+        except ValueError as err:
+            return "blocked", str(err), None
+        if not target.is_file() or target.is_symlink():
+            return "blocked", f"File not found: {target}", None
+        edits = args.get("edits")
+        if not isinstance(edits, list) or not edits:
+            return "blocked", "multi_edit_file requires a non-empty 'edits' list of {old_text, new_text}.", None
+        try:
+            current = target.read_text(encoding="utf-8", errors="replace")
+            updated = current
+            total_rep = 0
+            for idx, ed in enumerate(edits, 1):
+                if not isinstance(ed, dict):
+                    return "blocked", f"Edit #{idx} must be an object with old_text and new_text.", None
+                old_s, new_s = ed.get("old_text"), ed.get("new_text")
+                if not isinstance(old_s, str) or not old_s or not isinstance(new_s, str):
+                    return "blocked", f"Edit #{idx} requires non-empty 'old_text' and string 'new_text'.", None
+                c, updated = _match_edit_block(updated, old_s, new_s, bool(ed.get("replace_all")))
+                total_rep += c
+        except (OSError, ValueError) as err:
+            return "blocked", str(err), None
+        preview = _make_diff_preview(str(target), current, updated)
+        meta = {"title": f"Multi-edit {target.name} ({len(edits)} blocks)", "path": str(target), "preview": preview, "kind": "diff", "perm_scope": "edit"}
+        if "edit" in perms:
+            return "safe", None, meta
+        return "risky", f"Modify {target} ({total_rep} replacement{'s' if total_rep > 1 else ''} across {len(edits)} blocks)", meta
+
     if name == "run_python":
         code = args.get("code")
         if not isinstance(code, str) or not code.strip():
@@ -1274,18 +1539,344 @@ def harness_gate(name, args, chat_id=None):
             return "blocked", str(err), None
         if not cwd.is_dir():
             return "blocked", f"Working directory does not exist: {cwd}", None
-        meta = {"title": f"Run shell command in {cwd.name or str(cwd)}", "preview": f"$ {cmd.strip()}", "kind": "shell", "path": str(cwd), "perm_scope": "exec"}
+        bg = bool(args.get("background"))
+        meta = {"title": f"Run {'background ' if bg else ''}shell command in {cwd.name or str(cwd)}",
+                "preview": f"$ {cmd.strip()}", "kind": "shell", "path": str(cwd), "perm_scope": "exec"}
         if "exec" in perms:
             return "safe", None, meta
+        if not bg and load_settings().get("harness", {}).get("auto_approve_readonly", True) and _is_safe_readonly_shell(cmd):
+            return "safe", None, {**meta, "readonly_allowed": True}
         return "risky", f"Runs command in {cwd}", meta
 
     return "safe", None, None
 
 
-def _chat_action_tool(name, args):
-    """Execute an approved write_file, edit_file, run_python, or run_shell tool call."""
+def _run_streamed_subprocess(argv, cwd, env, timeout=30, on_output=None):
+    """Run a child process, streaming stdout/stderr lines to on_output(chunk) if provided, up to timeout."""
+    proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, start_new_session=True, bufsize=1)
+    out_chunks, err_chunks = [], []
+
+    def _reader(pipe, target, prefix=""):
+        for line in pipe:
+            target.append(line)
+            if on_output and sum(len(x) for x in target) <= 6000:
+                try:
+                    on_output(prefix + line)
+                except Exception:
+                    pass
+
+    t_out = threading.Thread(target=_reader, args=(proc.stdout, out_chunks), daemon=True)
+    t_err = threading.Thread(target=_reader, args=(proc.stderr, err_chunks), daemon=True)
+    t_out.start()
+    t_err.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
+        raise ValueError(f"Execution timed out after {timeout} seconds")
+    t_out.join(timeout=1)
+    t_err.join(timeout=1)
+    return proc.returncode, "".join(out_chunks), "".join(err_chunks)
+
+
+def _start_bg_shell(cmd: str, cwd: Path, env: dict) -> dict:
+    """Start a long-running background shell command (e.g., dev server or watcher) and track its log buffer."""
+    LOGS.mkdir(parents=True, exist_ok=True)
+    proc_id = uuid.uuid4().hex[:10]
+    log_path = LOGS / f"bg-{proc_id}.log"
+    log_file = open(log_path, "w", encoding="utf-8")
+    proc = subprocess.Popen(["/bin/zsh", "-c", cmd], cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT,
+                            text=True, env=env, start_new_session=True)
+    entry = {"process_id": proc_id, "pid": proc.pid, "command": cmd, "cwd": str(cwd),
+             "started": time.time(), "log_path": str(log_path), "proc": proc, "log_file": log_file}
+    with _bg_lock:
+        _bg_processes[proc_id] = entry
+    # Wait briefly (150ms) to catch immediate startup output or fast-exit errors
+    time.sleep(0.15)
+    rc = proc.poll()
+    initial_out = ""
+    try:
+        log_file.flush()
+        initial_out = log_path.read_text(encoding="utf-8", errors="replace")[:2000]
+    except OSError:
+        pass
+    return {"process_id": proc_id, "pid": proc.pid, "command": cmd, "cwd": str(cwd),
+            "status": "exited" if rc is not None else "running", "returncode": rc, "stdout": initial_out}
+
+
+def _manage_bg_process(action: str, process_id: str | None = None) -> dict:
+    action = (action or "list").strip().lower()
+    with _bg_lock:
+        items = list(_bg_processes.values())
+    if action == "list" or not process_id:
+        out = []
+        for it in items:
+            rc = it["proc"].poll()
+            out.append({"process_id": it["process_id"], "pid": it["pid"], "command": it["command"],
+                        "cwd": it["cwd"], "status": "exited" if rc is not None else "running",
+                        "returncode": rc, "elapsed_s": round(time.time() - it["started"], 1)})
+        return {"processes": out, "count": len(out)}
+    with _bg_lock:
+        entry = _bg_processes.get(process_id)
+    if not entry:
+        raise ValueError(f"Unknown background process_id: {process_id}")
+    proc = entry["proc"]
+    log_path = Path(entry["log_path"])
+    if action == "stop":
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+                proc.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+        try:
+            entry["log_file"].close()
+        except Exception:
+            pass
+        tail = log_path.read_text(encoding="utf-8", errors="replace")[-3000:] if log_path.is_file() else ""
+        return {"process_id": process_id, "status": "stopped", "returncode": proc.poll(), "logs": tail}
+    rc = proc.poll()
+    tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:] if log_path.is_file() else ""
+    return {"process_id": process_id, "pid": entry["pid"], "command": entry["command"],
+            "status": "exited" if rc is not None else "running", "returncode": rc,
+            "elapsed_s": round(time.time() - entry["started"], 1), "logs": tail}
+
+
+@app.get("/api/processes")
+def api_list_processes():
+    return _manage_bg_process("list")
+
+
+@app.post("/api/processes/{proc_id}/stop")
+def api_stop_process(proc_id: str):
+    try:
+        return _manage_bg_process("stop", proc_id)
+    except ValueError as err:
+        raise HTTPException(404, str(err))
+
+
+# ---- terminal: the Code view's interactive shell, a login zsh on a pseudo-terminal streamed to xterm.js
+
+_TERM_MAX_SESSIONS = 8
+_TERM_SCROLLBACK = 512_000                                    # bytes kept for a reconnecting view
+# Run between fork and the shell: take the pty as controlling terminal, and start the shell with a clean signal state (no
+# blocked or ignored signals inherited from the server), so Ctrl-C, Ctrl-Z and job control behave as in Terminal.app.
+_TERM_CTTY = ("import fcntl, os, signal, sys, termios\n"
+              "signal.pthread_sigmask(signal.SIG_SETMASK, set())\n"
+              "for s in (signal.SIGINT, signal.SIGQUIT, signal.SIGTSTP, signal.SIGTTIN, signal.SIGTTOU, signal.SIGCHLD, signal.SIGHUP, signal.SIGPIPE):\n"
+              "    signal.signal(s, signal.SIG_DFL)\n"
+              "fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
+              "os.execv(sys.argv[1], sys.argv[1:])")
+_terminals: dict[str, "_Terminal"] = {}
+_terminals_lock = threading.Lock()
+
+
+def _term_env() -> dict:
+    """The user's environment without the app's own: uv's ephemeral Python and our flags would shadow theirs, so PATH starts
+    from the system default and the login shell (path_helper, ~/.zprofile) builds the rest."""
+    drop = ("VIRTUAL_ENV", "UV_", "PYTHON", "LOCAL_STUDIO_", "HF_HUB_", "__CF")
+    env = {k: v for k, v in os.environ.items() if not k.startswith(drop)}
+    env.update({"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "TERM": "xterm-256color", "COLORTERM": "truecolor",
+                "TERM_PROGRAM": "LocalStudio", "LANG": env.get("LANG") or "en_US.UTF-8"})
+    return env
+
+
+def _term_winsize(fd: int, rows: int, cols: int):
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", max(2, min(rows, 500)), max(10, min(cols, 1000)), 0, 0))
+
+
+class _Terminal:
+    """One shell on a pty. A reader thread keeps the last _TERM_SCROLLBACK bytes; `end` is the absolute byte offset of the
+    stream so a view can resume where it left off. The shell is a session leader with the pty as its controlling terminal
+    (job control works, and it gets SIGHUP when the master closes, even if this server is killed)."""
+
+    def __init__(self, cwd: Path, rows: int, cols: int):
+        self.id, self.cwd, self.started = uuid.uuid4().hex[:12], str(cwd), time.time()
+        master, slave = pty.openpty()
+        try:
+            _term_winsize(slave, rows, cols)
+            self.proc = subprocess.Popen([sys.executable, "-I", "-c", _TERM_CTTY, "/bin/zsh", "-l"],
+                                         stdin=slave, stdout=slave, stderr=slave, cwd=cwd, env=_term_env(),
+                                         start_new_session=True, close_fds=True)
+        except Exception:
+            os.close(master)
+            raise
+        finally:
+            os.close(slave)
+        self.fd, self.buf, self.end, self.exit_code = master, bytearray(), 0, None
+        self.cond = threading.Condition()
+        threading.Thread(target=self._pump, daemon=True, name=f"term-{self.id}").start()
+
+    def _pump(self):
+        while True:
+            try:
+                data = os.read(self.fd, 65536)
+            except OSError:
+                data = b""
+            if not data:
+                break
+            with self.cond:
+                self.buf += data
+                self.end += len(data)
+                if len(self.buf) > _TERM_SCROLLBACK:
+                    del self.buf[:len(self.buf) - _TERM_SCROLLBACK]
+                self.cond.notify_all()
+        try:
+            rc = self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            rc = -1
+        with self.cond:
+            self.exit_code = rc
+            self.cond.notify_all()
+
+    def read(self, offset: int, timeout: float) -> tuple[bytes, int, int | None]:
+        """Bytes after `offset` (waiting up to `timeout` for some), the new offset, and the exit code once the shell is gone."""
+        with self.cond:
+            if self.end <= offset and self.exit_code is None:
+                self.cond.wait(timeout)
+            start = self.end - len(self.buf)
+            return bytes(self.buf[max(offset, start) - start:]), self.end, self.exit_code
+
+    def write(self, data: bytes):
+        if self.exit_code is not None:
+            raise ValueError("This terminal has exited.")
+        view = memoryview(data)
+        while view:
+            view = view[os.write(self.fd, view):]
+
+    def resize(self, rows: int, cols: int):
+        _term_winsize(self.fd, rows, cols)               # the kernel sends SIGWINCH to the foreground job
+
+    def close(self):
+        for sig in (signal.SIGHUP, signal.SIGKILL):
+            try:
+                os.killpg(self.proc.pid, sig)
+                self.proc.wait(timeout=1)
+                break
+            except (ProcessLookupError, PermissionError):
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+        with self.cond:
+            if self.exit_code is None:
+                self.exit_code = self.proc.returncode if self.proc.returncode is not None else -1
+            self.cond.notify_all()
+
+    def info(self) -> dict:
+        return {"id": self.id, "cwd": self.cwd, "pid": self.proc.pid, "started": self.started,
+                "running": self.exit_code is None, "exit_code": self.exit_code}
+
+
+def _terminal(tid: str) -> _Terminal:
+    term = _terminals.get(tid)
+    if term is None:
+        raise HTTPException(404, "No such terminal.")
+    return term
+
+
+@atexit.register
+def _close_terminals():
+    with _terminals_lock:
+        terms = list(_terminals.values())
+        _terminals.clear()
+    for term in terms:
+        term.close()
+
+
+@app.get("/api/terminals")
+def api_terminals():
+    return {"terminals": [t.info() for t in _terminals.values()]}
+
+
+@app.post("/api/terminals")
+def api_terminal_open(body: dict = Body(default={})):
+    workspace = body.get("workspace")
+    try:
+        cwd = _harness_path_fence(workspace, write=False) if workspace else _harness_root()
+    except ValueError as err:
+        raise HTTPException(400, str(err))
+    if not cwd.is_dir():
+        raise HTTPException(400, f"Workspace directory not found: {cwd}")
+    with _terminals_lock:
+        for tid in [t for t, term in _terminals.items() if term.exit_code is not None]:
+            _terminals.pop(tid).close()
+        if len(_terminals) >= _TERM_MAX_SESSIONS:
+            raise HTTPException(429, f"At most {_TERM_MAX_SESSIONS} terminals can be open. Close one first.")
+        term = _Terminal(cwd, int(body.get("rows") or 24), int(body.get("cols") or 80))
+        _terminals[term.id] = term
+    return term.info()
+
+
+@app.get("/api/terminals/{tid}/stream")
+async def api_terminal_stream(tid: str, request: Request, offset: int = 0):
+    term = _terminal(tid)
+
+    async def events():
+        pos = max(0, offset)
+        while True:
+            if await request.is_disconnected():
+                return
+            data, end, rc = await asyncio.to_thread(term.read, pos, 3)
+            if data:
+                pos = end
+                yield f"data: {json.dumps({'d': base64.b64encode(data).decode(), 'o': end})}\n\n"
+            elif rc is not None:
+                yield f"data: {json.dumps({'exit': rc})}\n\n"
+                return
+            else:
+                return                          # idle: end the response (a stopping server waits for open ones); the page reconnects from its offset
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/terminals/{tid}/input")
+def api_terminal_input(tid: str, body: dict = Body(...)):
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, str) or len(data) > 1_000_000:
+        raise HTTPException(400, "data must be a string")
+    try:
+        _terminal(tid).write(data.encode("utf-8", errors="surrogateescape"))
+    except (ValueError, OSError) as err:
+        raise HTTPException(409, str(err))
+    return {"ok": True}
+
+
+@app.post("/api/terminals/{tid}/resize")
+def api_terminal_resize(tid: str, body: dict = Body(...)):
+    try:
+        _terminal(tid).resize(int(body.get("rows") or 24), int(body.get("cols") or 80))
+    except (ValueError, OSError, TypeError) as err:
+        raise HTTPException(400, str(err))
+    return {"ok": True}
+
+
+@app.delete("/api/terminals/{tid}")
+def api_terminal_close(tid: str):
+    with _terminals_lock:
+        term = _terminals.pop(tid, None)
+    if term is None:
+        raise HTTPException(404, "No such terminal.")
+    term.close()
+    return {"ok": True}
+
+
+def _chat_action_tool(name, args, on_output=None):
+    """Execute an approved write_file, edit_file, multi_edit_file, run_python, run_shell, or custom MCP tool call."""
     args = _normalize_harness_args(name, args)
     try:
+        if name.startswith("mcp__"):
+            return _call_custom_mcp_tool(name, args)
         if name == "write_file":
             target = _harness_path_fence(args.get("path"), write=True)
             content = str(args.get("content") or "")
@@ -1294,8 +1885,13 @@ def _chat_action_tool(name, args):
             tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:6]}.tmp")
             tmp.write_text(content, encoding="utf-8")
             os.replace(tmp, target)
-            return {"status": "written", "path": str(target), "name": target.name, "backup_id": bid,
-                    "bytes_written": len(content.encode("utf-8")), "lines": content.count("\n") + (1 if content else 0)}
+            diag = _post_edit_diagnostics(target)
+            res = {"status": "written", "path": str(target), "name": target.name, "backup_id": bid,
+                   "bytes_written": len(content.encode("utf-8")), "lines": content.count("\n") + (1 if content else 0),
+                   "syntax_check": diag["syntax_check"], "syntax_ok": diag["syntax_ok"], "diagnostics": diag}
+            if not diag["syntax_ok"]:
+                res["repair_hint"] = "Fix the syntax error reported in syntax_check in your next step."
+            return res
         if name == "edit_file":
             target = _harness_path_fence(args.get("path"), write=True)
             if not target.is_file() or target.is_symlink():
@@ -1309,8 +1905,43 @@ def _chat_action_tool(name, args):
             tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:6]}.tmp")
             tmp.write_text(updated, encoding="utf-8")
             os.replace(tmp, target)
-            return {"status": "edited", "path": str(target), "name": target.name, "backup_id": bid,
-                    "replacements": count, "lines": updated.count("\n") + (1 if updated else 0)}
+            diag = _post_edit_diagnostics(target)
+            res = {"status": "edited", "path": str(target), "name": target.name, "backup_id": bid,
+                   "replacements": count, "lines": updated.count("\n") + (1 if updated else 0),
+                   "syntax_check": diag["syntax_check"], "syntax_ok": diag["syntax_ok"], "diagnostics": diag}
+            if not diag["syntax_ok"]:
+                res["repair_hint"] = "Fix the syntax error reported in syntax_check in your next step."
+            return res
+        if name == "multi_edit_file":
+            target = _harness_path_fence(args.get("path"), write=True)
+            if not target.is_file() or target.is_symlink():
+                raise ValueError(f"File not found: {target}")
+            edits = args.get("edits")
+            if not isinstance(edits, list) or not edits:
+                raise ValueError("multi_edit_file requires a non-empty 'edits' list")
+            current = target.read_text(encoding="utf-8", errors="replace")
+            updated = current
+            total_rep = 0
+            for idx, ed in enumerate(edits, 1):
+                if not isinstance(ed, dict):
+                    raise ValueError(f"Edit #{idx} must be a dict")
+                old_s, new_s = str(ed.get("old_text") or ""), str(ed.get("new_text") or "")
+                if not old_s:
+                    raise ValueError(f"Edit #{idx} requires non-empty old_text")
+                c, updated = _match_edit_block(updated, old_s, new_s, bool(ed.get("replace_all")))
+                total_rep += c
+            bid = _backup_file(target)
+            tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:6]}.tmp")
+            tmp.write_text(updated, encoding="utf-8")
+            os.replace(tmp, target)
+            diag = _post_edit_diagnostics(target)
+            res = {"status": "edited", "path": str(target), "name": target.name, "backup_id": bid,
+                   "edits_applied": len(edits), "replacements": total_rep,
+                   "lines": updated.count("\n") + (1 if updated else 0),
+                   "syntax_check": diag["syntax_check"], "syntax_ok": diag["syntax_ok"], "diagnostics": diag}
+            if not diag["syntax_ok"]:
+                res["repair_hint"] = "Fix the syntax error reported in syntax_check in your next step."
+            return res
         if name == "run_python":
             code = str(args.get("code") or "")
             AGENT_SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
@@ -1318,15 +1949,12 @@ def _chat_action_tool(name, args):
             env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"),
                    "HOME": str(HOME), "TMPDIR": os.environ.get("TMPDIR", "/tmp"), "WORKSPACE": str(root),
                    "LANG": "en_US.UTF-8", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"}
-            proc = subprocess.Popen([sys.executable, "-I", "-c", code], cwd=root if root.is_dir() else AGENT_SCRATCH_DIR,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
-            try:
-                out, err = proc.communicate(timeout=20)
-            except subprocess.TimeoutExpired:
-                try: os.killpg(proc.pid, signal.SIGKILL)
-                except OSError: proc.kill()
-                raise ValueError("Python execution timed out after 20 seconds")
-            return {"returncode": proc.returncode, "stdout": out[:6000], "stderr": err[:6000],
+            rc, out, err = _run_streamed_subprocess(
+                [sys.executable, "-I", "-c", code],
+                cwd=root if root.is_dir() else AGENT_SCRATCH_DIR,
+                env=env, timeout=20, on_output=on_output
+            )
+            return {"returncode": rc, "stdout": out[:6000], "stderr": err[:6000],
                     "truncated": len(out) > 6000 or len(err) > 6000}
         if name == "run_shell":
             cmd = str(args.get("command") or "")
@@ -1336,15 +1964,13 @@ def _chat_action_tool(name, args):
             cwd = _harness_path_fence(args.get("cwd"), write=False) if args.get("cwd") else _harness_root()
             env = {k: v for k, v in os.environ.items() if not k.startswith(("AWS_", "GITHUB_", "OPENAI_", "ANTHROPIC_", "HF_TOKEN"))}
             env["PAGER"] = "cat"
-            proc = subprocess.Popen(["/bin/zsh", "-c", cmd], cwd=cwd,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
-            try:
-                out, err = proc.communicate(timeout=30)
-            except subprocess.TimeoutExpired:
-                try: os.killpg(proc.pid, signal.SIGKILL)
-                except OSError: proc.kill()
-                raise ValueError("Shell command timed out after 30 seconds")
-            return {"command": cmd, "cwd": str(cwd), "returncode": proc.returncode,
+            if bool(args.get("background")):
+                return _start_bg_shell(cmd, cwd, env)
+            timeout = max(5, min(int(args.get("timeout") or 30), 120))
+            rc, out, err = _run_streamed_subprocess(
+                ["/bin/zsh", "-c", cmd], cwd=cwd, env=env, timeout=timeout, on_output=on_output
+            )
+            return {"command": cmd, "cwd": str(cwd), "returncode": rc,
                     "stdout": out[:6000], "stderr": err[:6000], "truncated": len(out) > 6000 or len(err) > 6000}
         raise ValueError(f"Unknown action tool: {name}")
     except (ValueError, OSError, subprocess.SubprocessError) as err:
@@ -1514,6 +2140,459 @@ class _WebSearchResults(HTMLParser):
         if self.field: self.parts.append(value)
 
 
+_SECTION_BANNER_RE = re.compile(r"^\s*(?:#|//)\s*-{3,}\s*(.+?)\s*$")
+_JS_SYM_RE = re.compile(
+    r"^(?P<indent>[ \t]*)(?:export\s+)?(?:default\s+)?(?:async\s+)?"
+    r"(?:(?P<kind>class|function|interface|type|enum|struct|protocol|extension|fn|func|def)\s+(?P<name>[A-Za-z_$][\w$]*)"
+    r"|(?:const|let|var)\s+(?P<cname>[A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>)"
+)
+
+
+def _code_outline(raw_path) -> dict:
+    """Extract classes, functions, methods, and section banners with line numbers from a source file."""
+    p = _harness_path_fence(raw_path, write=False)
+    if not p.exists() or not p.is_file() or p.is_symlink():
+        raise ValueError(f"File not found: {p}")
+    if p.stat().st_size > 5 * 2**20:
+        raise ValueError("File is larger than 5 MB")
+    src = p.read_text(encoding="utf-8", errors="replace")
+    lines = src.splitlines()
+    ext = p.suffix.lower()
+    symbols = []
+    for lineno, ln in enumerate(lines, 1):
+        m_sec = _SECTION_BANNER_RE.match(ln)
+        if m_sec:
+            symbols.append({"kind": "section", "name": m_sec.group(1).strip(), "line": lineno, "end_line": lineno})
+    if ext == ".py":
+        try:
+            tree = ast.parse(src, filename=str(p))
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    args_str = ", ".join(a.arg for a in node.args.args[:6])
+                    if len(node.args.args) > 6:
+                        args_str += ", ..."
+                    prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+                    symbols.append({
+                        "kind": "function", "name": node.name, "signature": f"{prefix} {node.name}({args_str})",
+                        "line": node.lineno, "end_line": getattr(node, "end_lineno", node.lineno)
+                    })
+                elif isinstance(node, ast.ClassDef):
+                    methods = []
+                    for sub in node.body:
+                        if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            methods.append({"name": sub.name, "line": sub.lineno, "end_line": getattr(sub, "end_lineno", sub.lineno)})
+                    symbols.append({
+                        "kind": "class", "name": node.name, "signature": f"class {node.name}",
+                        "line": node.lineno, "end_line": getattr(node, "end_lineno", node.lineno),
+                        "methods": methods[:40]
+                    })
+        except SyntaxError as err:
+            symbols.append({"kind": "syntax_error", "name": f"SyntaxError: {err.msg}", "line": err.lineno or 1, "end_line": err.lineno or 1})
+    else:
+        for lineno, ln in enumerate(lines, 1):
+            m = _JS_SYM_RE.match(ln)
+            if m:
+                kind = m.group("kind") or "function"
+                sym_name = m.group("name") or m.group("cname")
+                symbols.append({"kind": kind, "name": sym_name, "signature": ln.strip()[:120], "line": lineno, "end_line": lineno})
+    symbols.sort(key=lambda s: s["line"])
+    formatted = []
+    for s in symbols[:250]:
+        if s["kind"] == "section":
+            formatted.append(f"L{s['line']}: [section] --- {s['name']} ---")
+        elif s["kind"] == "class":
+            span = f"L{s['line']}-{s['end_line']}" if s.get("end_line") and s["end_line"] != s["line"] else f"L{s['line']}"
+            formatted.append(f"{span}: {s.get('signature') or s['name']}")
+            for mth in s.get("methods") or []:
+                mspan = f"L{mth['line']}-{mth['end_line']}" if mth.get("end_line") and mth["end_line"] != mth["line"] else f"L{mth['line']}"
+                formatted.append(f"  {mspan}: .{mth['name']}()")
+        else:
+            span = f"L{s['line']}-{s['end_line']}" if s.get("end_line") and s["end_line"] != s["line"] else f"L{s['line']}"
+            formatted.append(f"{span}: {s.get('signature') or s['name']}")
+    return {
+        "path": str(p), "name": p.name, "total_lines": len(lines),
+        "symbol_count": len(symbols), "symbols": symbols[:200],
+        "outline": "\n".join(formatted)[:12000] or "(no top-level classes or functions detected)"
+    }
+
+
+def _git_status_tool(raw_path=None) -> dict:
+    cwd = _harness_path_fence(raw_path, write=False) if raw_path else _harness_root()
+    if cwd.is_file():
+        cwd = cwd.parent
+    if not cwd.is_dir():
+        raise ValueError(f"Directory does not exist: {cwd}")
+    res = subprocess.run(["git", "--no-pager", "status", "--short", "--branch"],
+                         cwd=cwd, capture_output=True, text=True, timeout=10)
+    if res.returncode != 0:
+        raise ValueError((res.stderr or res.stdout or "Not a git repository").strip()[:600])
+    lines = [ln for ln in res.stdout.splitlines() if ln.strip()]
+    branch = lines[0][3:].strip() if lines and lines[0].startswith("## ") else "HEAD"
+    file_lines = lines[1:] if lines and lines[0].startswith("## ") else lines
+    files = [{"status": ln[:2].strip(), "path": ln[3:].strip()} for ln in file_lines[:100]]
+    return {"cwd": str(cwd), "branch": branch, "clean": len(file_lines) == 0,
+            "changed_count": len(file_lines), "files": files, "raw": res.stdout[:6000]}
+
+
+def _git_diff_tool(raw_path=None, staged=False, commit=None) -> dict:
+    base = _harness_root()
+    target = _harness_path_fence(raw_path, write=False) if raw_path else base
+    cwd = target.parent if target.is_file() else target
+    cmd = ["git", "--no-pager", "diff"]
+    if staged:
+        cmd.append("--staged")
+    if commit and isinstance(commit, str) and re.fullmatch(r"[A-Za-z0-9_.~^-]{1,80}", commit.strip()):
+        cmd.append(commit.strip())
+    if raw_path and target != cwd:
+        cmd.extend(["--", str(target)])
+    res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=12)
+    if res.returncode != 0:
+        raise ValueError((res.stderr or res.stdout or "git diff failed").strip()[:600])
+    diff_text = res.stdout
+    return {"cwd": str(cwd), "staged": bool(staged), "diff": diff_text[:14000] or "(no diff)",
+            "truncated": len(diff_text) > 14000, "lines": len(diff_text.splitlines())}
+
+
+# -- Custom MCP Server Registry & Dynamic Tool Bridging (Tier 2.1)
+
+_custom_mcp_lock = threading.Lock()
+_custom_mcp_clients: dict[str, "McpClient"] = {}
+_custom_mcp_tools_cache: dict[str, list[dict]] = {}
+
+
+def _sanitize_mcp_id(raw_id: str) -> str:
+    clean = re.sub(r"[^a-zA-Z0-9_]", "_", str(raw_id or "").strip().lower()).strip("_")
+    return clean[:32] or ("srv_" + uuid.uuid4().hex[:6])
+
+
+def _get_custom_mcp_client(srv: dict) -> "McpClient":
+    sid = srv["id"]
+    cmd = str(srv.get("command") or "").strip()
+    if not cmd:
+        raise McpError(f"MCP server '{srv.get('name', sid)}' has no command configured.")
+    argv = [cmd] + [str(a) for a in (srv.get("args") or [])]
+    env = {str(k): str(v) for k, v in (srv.get("env") or {}).items()} if isinstance(srv.get("env"), dict) else None
+    with _custom_mcp_lock:
+        cli = _custom_mcp_clients.get(sid)
+        if cli is None or cli.argv != argv or getattr(cli, "env", None) != env:
+            if cli is not None:
+                cli.close()
+            cli = McpClient(argv, allowed=None, env=env)
+            _custom_mcp_clients[sid] = cli
+        return cli
+
+
+def _discover_server_tools(srv: dict, force=False) -> list[dict]:
+    sid = srv["id"]
+    if not force and sid in _custom_mcp_tools_cache:
+        return _custom_mcp_tools_cache[sid]
+    cli = _get_custom_mcp_client(srv)
+    raw_tools = cli.list_tools(timeout=15)
+    norm = []
+    for t in raw_tools:
+        if not isinstance(t, dict) or not t.get("name"):
+            continue
+        tname = str(t["name"]).strip()
+        schema = t.get("inputSchema") if isinstance(t.get("inputSchema"), dict) else {"type": "object", "properties": {}}
+        norm.append({
+            "name": tname,
+            "full_name": f"mcp__{sid}__{tname}",
+            "description": str(t.get("description") or f"MCP tool {tname} from {srv.get('name', sid)}"),
+            "inputSchema": schema,
+            "server_id": sid,
+            "server_name": srv.get("name") or sid,
+            "trusted": bool(srv.get("trusted"))
+        })
+    _custom_mcp_tools_cache[sid] = norm
+    return norm
+
+
+def _get_mcp_chat_tools() -> tuple[list[dict], dict[str, dict]]:
+    """Return (openai_tool_schemas, {full_name: tool_meta}) for all enabled custom MCP servers."""
+    servers = load_settings().get("mcp_servers") or []
+    schemas, meta_map = [], {}
+    for srv in servers:
+        if not isinstance(srv, dict) or not srv.get("enabled", True) or not srv.get("id"):
+            continue
+        try:
+            tools = _discover_server_tools(srv, force=False)
+        except Exception:
+            continue
+        for t in tools:
+            fn_name = t["full_name"]
+            params = dict(t["inputSchema"]) if isinstance(t.get("inputSchema"), dict) else {"type": "object", "properties": {}}
+            params.setdefault("type", "object")
+            params.setdefault("properties", {})
+            schemas.append({"type": "function", "function": {
+                "name": fn_name,
+                "description": f"[{t['server_name']} MCP] {t['description']}"[:500],
+                "parameters": params
+            }})
+            meta_map[fn_name] = t
+    return schemas, meta_map
+
+
+def _gate_custom_mcp_tool(full_name: str, args: dict, perms: set) -> tuple[str, str | None, dict | None]:
+    _, meta_map = _get_mcp_chat_tools()
+    info = meta_map.get(full_name)
+    if not info:
+        parts = full_name.split("__", 2)
+        srv_id, tool_name = (parts[1], parts[2]) if len(parts) == 3 else ("custom", full_name)
+        info = {"server_id": srv_id, "server_name": srv_id, "name": tool_name, "trusted": False}
+    preview = json.dumps(args or {}, indent=2, ensure_ascii=False)[:2000]
+    meta = {
+        "title": f"MCP {info['server_name']}: {info['name']}",
+        "preview": preview, "kind": "code", "perm_scope": "mcp"
+    }
+    if info.get("trusted") or "mcp" in perms:
+        return "safe", None, meta
+    return "risky", f"Calls external MCP server '{info['server_name']}' tool '{info['name']}'", meta
+
+
+def _call_custom_mcp_tool(full_name: str, args: dict) -> dict:
+    parts = full_name.split("__", 2)
+    if len(parts) != 3:
+        raise ValueError(f"Invalid MCP tool name: {full_name}")
+    _, sid, tool_name = parts
+    servers = load_settings().get("mcp_servers") or []
+    srv = next((s for s in servers if isinstance(s, dict) and s.get("id") == sid), None)
+    if not srv:
+        raise ValueError(f"MCP server '{sid}' is not configured.")
+    cli = _get_custom_mcp_client(srv)
+    res = cli.call(tool_name, args or {}, timeout=30)
+    if not res.get("ok"):
+        return {"error": res.get("text") or f"MCP tool {tool_name} failed", "verified": False}
+    return {"server": srv.get("name") or sid, "tool": tool_name, "ok": True,
+            "result": res.get("data") if res.get("data") is not None else (res.get("text") or "")[:8000]}
+
+
+@app.get("/api/mcp/servers")
+def api_get_mcp_servers():
+    servers = load_settings().get("mcp_servers") or []
+    out = []
+    for srv in servers:
+        if not isinstance(srv, dict) or not srv.get("id"):
+            continue
+        sid = srv["id"]
+        cached = _custom_mcp_tools_cache.get(sid, [])
+        cli = _custom_mcp_clients.get(sid)
+        out.append({
+            **srv,
+            "running": bool(cli and cli.alive),
+            "tools_count": len(cached),
+            "tools": [{"name": t["name"], "description": t["description"]} for t in cached]
+        })
+    return {"servers": out}
+
+
+@app.post("/api/mcp/servers")
+def api_save_mcp_server(body: dict = Body(...)):
+    name = str(body.get("name") or body.get("id") or "").strip()[:80]
+    command = str(body.get("command") or "").strip()
+    if not name or not command:
+        raise HTTPException(400, "MCP server 'name' and 'command' are required.")
+    raw_args = body.get("args") or []
+    if isinstance(raw_args, str):
+        try:
+            raw_args = shlex.split(raw_args)
+        except ValueError:
+            raw_args = raw_args.split()
+    args_list = [str(a) for a in raw_args if str(a).strip()]
+    env_dict = {str(k): str(v) for k, v in (body.get("env") or {}).items()} if isinstance(body.get("env"), dict) else {}
+    sid = _sanitize_mcp_id(body.get("id") or name)
+    entry = {
+        "id": sid, "name": name, "command": command, "args": args_list,
+        "env": env_dict, "enabled": bool(body.get("enabled", True)),
+        "trusted": bool(body.get("trusted", False))
+    }
+    s = load_settings()
+    servers = [x for x in (s.get("mcp_servers") or []) if isinstance(x, dict)]
+    idx = next((i for i, x in enumerate(servers) if x.get("id") == sid), None)
+    if idx is not None:
+        servers[idx] = entry
+    else:
+        servers.append(entry)
+    s["mcp_servers"] = servers
+    save_settings(s)
+    _custom_mcp_tools_cache.pop(sid, None)
+    discovered = []
+    error_msg = None
+    if entry["enabled"] and body.get("discover", False):
+        try:
+            discovered = _discover_server_tools(entry, force=True)
+        except Exception as exc:
+            error_msg = str(exc)
+    return {"ok": True, "server": entry, "tools": [{"name": t["name"], "description": t["description"]} for t in discovered],
+            "error": error_msg}
+
+
+@app.delete("/api/mcp/servers/{server_id}")
+def api_delete_mcp_server(server_id: str):
+    s = load_settings()
+    s["mcp_servers"] = [x for x in (s.get("mcp_servers") or []) if isinstance(x, dict) and x.get("id") != server_id]
+    save_settings(s)
+    _custom_mcp_tools_cache.pop(server_id, None)
+    with _custom_mcp_lock:
+        cli = _custom_mcp_clients.pop(server_id, None)
+        if cli is not None:
+            cli.close()
+    return {"ok": True}
+
+
+@app.post("/api/mcp/servers/{server_id}/test")
+def api_test_mcp_server(server_id: str):
+    servers = load_settings().get("mcp_servers") or []
+    srv = next((x for x in servers if isinstance(x, dict) and x.get("id") == server_id), None)
+    if not srv:
+        raise HTTPException(404, f"MCP server '{server_id}' not found.")
+    try:
+        tools = _discover_server_tools(srv, force=True)
+        return {"ok": True, "server_id": server_id, "tools_count": len(tools),
+                "tools": [{"name": t["name"], "description": t["description"]} for t in tools]}
+    except Exception as exc:
+        raise HTTPException(502, f"MCP server test failed: {exc}")
+
+
+# -- Sub-Agent Delegation (Tier 2.2: Context-Isolated Worker)
+
+_SUBAGENT_PROMPTS = {
+    "researcher": (
+        "You are a context-isolated Research Sub-Agent. Explore the workspace or web using read-only tools "
+        "(list_directory, find_files, grep_files, code_outline, read_file, git_status, git_diff, web_search, read_webpage) "
+        "and return a concise, high-signal summary (<500 words) with exact file paths, line numbers, and findings."
+    ),
+    "verifier": (
+        "You are a fresh-context Verification Sub-Agent. Inspect git_status, git_diff, code_outline, and read_file "
+        "in an independent context window to verify whether the changes satisfy the task without regressions or missing edge cases."
+    ),
+    "simplifier": (
+        "You are a Code Simplifier Sub-Agent. Inspect the target files and git_diff, and identify concrete opportunities "
+        "to reduce duplication, simplify control flow, and improve readability with exact line ranges."
+    ),
+}
+SUBAGENT_ALLOWED_TOOLS = frozenset((
+    "read_file", "list_directory", "find_files", "grep_files", "code_outline",
+    "git_status", "git_diff", "web_search", "read_webpage", "search_files", "get_current_datetime"
+))
+
+
+def _run_subagent_task(task: str, role: str = "researcher", timezone: str | None = None) -> dict:
+    """Run an isolated sub-loop in a fresh context window so heavy file reading never bloats the main chat's 32k context."""
+    if not isinstance(task, str) or not task.strip():
+        raise ValueError("delegate_task requires a non-empty 'task' string.")
+    role = (role or "researcher").strip().lower()
+    if role not in _SUBAGENT_PROMPTS:
+        role = "researcher"
+    ws = _chat_workspace.get()
+    sys_prompt = _SUBAGENT_PROMPTS[role]
+    ws_instr = _load_workspace_instructions(ws)
+    if ws_instr:
+        sys_prompt += "\n\nWorkspace instructions:\n" + "\n\n".join(f"[{i['name']}]\n{i['content'][:1500]}" for i in ws_instr)
+    sub_tools = [t for t in CHAT_READ_TOOLS if t["function"]["name"] in SUBAGENT_ALLOWED_TOOLS] + [CHAT_REPLY_TOOL]
+    messages = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": task.strip()}]
+    steps_taken, files_inspected = [], []
+
+    # Check if an engine is currently ready for live multi-round sub-agent execution
+    st = engine_state()
+    mode = st.get("mode")
+    m = chat_model(st.get("model_id"))
+    if mode and _engine_ready(mode):
+        url = ENGINES[mode]["url"]
+        for round_no in range(4):
+            body = {"messages": messages, "tools": sub_tools, "max_tokens": 1536, "stream": True}
+            if mode == "vision":
+                body["model"] = m["repo"]
+            elif mode == "gguf":
+                body["model"] = m["id"]
+            try:
+                _chat_fit_context(body)
+                turn_state = {}
+                async def _consume():
+                    async for _ in _chat_engine_turn(url, body, turn_state):
+                        pass
+                asyncio.run(_consume())
+            except Exception:
+                break
+            calls = list((turn_state.get("calls") or {}).values())
+            if not calls:
+                final_ans = (turn_state.get("content") or "").strip()
+                if final_ans:
+                    return {"role": role, "task": task, "steps_taken": steps_taken,
+                            "files_inspected": list(dict.fromkeys(files_inspected)), "summary": final_ans[:4000]}
+                break
+            for idx, c in enumerate(calls):
+                c["id"] = c.get("id") or f"sub-{round_no}-{idx}"
+            if len(calls) == 1 and calls[0]["function"].get("name") == "reply":
+                r_args = _parse_harness_args(calls[0]["function"].get("arguments"))
+                if isinstance(r_args, dict) and r_args.get("text"):
+                    return {"role": role, "task": task, "steps_taken": steps_taken,
+                            "files_inspected": list(dict.fromkeys(files_inspected)), "summary": str(r_args["text"])[:4000]}
+            messages.append({"role": "assistant", "content": turn_state.get("content") or "", "tool_calls": calls})
+            for c in calls:
+                tname = c["function"].get("name")
+                targs = _normalize_harness_args(tname, _parse_harness_args(c["function"].get("arguments")))
+                if tname in SUBAGENT_ALLOWED_TOOLS and isinstance(targs, dict):
+                    res = _chat_read_tool(tname, targs, timezone)
+                    steps_taken.append(_chat_tool_summary(tname, targs))
+                    if targs.get("path"):
+                        files_inspected.append(str(targs["path"]))
+                else:
+                    res = {"error": f"Tool {tname} not available in sub-agent"}
+                messages.append({"role": "tool", "tool_call_id": c["id"], "name": tname,
+                                 "content": json.dumps(res, ensure_ascii=False)[:4000]})
+
+    # Deterministic local fallback (when engine is offline or finishes with tool evidence):
+    # automatically gather workspace overview, matching files/symbols, or git status/diff relevant to `task`.
+    root = _harness_root()
+    summary_parts = []
+    if role in ("verifier", "simplifier"):
+        try:
+            gs = _git_status_tool(str(root))
+            gd = _git_diff_tool(str(root))
+            steps_taken.append("Checked git_status and git_diff")
+            summary_parts.append(f"Git branch: {gs['branch']} ({gs['changed_count']} changed files)")
+            if gd.get("diff") and gd["diff"] != "(no diff)":
+                summary_parts.append("Diff excerpt:\n" + gd["diff"][:2000])
+        except Exception:
+            pass
+    # Extract any filenames or terms mentioned in task
+    words = [w for w in re.findall(r"[A-Za-z0-9_./-]{3,}", task) if w.lower() not in ("the", "and", "for", "with", "from", "into", "check", "find", "read", "file", "files", "code")]
+    for tok in words[:4]:
+        cand = root / tok
+        if cand.is_file():
+            try:
+                outl = _code_outline(str(cand))
+                files_inspected.append(cand.name)
+                steps_taken.append(f"Outlined {cand.name}")
+                summary_parts.append(f"Outline of {cand.name} ({outl['total_lines']} lines):\n{outl['outline'][:1200]}")
+            except Exception:
+                pass
+    if not summary_parts:
+        try:
+            listing = _chat_read_tool("list_directory", {"path": str(root)}, timezone)
+            names = [e["name"] + ("/" if e["type"] == "dir" else "") for e in (listing.get("entries") or [])[:30]]
+            steps_taken.append(f"Listed workspace {root.name}")
+            summary_parts.append(f"Workspace ({root}): {', '.join(names)}")
+        except Exception:
+            pass
+    if words and len("\n".join(summary_parts)) < 2000:
+        try:
+            gh = _chat_read_tool("grep_files", {"query": words[0], "path": str(root)}, timezone)
+            matches = gh.get("matches") or []
+            if matches:
+                steps_taken.append(f"Searched code for '{words[0]}'")
+                for m_item in matches[:8]:
+                    files_inspected.append(Path(m_item["path"]).name)
+                summary_parts.append("Matching lines:\n" + "\n".join(f"- {Path(m_item['path']).name}:{m_item['line']}: {m_item['text']}" for m_item in matches[:8]))
+        except Exception:
+            pass
+    return {
+        "role": role, "task": task, "steps_taken": steps_taken,
+        "files_inspected": list(dict.fromkeys(files_inspected)),
+        "summary": "\n\n".join(summary_parts)[:4000] or "No matching workspace artifacts found."
+    }
+
+
 def _chat_read_tool(name, args, timezone=None):
     """Read-only chat tools. Returns evidence or an explicit error, never a made-up answer."""
     if not isinstance(args, dict): return {"error": "Tool arguments must be a JSON object"}
@@ -1521,6 +2600,16 @@ def _chat_read_tool(name, args, timezone=None):
     try:
         if name == "get_current_datetime":
             return _chat_datetime(args.get("timezone") or timezone)
+        if name == "code_outline":
+            return _code_outline(args.get("path"))
+        if name == "git_status":
+            return _git_status_tool(args.get("path"))
+        if name == "git_diff":
+            return _git_diff_tool(args.get("path"), bool(args.get("staged")), args.get("commit"))
+        if name == "delegate_task":
+            return _run_subagent_task(args.get("task"), args.get("role", "researcher"), timezone)
+        if name == "manage_process":
+            return _manage_bg_process(args.get("action", "list"), args.get("process_id"))
         if name == "web_search":
             query = args.get("query")
             if not isinstance(query, str) or not query.strip() or len(query) > 500:
@@ -1686,12 +2775,25 @@ def _chat_read_tool(name, args, timezone=None):
 
 def _chat_tool_summary(name, args):
     args = _normalize_harness_args(name, args) if isinstance(args, dict) else {}
+    if name.startswith("mcp__"):
+        parts = name.split("__", 2)
+        return f"Running MCP tool: {parts[2]} ({parts[1]})" if len(parts) == 3 else f"Running MCP tool: {name}"
     if name == "get_current_datetime": return "Checking the current date and time"
     if name == "web_search": return "Searching the web: " + str(args.get("query", ""))[:180]
     if name == "read_webpage": return "Reading: " + str(args.get("url", ""))[:180]
     if name == "search_files": return "Searching local files: " + str(args.get("query", ""))[:180]
     if name == "read_file":
         return f"Reading file: {Path(str(args['path'])).name}" if args.get("path") else "Reading a local document"
+    if name == "code_outline": return f"Outlining symbols: {Path(str(args.get('path') or 'file')).name}"
+    if name == "git_status": return "Checking git status"
+    if name == "git_diff": return "Inspecting git diff" + (" (staged)" if args.get("staged") else "")
+    if name == "delegate_task":
+        role = str(args.get("role") or "researcher").capitalize()
+        return f"Sub-agent ({role}): {str(args.get('task', ''))[:120]}"
+    if name == "manage_process":
+        act = str(args.get("action") or "list")
+        pid = str(args.get("process_id") or "")
+        return f"Process ({act}){': ' + pid if pid else ''}"
     if name == "list_directory": return f"Listing directory: {args.get('path') or '.'}"[:180]
     if name == "find_files": return f"Finding files matching: {args.get('pattern', '')}"[:180]
     if name == "grep_files": return f"Searching code for: {args.get('query', '')}"[:180]
@@ -1703,8 +2805,11 @@ def _chat_tool_summary(name, args):
     if name == "memory_recall": return "Recalling saved memory" + (f": {args['query'][:100]}" if args.get("query") else "")
     if name == "write_file": return f"Writing file: {Path(str(args.get('path') or 'file')).name}"
     if name == "edit_file": return f"Editing file: {Path(str(args.get('path') or 'file')).name}"
+    if name == "multi_edit_file": return f"Multi-editing file: {Path(str(args.get('path') or 'file')).name}"
     if name == "run_python": return "Running Python snippet"
-    if name == "run_shell": return f"Running command: {str(args.get('command', ''))[:140]}"
+    if name == "run_shell":
+        bg = " (background)" if args.get("background") else ""
+        return f"Running command{bg}: {str(args.get('command', ''))[:140]}"
     if name == "ask_user": return f"Asking: {str(args.get('question', ''))[:140]}"
     return "Checking a tool request"
 
@@ -1715,11 +2820,16 @@ def _chat_tool_detail(name, args, result, meta=None):
         return ""
     if meta and meta.get("preview"):
         out = meta["preview"]
+        if name in ("write_file", "edit_file", "multi_edit_file") and result.get("syntax_check") and (result.get("diagnostics") or {}).get("checker", "none") != "none":
+            badge = "✓ Syntax check: OK" if result.get("syntax_ok", True) else f"✗ Syntax check failed: {result['syntax_check']}"
+            out = f"{out}\n\n[{badge}]"
         if name in ("run_python", "run_shell"):
             stdout = (result.get("stdout") or "").strip()
             stderr = (result.get("stderr") or "").strip()
             rc = result.get("returncode")
             parts = [out]
+            if result.get("process_id"):
+                parts.append(f"[Background process {result['process_id']} · PID {result.get('pid')} · {result.get('status')}]")
             if stdout: parts.append(f"--- stdout ---\n{stdout[:1500]}")
             if stderr: parts.append(f"--- stderr ---\n{stderr[:1500]}")
             if rc is not None: parts.append(f"(exit code {rc})")
@@ -1729,6 +2839,19 @@ def _chat_tool_detail(name, args, result, meta=None):
         return str(result["error"])[:1000]
     if name == "read_file" and result.get("text"):
         return str(result["text"])[:2000]
+    if name == "code_outline" and result.get("outline"):
+        return str(result["outline"])[:2500]
+    if name == "git_status" and result.get("raw") is not None:
+        return str(result["raw"] or "(working tree clean)")[:2000]
+    if name == "git_diff" and result.get("diff"):
+        return str(result["diff"])[:2500]
+    if name == "delegate_task" and result.get("summary"):
+        steps = "\n".join(f"• {s}" for s in (result.get("steps_taken") or []))
+        return ((steps + "\n\n") if steps else "") + str(result["summary"])[:2500]
+    if name == "manage_process":
+        return json.dumps(result, indent=2, ensure_ascii=False)[:2000]
+    if name.startswith("mcp__"):
+        return json.dumps(result, indent=2, ensure_ascii=False)[:2000]
     if name == "list_directory" and isinstance(result.get("entries"), list):
         return "\n".join(f"{'📁' if e.get('type') == 'dir' else '📄'} {e.get('name')}" for e in result["entries"][:40])
     if name == "find_files" and isinstance(result.get("matches"), list):
@@ -1768,6 +2891,75 @@ async def _chat_engine_turn(url, body, state):
                 yield event
 
 
+def _summarize_messages_deterministic(messages: list[dict]) -> str:
+    """Build a structured state checkpoint from older conversation turns."""
+    goals, files_touched, outcomes = [], [], []
+    for m in messages:
+        role = m.get("role")
+        txt = (_chat_text(m) or "").strip()
+        if role == "user" and txt:
+            clean = re.sub(r"<workspace_(?:file|folder)[^>]*>.*?</workspace_(?:file|folder)>", "", txt, flags=re.S).strip()
+            if clean:
+                goals.append(clean.splitlines()[0][:200])
+        elif role == "assistant":
+            for tc in m.get("tool_calls") or []:
+                fn = (tc.get("function") or {}).get("name") or ""
+                raw_a = _parse_harness_args((tc.get("function") or {}).get("arguments"))
+                if isinstance(raw_a, dict) and raw_a.get("path"):
+                    files_touched.append(f"{fn}: {raw_a['path']}")
+            if txt and not m.get("tool_calls"):
+                outcomes.append(txt.splitlines()[0][:220])
+        elif role == "tool":
+            try:
+                tdata = json.loads(txt)
+                if isinstance(tdata, dict) and tdata.get("path"):
+                    files_touched.append(Path(str(tdata["path"])).name)
+            except Exception:
+                pass
+    parts = ["### Conversation Checkpoint Summary"]
+    if goals:
+        parts.append("**User Goals**:\n" + "\n".join(f"- {g}" for g in list(dict.fromkeys(goals))[-6:]))
+    if files_touched:
+        parts.append("**Files Inspected / Modified**:\n" + ", ".join(list(dict.fromkeys(files_touched))[-12:]))
+    if outcomes:
+        parts.append("**Earlier Outcomes**:\n" + "\n".join(f"- {o}" for o in outcomes[-5:]))
+    return "\n\n".join(parts)[:2400]
+
+
+@app.post("/api/chat/compact")
+def api_compact_chat(body: dict = Body(...)):
+    """Summarize older turns of a conversation into a compact state checkpoint (/compact)."""
+    chat_id = body.get("chat_id")
+    messages = list(body.get("messages") or [])
+    if not messages and chat_id:
+        p = _chat_path(str(chat_id))
+        if p.is_file():
+            saved = json.loads(p.read_text())
+            messages = list(saved.get("messages") or [])
+    if len(messages) <= 2:
+        return {"ok": True, "compacted": False, "summary": "Conversation is already compact.",
+                "before_count": len(messages), "after_count": len(messages), "messages": messages}
+    sys_msgs = [m for m in messages[:1] if m.get("role") == "system"]
+    rest = messages[len(sys_msgs):]
+    keep_tail = min(max(2, int(body.get("keep_recent") or body.get("keep_last") or 2)), len(rest))
+    older, recent = rest[:-keep_tail], rest[-keep_tail:]
+    summary = _summarize_messages_deterministic(older)
+    checkpoint_msg = {"role": "assistant", "content": summary, "compacted": True}
+    new_messages = sys_msgs + [checkpoint_msg] + recent
+    if chat_id:
+        p = _chat_path(str(chat_id))
+        if p.is_file():
+            try:
+                c = json.loads(p.read_text())
+                c["messages"] = new_messages
+                c["updated"] = time.time()
+                p.write_text(json.dumps(c))
+            except Exception:
+                pass
+    return {"ok": True, "compacted": True, "summary": summary,
+            "before_count": len(messages), "after_count": len(new_messages), "messages": new_messages}
+
+
 def _chat_fit_context(body):
     """Make room for tool results without losing the current request or breaking tool-call/result pairs."""
     messages = list(body["messages"])
@@ -1775,11 +2967,17 @@ def _chat_fit_context(body):
         chars = len(json.dumps(body["tools"])) + sum(len(_chat_text(m)) + len(json.dumps(m.get("tool_calls", []))) for m in messages)
         images = sum(1 for m in messages for p in (m.get("content") if isinstance(m.get("content"), list) else []) if isinstance(p, dict) and p.get("type") == "image_url")
         return int(chars / 3.2) + images * 1200
+    evicted = []
     while cost() > CONTEXT - 1024:
         last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=0)
         if last_user <= 1: break
         next_user = next((i for i in range(2, last_user + 1) if messages[i].get("role") == "user"), last_user)
+        evicted.extend(messages[1:next_user])
         del messages[1:next_user]       # remove a whole older turn, including all its tool results
+    if evicted and messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
+        summary = _summarize_messages_deterministic(evicted)[:800]
+        if cost() + int(len(summary) / 3.2) <= CONTEXT - 1024 and "### Conversation Checkpoint Summary" not in messages[0]["content"]:
+            messages[0] = {**messages[0], "content": messages[0]["content"].rstrip() + "\n\n" + summary}
     if cost() > CONTEXT - 1024:
         # Observation masking: when multiple tool rounds exist in the current turn, compact older rounds first.
         last_asst = max((i for i, m in enumerate(messages) if m.get("role") == "assistant" and m.get("tool_calls")), default=-1)
@@ -1795,6 +2993,17 @@ def _chat_fit_context(body):
                 message["content"] = json.dumps({"truncated": True, "excerpt": message["content"][:1500]})
                 # Replace only this evidence, never drop its corresponding native tool call.
                 messages[index] = message
+    if CONTEXT - cost() - 512 < 512:
+        for index, message in enumerate(messages):
+            if message.get("role") == "tool" and len(message.get("content", "")) > 400:
+                raw = message["content"]
+                try:
+                    raw = json.loads(raw).get("excerpt", raw)
+                except Exception:
+                    pass
+                message = dict(message)
+                message["content"] = json.dumps({"truncated": True, "excerpt": str(raw)[:400]})
+                messages[index] = message
     room = CONTEXT - cost() - 512
     if room < 512: raise ValueError("This conversation is too long to fit the tool evidence. Start a new chat or shorten the request.")
     body["messages"], body["max_tokens"] = messages, min(int(body["max_tokens"]), room)
@@ -1803,6 +3012,325 @@ def _chat_fit_context(body):
 def _chat_text(message):
     content = message.get("content")
     return content if isinstance(content, str) else "\n".join(p.get("text", "") for p in content or [] if isinstance(p, dict) and p.get("type") == "text")
+
+
+# -- Workspace @file / @folder Mentions & Slash Commands (Tier 1.2 & Tier 3.3)
+
+SLASH_COMMANDS = [
+    {"command": "/review", "label": "Review changes", "description": "Run a 3-pass code review ([Bugs], [Security], [Compliance]) on uncommitted git changes"},
+    {"command": "/test", "label": "Run tests", "description": "Run the workspace test suite and diagnose any failures"},
+    {"command": "/commit", "label": "Draft commit", "description": "Inspect git status & diff and draft a clean commit message"},
+    {"command": "/simplify", "label": "Simplify code", "description": "Review recently modified code and propose simplifications"},
+    {"command": "/init", "label": "Generate AGENTS.md", "description": "Inspect the repository and draft a concise AGENTS.md / CLAUDE.md guide"},
+    {"command": "/compact", "label": "Compact chat", "description": "Summarize older conversation turns into a compact checkpoint"},
+]
+
+
+@app.get("/api/chat/commands")
+def api_get_slash_commands():
+    return {"commands": SLASH_COMMANDS}
+
+
+@app.get("/api/workspace/files")
+def api_workspace_files(workspace: str | None = None, q: str = "", limit: int = 25):
+    """Fuzzy-search workspace files and folders for @file and @folder autocomplete in the chat composer."""
+    try:
+        base = _harness_path_fence(workspace, write=False) if workspace else _harness_root()
+    except ValueError as err:
+        raise HTTPException(400, str(err))
+    if not base.is_dir():
+        raise HTTPException(400, f"Workspace directory not found: {base}")
+    q_low = (q or "").strip().lower().lstrip("@")
+    cap = max(1, min(int(limit or 25), 100))
+    candidates = []
+    seen = 0
+    for root_dir, dirs, files in os.walk(base):
+        dirs[:] = [d for d in sorted(dirs) if not d.startswith(".") and d not in _HARNESS_SKIP_DIRS and d not in _HARNESS_SENSITIVE_NAMES and not d.lower().endswith(".app")]
+        root_p = Path(root_dir)
+        for d in dirs:
+            full_d = root_p / d
+            rel_d = str(full_d.relative_to(base))
+            candidates.append({"path": rel_d, "rel_path": rel_d + "/", "abs_path": str(full_d), "name": d + "/", "type": "dir", "size": None})
+        for fname in sorted(files):
+            if fname.startswith(".") and fname not in _WORKSPACE_INSTRUCTION_FILES:
+                continue
+            if any(fnmatch.fnmatch(fname.lower(), g) for g in _HARNESS_SECRET_GLOBS):
+                continue
+            full_f = root_p / fname
+            rel_f = str(full_f.relative_to(base))
+            try:
+                sz = full_f.stat(follow_symlinks=False).st_size
+            except OSError:
+                continue
+            candidates.append({"path": rel_f, "rel_path": rel_f, "abs_path": str(full_f), "name": fname, "type": "file", "size": sz})
+            seen += 1
+            if seen >= 2500:
+                break
+        if seen >= 2500:
+            break
+
+    def _score(item):
+        name_l = item["name"].lower().rstrip("/")
+        rel_l = item["rel_path"].lower().rstrip("/")
+        if not q_low:
+            return (0 if item["type"] == "file" else 1, rel_l.count("/"), rel_l)
+        if name_l == q_low or rel_l == q_low:
+            return (0, len(rel_l), rel_l)
+        if name_l.startswith(q_low):
+            return (1, len(rel_l), rel_l)
+        if q_low in name_l:
+            return (2, len(rel_l), rel_l)
+        if q_low in rel_l:
+            return (3, len(rel_l), rel_l)
+        # Subsequence fuzzy match
+        it = iter(rel_l)
+        if all(ch in it for ch in q_low):
+            return (4, len(rel_l), rel_l)
+        return None
+
+    scored = []
+    for item in candidates:
+        sc = _score(item)
+        if sc is not None:
+            scored.append((sc, item))
+    scored.sort(key=lambda pair: pair[0])
+    return {"workspace": str(base), "items": [pair[1] for pair in scored[:cap]]}
+
+
+@app.get("/api/workspace/info")
+def api_workspace_info(workspace: str | None = None):
+    """Return workspace summary for the Code page: loaded AGENTS.md/CLAUDE.md files, git status/diff, and harness settings."""
+    try:
+        base = _harness_path_fence(workspace, write=False) if workspace else _harness_root()
+    except ValueError as err:
+        raise HTTPException(400, str(err))
+    if not base.is_dir():
+        raise HTTPException(400, f"Workspace directory not found: {base}")
+    ws_str = str(base)
+    inst = _load_workspace_instructions(ws_str)
+    instructions = [
+        {"name": item["name"], "path": item["path"], "chars": len(item["content"]), "preview": item["content"][:600]}
+        for item in inst
+    ]
+    try:
+        git_st = _in_workspace(ws_str, _chat_read_tool, "git_status", {"path": ws_str})
+    except Exception as err:
+        git_st = {"error": str(err)}
+    try:
+        git_df = _in_workspace(ws_str, _chat_read_tool, "git_diff", {"path": ws_str})
+    except Exception as err:
+        git_df = {"error": str(err)}
+    s = load_settings()
+    return {
+        "workspace": ws_str,
+        "instructions": instructions,
+        "git_status": git_st,
+        "git_diff": git_df,
+        "auto_approve_readonly": bool(s.get("agent", {}).get("auto_approve_readonly", True)),
+    }
+
+
+@app.get("/api/workspace/outline")
+def api_workspace_outline(path: str, workspace: str | None = None):
+    """Return symbol outline (classes, functions, methods, sections) for a file in the workspace."""
+    try:
+        ws_str = str(_harness_path_fence(workspace, write=False)) if workspace else str(_harness_root())
+        return _in_workspace(ws_str, _code_outline, path)
+    except Exception as err:
+        raise HTTPException(400, str(err))
+
+
+@app.post("/api/workspace/settings")
+def api_workspace_settings(body: dict = Body(default={})):
+    """Toggle harness coding settings such as auto_approve_readonly."""
+    s = load_settings()
+    ag = s.setdefault("agent", {})
+    if "auto_approve_readonly" in body:
+        ag["auto_approve_readonly"] = bool(body["auto_approve_readonly"])
+    save_settings(s)
+    return {"ok": True, "auto_approve_readonly": ag.get("auto_approve_readonly", True)}
+
+
+@app.get("/api/workspace/file")
+def api_workspace_read_file(path: str, workspace: str | None = None):
+    """Read a workspace file for the Code Editor along with its syntax diagnostics and git diff."""
+    try:
+        ws_str = str(_harness_path_fence(workspace, write=False)) if workspace else str(_harness_root())
+        target = _in_workspace(ws_str, _harness_path_fence, path, False)
+    except ValueError as err:
+        raise HTTPException(400, str(err))
+    if not target.exists() or not target.is_file():
+        raise HTTPException(404, f"File not found: {path}")
+    try:
+        raw = target.read_bytes()
+    except OSError as err:
+        raise HTTPException(400, str(err))
+    if len(raw) > 512_000:
+        raise HTTPException(400, "File is too large for editor preview (>500 KB)")
+    if b"\x00" in raw[:4096]:
+        raise HTTPException(400, "Binary file cannot be opened in text editor")
+    content = raw.decode("utf-8", errors="replace")
+    diag = _post_edit_diagnostics(target)
+    try:
+        df = _in_workspace(ws_str, _chat_read_tool, "git_diff", {"path": str(target)})
+    except Exception:
+        df = {"diff": ""}
+    return {
+        "path": path,
+        "abs_path": str(target),
+        "name": target.name,
+        "content": content,
+        "lines": len(content.splitlines()),
+        "syntax_check": diag.get("syntax_check", "skipped"),
+        "syntax_ok": diag.get("syntax_ok", True),
+        "diff": df.get("diff", ""),
+    }
+
+
+@app.post("/api/workspace/file")
+def api_workspace_save_file(body: dict = Body(default={})):
+    """Save edits from the Code Editor, create an undo backup, and run automatic syntax/lint diagnostics."""
+    path = (body.get("path") or "").strip()
+    workspace = body.get("workspace")
+    content = body.get("content")
+    if not path or not isinstance(content, str):
+        raise HTTPException(400, "path and content are required")
+    try:
+        ws_str = str(_harness_path_fence(workspace, write=False)) if workspace else str(_harness_root())
+        res = _in_workspace(ws_str, _chat_action_tool, "write_file", {"path": path, "content": content})
+        return res
+    except Exception as err:
+        raise HTTPException(400, str(err))
+
+
+@app.post("/api/workspace/exec")
+def api_workspace_exec(body: dict = Body(default={})):
+    """Run a shell command in the active workspace from the Code view's integrated terminal."""
+    cmd = (body.get("command") or "").strip()
+    workspace = body.get("workspace")
+    background = bool(body.get("background", False))
+    if not cmd:
+        raise HTTPException(400, "command is required")
+    ok, reason = _gate_shell_command(cmd)
+    if not ok:
+        raise HTTPException(400, reason)
+    try:
+        ws_str = str(_harness_path_fence(workspace, write=False)) if workspace else str(_harness_root())
+        return _in_workspace(ws_str, _chat_action_tool, "run_shell", {"command": cmd, "background": background, "timeout": 30})
+    except Exception as err:
+        raise HTTPException(400, str(err))
+
+
+_MENTION_RE = re.compile(r"(?:^|(?<=\s))@([A-Za-z0-9_./-]{1,200})")
+
+
+def _expand_workspace_mentions(messages: list[dict], workspace: str | None = None) -> tuple[list[dict], list[dict]]:
+    """Expand @file and @folder mentions in the latest user message into <workspace_file>/<workspace_folder> context blocks."""
+    if not messages or messages[-1].get("role") != "user":
+        return messages, []
+    last = dict(messages[-1])
+    raw_text = _chat_text(last)
+    if not raw_text or "@" not in raw_text:
+        return messages, []
+    tokens = []
+    for m in _MENTION_RE.finditer(raw_text):
+        tok = m.group(1).rstrip(".,;:!?")
+        if tok and tok not in tokens:
+            tokens.append(tok)
+    if not tokens:
+        return messages, []
+    blocks, mentioned_sources = [], []
+    for tok in tokens[:5]:
+        try:
+            target = _in_workspace(workspace, _harness_path_fence, tok, False)
+        except ValueError:
+            continue
+        if not target.exists():
+            continue
+        if target.is_file() and not target.is_symlink():
+            try:
+                info = _in_workspace(workspace, _read_local_path, str(target), 1, 200)
+                blocks.append(f'<workspace_file path="{tok}" resolved="{target}">\n{info.get("text", "")}\n</workspace_file>')
+                mentioned_sources.append({"file_id": 0, "name": target.name, "path": str(target), "locator": "pinned @file"})
+            except Exception:
+                continue
+        elif target.is_dir():
+            try:
+                listing = _in_workspace(workspace, _chat_read_tool, "list_directory", {"path": str(target)})
+                entries = "\n".join(f"{'dir' if e.get('type') == 'dir' else 'file'}: {e.get('name')}" for e in (listing.get("entries") or [])[:80])
+                blocks.append(f'<workspace_folder path="{tok}" resolved="{target}">\n{entries}\n</workspace_folder>')
+            except Exception:
+                continue
+    if not blocks:
+        return messages, []
+    prefix = "\n\n".join(blocks) + "\n\n"
+    if isinstance(last.get("content"), list):
+        new_parts = []
+        prepended = False
+        for p in last["content"]:
+            if isinstance(p, dict) and p.get("type") == "text" and not prepended:
+                new_parts.append({**p, "text": prefix + (p.get("text") or "")})
+                prepended = True
+            else:
+                new_parts.append(p)
+        if not prepended:
+            new_parts.append({"type": "text", "text": prefix})
+        last["content"] = new_parts
+    else:
+        last["content"] = prefix + (last.get("content") or "")
+    return messages[:-1] + [last], mentioned_sources
+
+
+def _expand_slash_command(messages: list[dict], workspace: str | None = None) -> list[dict]:
+    """Expand leading /review, /test, /commit, /simplify, /init slash commands with live workspace context."""
+    if not messages or messages[-1].get("role") != "user":
+        return messages
+    last = dict(messages[-1])
+    txt = (_chat_text(last) or "").strip()
+    if not txt.startswith("/"):
+        return messages
+    parts = txt.split(None, 1)
+    cmd = parts[0].lower()
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    if cmd not in ("/review", "/test", "/commit", "/simplify", "/init"):
+        return messages
+    git_ctx = ""
+    if cmd in ("/review", "/commit", "/simplify"):
+        try:
+            gs = _in_workspace(workspace, _git_status_tool, None)
+            gd = _in_workspace(workspace, _git_diff_tool, None, False, None)
+            git_ctx = f"\n\n<git_context branch=\"{gs['branch']}\">\nStatus:\n{gs['raw'] or '(clean)'}\n\nDiff:\n{gd['diff'][:8000]}\n</git_context>"
+        except Exception:
+            pass
+    prompts = {
+        "/review": (
+            "Perform a structured 3-pass code review of the uncommitted workspace changes across:\n"
+            "1. **[Bugs]**: Logic errors, edge cases, race conditions, or regressions.\n"
+            "2. **[Security]**: Path traversal, command injection, secrets exposure, or auth bypasses.\n"
+            "3. **[Compliance]**: Adherence to AGENTS.md / CLAUDE.md architecture rules.\n"
+            "Distinguish **Important** issues from **Nit** suggestions (cap nits at <= 5)."
+        ),
+        "/test": (
+            "Identify and run the workspace's verification/test suite using `run_shell` (or `run_python`), "
+            "and if any check fails, diagnose the root cause and propose or apply the fix."
+        ),
+        "/commit": (
+            "Inspect the git status and diff, draft a concise, accurate commit message explaining the 'why', "
+            "and ask or run `git commit` if requested."
+        ),
+        "/simplify": (
+            "Inspect the modified code in the workspace and identify concrete ways to simplify logic, "
+            "reduce duplication, and improve clarity without changing behavior."
+        ),
+        "/init": (
+            "Inspect the workspace files (`list_directory`, `read_file` on README/build configs) and generate "
+            "a concise (<1 page) `AGENTS.md` file covering Overview, Build & Test Commands, Architectural Invariants, and Things to Avoid."
+        ),
+    }
+    expanded_text = prompts[cmd] + (f"\nAdditional user instructions: {rest}" if rest else "") + git_ctx
+    if isinstance(last.get("content"), str):
+        last["content"] = expanded_text
+    return messages[:-1] + [last]
 
 
 def _chat_computer_run(raw, expanded, model_id, chat_id, tool_evidence=""):
@@ -1836,8 +3364,13 @@ def _with_agent_note(messages, timezone=None, use_files=False, workspace=None):
         mem_lines = [f"- {k}: {v.get('value', '')[:160]}" for k, v in list(mem.items())[-10:] if isinstance(v, dict) and v.get("value")]
         if mem_lines:
             note += "\n\nSaved local memory (user preferences & facts):\n" + "\n".join(mem_lines)[:800]
-    if workspace:
-        note += f"\n\nActive workspace folder: {workspace} (file and shell tools operate here by default)."
+    ws = workspace or _chat_workspace.get()
+    if ws:
+        note += f"\n\nActive workspace folder: {ws} (file and shell tools operate here by default)."
+        ws_instructions = _load_workspace_instructions(ws)
+        if ws_instructions:
+            blocks = [f'<<<WORKSPACE_INSTRUCTIONS name="{item["name"]}"\n{item["content"]}\nWORKSPACE_INSTRUCTIONS>>>' for item in ws_instructions]
+            note += "\n\nWorkspace project instructions (follow these repository commands, conventions, and rules):\n" + "\n\n".join(blocks)
     if use_files: note += "\n\n" + FILES_PROMPT
     first = messages[0] if messages else None
     if first and first.get("role") == "system":
@@ -1874,13 +3407,18 @@ async def chat(request: Request):
     raw_messages = json.loads(json.dumps(body.get("messages", [])))
     use_files = bool(body.pop("use_files", False))
     messages, needs_vision = build_messages(body.get("messages", []))
+    messages, mentioned_sources = await asyncio.to_thread(_expand_workspace_mentions, messages, workspace)
+    messages = await asyncio.to_thread(_expand_slash_command, messages, workspace)
     expanded_messages = messages
     timezone = body.pop("timezone", None)
+    extra_perms = ("edit",) if body.pop("permission_mode", None) == "accept_edits" and workspace else ()
     try:
         messages = _with_agent_note(messages, timezone, use_files, workspace)
     except ValueError as error:
         raise HTTPException(400, str(error))
-    body["tools"] = CHAT_TOOLS
+    mcp_schemas, mcp_meta_map = await asyncio.to_thread(_get_mcp_chat_tools)
+    all_chat_tools = CHAT_TOOLS + mcp_schemas if mcp_schemas else CHAT_TOOLS
+    body["tools"] = all_chat_tools
     body["messages"] = messages
     # Keep prompt + reply inside the context window: long documents leave less room to answer.
     prompt_chars, images = 0, 0
@@ -1919,6 +3457,8 @@ async def chat(request: Request):
                 yield _sse({"error": str(e)})
                 return
             yield _sse({"x_engine": {"status": "ready", "mode": mode, "model": m["name"]}})
+        if mentioned_sources:
+            yield _sse({"x_sources": mentioned_sources})
         url = ENGINES[mode]["url"]
         if mode == "vision":
             body["model"] = m["repo"]
@@ -1928,9 +3468,11 @@ async def chat(request: Request):
         t0 = time.time()
         state = {}
         read_names = {t["function"]["name"] for t in CHAT_READ_TOOLS}
-        action_names = {t["function"]["name"] for t in CHAT_ACTION_TOOLS}
+        action_names = {t["function"]["name"] for t in CHAT_ACTION_TOOLS} | set(mcp_meta_map.keys())
         unread_web_results, file_candidates = False, {}
         call_counts = {}
+        turn_id = uuid.uuid4().hex[:16]
+        turn_backups: list[dict] = []
         session = _ChatSession(chat_id=chat_id)
         _chat_sessions[session.id] = session
         try:
@@ -1939,7 +3481,7 @@ async def chat(request: Request):
                 try:
                     # The model still chooses the source. Temporarily remove another search until
                     # it has tried reading the URLs it already found, avoiding endless reworded queries.
-                    body["tools"] = [t for t in CHAT_TOOLS if not unread_web_results or t["function"]["name"] != "web_search"]
+                    body["tools"] = [t for t in all_chat_tools if not unread_web_results or t["function"]["name"] != "web_search"]
                     _chat_fit_context(body)
                     async for event in _chat_engine_turn(url, body, state):
                         yield _sse(event)
@@ -1974,6 +3516,8 @@ async def chat(request: Request):
                 for index, call in enumerate(calls):
                     if await request.is_disconnected(): return
                     name = call["function"]["name"]
+                    if name == "run_subagent":
+                        name = "delegate_task"
                     args = _normalize_harness_args(name, _parse_harness_args(call["function"]["arguments"]))
                     if name == "read_file" and isinstance(args, dict) and args.get("file_id") is None and args.get("path"):
                         raw_p = str(args["path"]).strip()
@@ -2018,7 +3562,7 @@ async def chat(request: Request):
                             answer = str(reply_payload.get("answer") or "").strip()
                             result = {"question": question, "answer": answer} if answer else {"error": "The user skipped the question."}
                     elif name in action_names and isinstance(args, dict):
-                        decision, reason, meta = await asyncio.to_thread(_in_workspace, workspace, harness_gate, name, args, chat_id)
+                        decision, reason, meta = await asyncio.to_thread(_in_workspace, workspace, harness_gate, name, args, chat_id, extra_perms)
                         if decision == "blocked":
                             result = {"error": f"Blocked: {reason}", "verified": False}
                         elif decision == "risky":
@@ -2035,11 +3579,35 @@ async def chat(request: Request):
                             if user_choice in ("allow", "allow_session"):
                                 if user_choice == "allow_session" and chat_id and meta.get("perm_scope"):
                                     _chat_session_perms.setdefault(chat_id, set()).add(meta["perm_scope"])
-                                result = await asyncio.to_thread(_in_workspace, workspace, _chat_action_tool, name, args)
+                                out_q: queue.Queue = queue.Queue()
+                                def _run_act():
+                                    _chat_turn_id.set(turn_id)
+                                    return _in_workspace(workspace, _chat_action_tool, name, args, out_q.put)
+                                fut = asyncio.get_running_loop().run_in_executor(None, _run_act)
+                                while not fut.done():
+                                    while not out_q.empty():
+                                        yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
+                                    await asyncio.sleep(0.04)
+                                while not out_q.empty():
+                                    yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
+                                result = await fut
                             else:
-                                result = {"error": "The user declined this action.", "declined": True}
+                                feedback = str(reply_payload.get("feedback") or "").strip()[:2000]
+                                result = {"error": "The user declined this action." + (f" Do this instead: {feedback}" if feedback else ""),
+                                          "declined": True, **({"user_feedback": feedback} if feedback else {})}
                         else:
-                            result = await asyncio.to_thread(_in_workspace, workspace, _chat_action_tool, name, args)
+                            out_q = queue.Queue()
+                            def _run_act_safe():
+                                _chat_turn_id.set(turn_id)
+                                return _in_workspace(workspace, _chat_action_tool, name, args, out_q.put)
+                            fut = asyncio.get_running_loop().run_in_executor(None, _run_act_safe)
+                            while not fut.done():
+                                while not out_q.empty():
+                                    yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
+                                await asyncio.sleep(0.04)
+                            while not out_q.empty():
+                                yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
+                            result = await fut
                     else:
                         result = {"error": "Use a known read-only or workspace tool, or call reply/use_computer by itself after reading the results."}
                     if name == "web_search" and result.get("results"): unread_web_results = True
@@ -2049,7 +3617,16 @@ async def chat(request: Request):
                     yield _sse({"x_tool": {"id": key, "name": name, "status": "error" if result.get("error") else "done", "summary": summary,
                                           **({"detail": detail} if detail else {}),
                                           **({"backup_id": result["backup_id"]} if result.get("backup_id") else {}),
+                                          **({"syntax_check": result["syntax_check"], "syntax_ok": result.get("syntax_ok", True)} if result.get("syntax_check") else {}),
                                           **({"error": result["error"]} if result.get("error") else {})}})
+                    if result.get("backup_id"):
+                        turn_backups.append({"backup_id": result["backup_id"], "name": result.get("name") or "file", "path": result.get("path")})
+                        yield _sse({"x_checkpoint": {
+                            "turn_id": turn_id,
+                            "backup_ids": [b["backup_id"] for b in turn_backups],
+                            "files": list(dict.fromkeys(b["name"] for b in turn_backups)),
+                            "count": len(turn_backups)
+                        }})
                     web_sources = result.get("results", []) if name == "web_search" else [result] if name == "read_webpage" and result.get("url") else []
                     if web_sources:
                         yield _sse({"x_web_sources": [{"url": item["url"], "title": item.get("title") or item["url"]} for item in web_sources if item.get("url")]})
@@ -2766,8 +4343,8 @@ class McpClient:
     exited, the next call starts it again (once). A call that dies mid-flight is reported, never replayed:
     a click that may have happened must not happen twice."""
 
-    def __init__(self, argv, allowed=AGENT_CUA_TOOLS, prepare=None, touch=None):
-        self.argv, self.allowed, self.prepare, self.touch = argv, allowed, prepare, touch
+    def __init__(self, argv, allowed=AGENT_CUA_TOOLS, prepare=None, touch=None, env=None):
+        self.argv, self.allowed, self.prepare, self.touch, self.env = argv, allowed, prepare, touch, env
         self.proc = None
         self.pending: dict = {}
         self.next_id = 0
@@ -2787,8 +4364,9 @@ class McpClient:
         if self.prepare:
             self.prepare()
         self.pending, self.eof = {}, False
+        p_env = {**os.environ, **(self.env or {})} if self.env else None
         try:
-            self.proc = subprocess.Popen(self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+            self.proc = subprocess.Popen(self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True, env=p_env)
         except OSError as e:
             self.eof = True
             raise McpError(f"Couldn't start {Path(self.argv[0]).name}: {e}")
@@ -2840,8 +4418,19 @@ class McpClient:
         finally:
             self.pending.pop(rid, None)
 
+    def list_tools(self, timeout=15):
+        with self.lock:
+            if self.touch:
+                self.touch()
+            if not self.alive:
+                self._start()
+            res = self._request("tools/list", {}, timeout)
+            if self.touch:
+                self.touch()
+        return res.get("tools") or []
+
     def call(self, name, args, timeout=30):
-        if name not in self.allowed:
+        if self.allowed is not None and name not in self.allowed:
             raise McpError(f"{name} is not allowed")
         with self.lock:
             if self.touch:

@@ -1,195 +1,288 @@
-# Local Studio — AI-Native SDLC & Agent Harness Phase 2 Playbook
+# Local Studio — Agent Harness Tier 1, Tier 2 & Tier 3 Implementation Plan
 
-**Reference**: [Anthropic — The AI-native SDLC Playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook)
-**Target Codebase**: `app.py`, `index.html`, `macos/check_agent.py`, `CLAUDE.md`, `AGENTS.md`
+**Target Codebase**:
+- `app.py` (FastAPI backend, Chat Agent Harness, MCP client, tool definitions & execution)
+- `index.html` (Single-page frontend, composer `@` mentions, `/` slash commands, turn checkpoints, MCP settings)
+- `macos/check_agent.py` (Deterministic verification suite for all harness features)
+- `AGENTS.md` / `CLAUDE.md` (Repository instructions for coding agents)
 
-This document translates Anthropic's **6-Stage AI-Native SDLC Playbook** (*Plan → Design → Build → Test → Deploy → Maintain*) and missing production Agent Harness capabilities into concrete, file-level implementation specifications for **Local Studio** so that Claude Code or any coding agent can implement them directly.
-
----
-
-## Summary Matrix: Playbook Stage $\rightarrow$ Local Studio Feature
-
-| SDLC Stage | Playbook Concept | Current State in Local Studio | Phase 2 Implementation Task |
-|---|---|---|---|
-| **1. Plan** | `intent.md` capture | Freeform chat only | **Task 1**: `/intent` & `/spec` slash commands + artifact generator (`intent.md`, `spec.md`) |
-| **2. Design** | Structured `spec.md` & clarifying Qs | `ask_user` tool exists | **Task 1**: Structured spec templates + `@file` / `@folder` context mentions in composer |
-| **3. Build** | Plan Mode (`plan.md`) vs. Auto Mode | `todo_write` checklist + per-category session approvals | **Task 2**: Explicit **Plan Mode / Act Mode / Auto Mode** toggle in composer + `plan.md` approval gate |
-| **3. Build** | `CLAUDE.md` / `AGENTS.md` auto-context | Static `AGENT_CHAT_NOTE` only | **Task 3**: Auto-load workspace `CLAUDE.md` / `AGENTS.md` into `_with_agent_note()` |
-| **3. Build** | **Skills** (`.claude/skills/<name>/SKILL.md` or `.agents/skills/`) | Not implemented | **Task 4**: Workspace & user Skills discovery + `use_skill(name)` tool / `/` skill invocation |
-| **3. Build** | **Hooks** (`PreToolUse`, `PostToolUse`) | Hardcoded `_harness_path_fence` & `_gate_shell_command` | **Task 5**: Configurable `PreToolUse` / `PostToolUse` hooks + automatic post-edit syntax/lint diagnostics |
-| **3. Build** | **Subagents** (`.claude/agents/*.md`) & Worktrees | Single 12-round loop sharing 32k context | **Task 6**: `run_subagent(agent, task)` tool with isolated 32k context window (e.g. `researcher`, `verifier`, `simplifier`) + Turn-level Git Checkpoint / Restore |
-| **4. Test** | Feedback Loop & Test-File Protection | Manual `run_shell` (requires approval every time) | **Task 7**: Safe Read-Only & Test Command Allowlist (`git status`, `git diff`, `pytest`, `npm test`) + Test-file write protection mode during bug-fix tasks |
-| **4. Test** | Continuous Agent Evals | `macos/check_agent.py` (scripted unit checks) | **Task 8**: JSON-driven Agent Harness Eval Runner (`macos/evals/*.json`) for regression-testing prompts, skills, and local models |
-| **5. Deploy** | Multi-Pass `REVIEW.md` Code Review | None | **Task 9**: Built-in `/review` workflow reading workspace `REVIEW.md` (3 passes: *Bugs*, *Security*, *Compliance*, capped nits) |
-| **6. Maintain** | Closing the Loop (Deterministic Trigger $\rightarrow$ `intent.md`) | None | **Task 10**: Local Watch / Scheduled Trigger (`POST /api/agent/trigger`) that runs a deterministic check and writes `intent.md` on breach |
+> **Handoff & Continuity Note for Claude Code / Coding Agents**:
+> This document is the authoritative implementation plan and progress tracker for Tier 1, Tier 2, and Tier 3 Agent Harness features.
+> - Each feature below includes its **exact function signatures**, **API routes**, **UI selectors**, and **verification test names** in `macos/check_agent.py`.
+> - Check the **Progress Tracker** below to see which items are already marked `[x]` (implemented & verified) and which items are `[ ]` (remaining).
+> - Always run the verification commands in the **Verification Suite** section after completing any task.
 
 ---
 
-## Detailed Implementation Tasks (For Coding Agents)
+## Progress Tracker
 
-### Task 1: Workspace `CLAUDE.md` / `AGENTS.md` Auto-Loading (Stage 3: Build)
+### Tier 1: High-Impact Features for Local Models & Coding Workflows
+- [x] **Feature 1.1**: Workspace Project Instructions (`AGENTS.md` / `CLAUDE.md` / `.localstudio.md` / `.cursorrules` Auto-Loading)
+- [x] **Feature 1.2**: `@file` and `@folder` Mentions in the Chat Composer (`GET /api/workspace/files` + UI popover + prompt expansion)
+- [x] **Feature 1.3**: Auto-Verification / Lint & Diagnostics Hook After File Edits (`_post_edit_diagnostics` on `.py`, `.json`, `.js`, `.swift`)
+- [x] **Feature 1.4**: Git-Aware Tools (`git_status`, `git_diff`) & Turn Checkpoints ("Revert Entire Turn" `POST /api/agent/undo-turn`)
+- [x] **Feature 1.5**: Safe Read-Only Shell Allowlist (Zero-Click Inspection & Test Commands in `run_shell`)
 
-**Goal**: Just as Claude Code reads `CLAUDE.md` at the start of every session so the agent knows build/test/lint commands, architecture, and "things the model gets wrong", Local Studio must automatically inject workspace instructions when a workspace is active.
+### Tier 2: Context, Sub-Agents & External Tooling
+- [x] **Feature 2.1**: MCP (Model Context Protocol) Client Support for Custom Tools (`settings.json` `mcp_servers`, `/api/mcp/servers`, dynamic tool routing)
+- [x] **Feature 2.2**: Sub-Agent Delegation (`delegate_task` / `run_subagent` Context-Isolated Worker Loop)
+- [x] **Feature 2.3**: Conversation Compaction (`POST /api/chat/compact`, `/compact` command, and summary-preserving `_chat_fit_context`)
 
-#### Backend (`app.py`)
-1. Write helper `_load_workspace_instructions() -> str`:
-   - Check `_active_workspace_dir()` (resolved via `_chat_workspace` `ContextVar`).
-   - Look for instruction files in priority order:
-     1. `AGENTS.md`
-     2. `CLAUDE.md`
-     3. `.claude/CLAUDE.md`
-     4. `.cursorrules`
-   - Read up to `4,000` characters per file (max `6,000` chars total) so it stays within the 32k context budget ("Keep it under a page, because the model reads all of it at the start of a session").
-   - Redact or skip if `_harness_path_fence(p, write=False)` rejects the path.
-2. In `_with_agent_note(messages, tz_name)`:
-   - Append a fenced block when workspace instructions exist:
-     ```text
-     Workspace instructions from <filename> (follow these repo conventions and verification commands):
-     <content>
-     ```
-3. Add `/init` support: when the user sends `/init`, prompt the model to inspect the active workspace (`list_directory`, `read_file` on `package.json` / `pyproject.toml` / `Makefile` / `README.md`) and draft a concise `<1 page` `AGENTS.md` / `CLAUDE.md` covering `## Commands`, `## Conventions`, `## Architecture`, and `## Things to avoid`.
-
-#### Verification (`macos/check_agent.py`)
-- Add `check_harness_workspace_instructions_autoload()`: create a temp workspace with `CLAUDE.md`, call `_with_agent_note()`, and assert the instructions appear in the system note.
+### Tier 3: Developer & Power-User UX Polish
+- [x] **Feature 3.1**: Background / Long-Running Terminal Processes & Live Streaming Output (`x_tool_output` SSE + `background=True` + `/api/processes`)
+- [x] **Feature 3.2**: Multi-Edit (`multi_edit_file`) & Symbol Outline (`code_outline`) Tools
+- [x] **Feature 3.3**: Slash Commands / Reusable Prompt Skills (`/review`, `/test`, `/commit`, `/simplify`, `/init`, `/compact`)
 
 ---
 
-### Task 2: Plan Mode, Act Mode, and Auto Mode + `intent.md` / `spec.md` / `plan.md` (Stages 1, 2, 3)
+## Detailed Implementation Specifications
 
-**Goal**: Implement the Playbook's artifact-driven workflow:
-- **Stage 1 (Plan)**: Capture problem, desired outcome, scope, and constraints as `intent.md`.
-- **Stage 2 (Design)**: Expand `intent.md` into `spec.md` (requirements, acceptance criteria, non-goals, architectural design).
-- **Stage 3 (Build)**: Start in **Plan Mode** (`plan.md` naming exact files to modify, new types/functions, and tests to run) before switching to **Act** or **Auto Mode**.
+### Tier 1: High-Impact Features for Local Models & Coding Workflows
 
-#### Backend (`app.py`)
-1. Accept `harness_mode: Literal["plan", "act", "auto"] = "act"` in `POST /api/chat` payload:
-   - **`plan` mode**:
-     - Restrict `CHAT_TOOLS` to `CHAT_READ_TOOLS + [ASK_USER_TOOL, REPLY_TOOL]` (plus allow `write_file`/`edit_file` *only* on `intent.md`, `spec.md`, or `plan.md`).
-     - Append to `AGENT_CHAT_NOTE`:
-       `"PLAN MODE ACTIVE: Do not modify source code or run destructive commands. Explore the codebase using read-only tools, ask clarifying questions with ask_user if requirements are ambiguous, and produce a concrete implementation plan (files to change, functions/types, and verification steps)."`
-   - **`act` mode** (default):
-     - Full 18 tools; `write_file`, `edit_file`, `run_python`, `run_shell` ask for interactive approval unless pre-approved by safe allowlist or session toggle.
-   - **`auto` mode**:
-     - Pre-populate `_CHAT_SESSION_APPROVALS[chat_id] = {"edit", "exec"}` for the session so approved plans execute without per-edit approval prompts, while still enforcing `_harness_path_fence()`, `_gate_shell_command()`, and `PreToolUse` hooks.
+#### Feature 1.1: Workspace Project Instructions (`AGENTS.md` / `CLAUDE.md` / `.localstudio.md` / `.cursorrules` Auto-Loading)
 
-#### Frontend (`index.html`)
-1. Add a 3-state mode pill next to `#wsPill` in the chat composer:
-   - `Plan` (read-only exploration + `plan.md` generation)
-   - `Act` (standard interactive approvals)
-   - `Auto` (autonomous execution within safety fences)
-2. When a turn finishes in `Plan` mode, render an **"Approve Plan & Build"** button at the bottom of the assistant message that switches the mode to `Auto` (or `Act`) and sends `"Proceed with implementing the approved plan and run verification checks."`
-
----
-
-### Task 3: Built-in Post-Edit Verification Loop & Configurable Hooks (Stages 3, 4, 5)
-
-**Goal**: Implement the Playbook's **Hooks as build-time guardrails** (`PreToolUse`, `PostToolUse`) and **Give the agent a feedback loop** so the agent immediately sees syntax/lint errors and cannot weaken tests during bug fixes.
-
-#### Backend (`app.py`)
-1. **Built-in Post-Edit Diagnostics (`_post_edit_diagnostics(path: Path) -> dict`)**:
-   - Automatically run fast (<1.5s) deterministic syntax checks immediately after `write_file` or `edit_file`:
-     - `.py`: `ast.parse(source, filename=str(path))` $\rightarrow$ returns `{syntax_ok: True}` or `{syntax_ok: False, error: "SyntaxError: line X: ..."}`.
-     - `.json`: `json.loads(source)` $\rightarrow$ returns `{syntax_ok: True/False, error: ...}`.
-     - `.js` / `.mjs`: `node --check <path>` if `node` is on PATH.
-   - Include `diagnostics` in the JSON tool result returned to the model by `_tool_write_file` and `_tool_edit_file` so the model fixes syntax errors in the very next round before reporting done.
-2. **Test-File Protection Guard (`protect_tests: bool`)**:
-   - From Stage 4 ("Give Claude a feedback loop"): *"An agent fixing code must not be able to weaken the check on that code. A hook that blocks edits to test files during a fix task does this."*
-   - Provide a `_is_test_file(path: Path) -> bool` helper (`test_*.py`, `*_test.py`, `*.spec.js`, `*.test.ts`, `macos/check_*.py`).
-   - When `protect_tests` is enabled on the session/workspace, block `write_file` and `edit_file` on test files with:
-     `"Blocked by test-protection guardrail: fix the implementation code rather than modifying or weakening the test file."`
-3. **Workspace Hooks Configuration (`.localstudio/hooks.json` or `.claude/settings.json`)**:
-   - Support optional `PreToolUse` and `PostToolUse` command hooks in workspace `.localstudio/hooks.json`:
-     - Pipe JSON `{"tool_name": name, "tool_input": args, "workspace": str(ws)}` to the hook script's `stdin`.
-     - Exit code `0` = allow; exit code `2` = block and return `stderr` to the model as the block reason (matching Claude Code's hook protocol).
+- **Problem**: When a user selects a workspace folder in the composer (`#wsPill`), the harness does not automatically read the project's `AGENTS.md`, `CLAUDE.md`, `.localstudio.md`, or `.cursorrules` and inject it into the system prompt.
+- **Why it matters**: Local models (8B–35B) save 2–4 tool rounds of exploration when they immediately know the repo's build commands, test commands, and architecture rules.
+- **Backend (`app.py`)**:
+  1. Define `_WORKSPACE_INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md", ".localstudio.md", ".claude/CLAUDE.md", ".cursorrules")`.
+  2. Implement `_load_workspace_instructions(workspace=None) -> list[dict]`:
+     - Resolve workspace root via `workspace` or `_chat_workspace.get()`. If no workspace is set, return `[]`.
+     - Check each candidate filename in `_WORKSPACE_INSTRUCTION_FILES`.
+     - Validate each candidate path with `_harness_path_fence(cand, write=False)` and ensure it is a regular file (not a symlink outside workspace).
+     - Read up to `4,000` characters per file and cap total combined instructions at `6,000` characters.
+     - Return `[{"name": rel_name, "path": str(p), "content": text}]`.
+  3. Update `_with_agent_note(messages, timezone=None, use_files=False, workspace=None)`:
+     - When `workspace` is provided (or active in `_chat_workspace`), call `_load_workspace_instructions(workspace)`.
+     - Append to `note`:
+       ```text
+       Workspace project instructions (from AGENTS.md / CLAUDE.md — follow these repo rules, commands, and conventions):
+       <<<WORKSPACE_INSTRUCTIONS name="AGENTS.md"
+       ...
+       WORKSPACE_INSTRUCTIONS>>>
+       ```
+- **Verification (`macos/check_agent.py`)**:
+  - `harness_workspace_instructions_autoload`: Create a temporary workspace containing `AGENTS.md` and `CLAUDE.md`, call `_with_agent_note(messages, workspace=str(ws))`, and assert that both instruction files are injected into the leading system message and capped appropriately.
 
 ---
 
-### Task 4: Safe Read-Only Shell Allowlist (Stages 3, 4, 5)
+#### Feature 1.2: `@file` and `@folder` Mentions in the Chat Composer
 
-**Goal**: Implement the Playbook's `permissions.allow` inner-loop principle: *"permissions.allow pre-approves the safe inner loop so the deny list doesn't turn into prompt fatigue."*
-
-#### Backend (`app.py`)
-1. Add `_is_safe_readonly_shell(cmd: str) -> bool`:
-   - Reject any command containing shell chaining/redirection operators (`;`, `&&`, `||`, `|`, `>`, `<`, `` ` ``, `$(`, `\n`).
-   - Parse with `shlex.split(cmd)` and allow known read-only inspection & verification commands when run inside the workspace:
-     - `git status`, `git diff`, `git log`, `git branch`, `git show`
-     - `pytest`, `python -m pytest`, `python -m unittest`, `npm test`, `cargo test`, `cargo check`, `go test`
-     - `ls`, `pwd`, `wc`, `head`, `tail`, `cat`, `stat`, `which`
-2. In `_run_chat_harness`:
-   - If `tname == "run_shell"` and `_is_safe_readonly_shell(args.get("command", ""))` is `True` (and `_gate_shell_command` is `"safe"`), execute without pausing for an `x_approval` card.
-
----
-
-### Task 5: Skills as Institutional Knowledge (`.claude/skills/<name>/SKILL.md` & `.agents/skills/`) (Stage 3: Build)
-
-**Goal**: Implement the Playbook's **Skills** architecture: folders containing `SKILL.md` with YAML frontmatter (`name`, `description`) and markdown instructions that load on demand when relevant.
-
-#### Backend (`app.py`)
-1. Write `_discover_skills() -> list[dict]`:
-   - Scan both `<workspace>/.claude/skills/*/SKILL.md`, `<workspace>/.agents/skills/*/SKILL.md`, and user-global `STATE/data/agent/skills/*/SKILL.md`.
-   - Parse YAML frontmatter (`name`, `description`) and file path.
-2. In `_with_agent_note()`:
-   - If skills exist, list their `name` and `description` in the system note (~1 line per skill).
-3. Add read-only tool `load_skill(name: str)` to `CHAT_READ_TOOLS`:
-   - Returns the full body of `SKILL.md` (and lists any helper scripts in `scripts/`) so the model only pays the token cost when a skill is triggered.
+- **Problem**: Typing `@` in the chat input cannot fuzzy-search or pin workspace files/folders directly into the prompt context.
+- **Backend (`app.py`)**:
+  1. Add endpoint `GET /api/workspace/files`:
+     - Query params: `workspace: str | None = None`, `q: str = ""`, `limit: int = 25`.
+     - Validate `workspace` with `_harness_path_fence(workspace, write=False)`.
+     - Walk workspace skipping `_HARNESS_SKIP_DIRS`, `_HARNESS_SENSITIVE_NAMES`, hidden directories, and `_HARNESS_SECRET_GLOBS`.
+     - Collect relative file paths and folder paths (with trailing `/` for folders).
+     - Score matches against `q.lower()` (exact basename prefix > substring in basename > substring in relative path > fuzzy character sequence match).
+     - Return `{"workspace": str(base), "items": [{"path": str(full), "rel_path": rel, "name": name, "type": "file"|"dir", "size": size}]}`.
+  2. Implement `_expand_workspace_mentions(messages: list[dict], workspace: str | None) -> tuple[list[dict], list[dict]]`:
+     - Inspect the latest user message text for `@([A-Za-z0-9_./-]+)` tokens (ignoring email addresses like `user@example.com` where `@` is preceded by an alphanumeric char).
+     - For each matched relative path inside `workspace` (up to 5 mentions per turn):
+       - Resolve via `_in_workspace(workspace, _harness_path_fence, token_path, False)`.
+       - If it is a regular file, read via `_read_local_path(str(resolved), start_line=1, max_lines=200)` and format a `<workspace_file path="rel_path">\n...\n</workspace_file>` block.
+       - If it is a directory, list entries via `_chat_read_tool("list_directory", {"path": str(resolved)})` and format a `<workspace_folder path="rel_path">\n...\n</workspace_folder>` block.
+     - Prepend the expanded blocks to the latest user message in `expanded_messages` and return `mentioned_sources` so the UI displays file chips.
+- **Frontend (`index.html`)**:
+  1. Add `#mentionMenu` popup container inside `#composerWrap` above `.composer`.
+  2. On `input` / `keydown` in `#input`:
+     - Detect an active `@query` token before the cursor (when `current?.workspace` is set, or using default repo workspace).
+     - Fetch `/api/workspace/files?workspace=...&q=...` (debounced 80ms) and render matching files/folders with keyboard navigation (`ArrowUp`, `ArrowDown`, `Enter`/`Tab` to complete `@rel_path `, `Escape` to close).
 
 ---
 
-### Task 6: Subagents (`.claude/agents/<name>.md`) & Turn-Level Git Checkpoints (Stage 3: Build)
+#### Feature 1.3: Auto-Verification / Lint & Diagnostics Hook After File Edits
 
-**Goal**: Implement the Playbook's **Subagents** (`verifier`, `researcher`, `simplifier`) running in a fresh, isolated context window so exploration or final verification does not pollute or bias the main 32k context window, plus turn-level rollback.
-
-#### Backend (`app.py`)
-1. Add `run_subagent(role: str, task: str)` to `CHAT_READ_TOOLS`:
-   - Built-in roles (plus custom `.claude/agents/<role>.md` definitions):
-     - `researcher`: Read-only tools only (`search_files`, `read_file`, `list_directory`, `find_files`, `grep_files`, `web_search`, `read_webpage`). Explores up to 5 rounds in a fresh message list and returns a concise findings summary (<800 tokens) to the parent agent.
-     - `verifier`: Fresh-context verification agent ("runs in a fresh context window once the session believes the work is done, so the verdict is not colored by the assumptions that produced the code"). Has read tools + safe test execution; reports what it ran, what it observed, and any mismatch with the user's request or `plan.md`.
-     - `simplifier`: Reviews modified files from the current turn and suggests complexity reductions.
-2. **Turn-Level Checkpoint & Rollback (`turn_id` backups)**:
-   - Group all `_save_file_backup()` records created during a single `/api/chat` request under a `turn_id` (or `session_id`) and emit `x_checkpoint {turn_id, files_count}`.
-   - Add `POST /api/agent/undo-turn` that restores all backups from that turn in reverse chronological order so a multi-file turn can be reverted in 1 click.
-
----
-
-### Task 7: Multi-Pass Code Review via `REVIEW.md` & `/review` Command (Stage 5: Deploy)
-
-**Goal**: Implement the Playbook's **AI in the PR review loop** (`REVIEW.md`):
-- Run three structured passes tagged by category:
-  1. `[Bugs]`: logic errors, broken edge cases, subtle regressions.
-  2. `[Security]`: injection risks, path traversal, auth gaps, secrets/PII in logs.
-  3. `[Compliance]`: alignment with `spec.md`, `plan.md`, and `CLAUDE.md` / `AGENTS.md`.
-- Distinguish **Important** (breaks behavior, leaks data, breaches policy) from **Nit** (style/naming, capped at $\le 5$ nits).
-
-#### Backend & UI (`app.py` & `index.html`)
-1. Support slash commands in the chat composer (`/review`, `/init`, `/plan`, `/compact`):
-   - Typing `/review` automatically gathers `git status` and `git diff` from the active workspace, loads `REVIEW.md` (if present in the workspace, otherwise uses the Playbook's default 3-pass review rubric), and runs a structured 3-pass review.
-2. Add a **"Save correction to CLAUDE.md / AGENTS.md"** quick action when a review flags a repeated convention issue ("When a review flags a mistake for the second time, the correction goes into `CLAUDE.md`").
+- **Problem**: `write_file` and `edit_file` do not syntax-check the edited file in the tool return payload.
+- **Backend (`app.py`)**:
+  1. Implement `_post_edit_diagnostics(target: Path) -> dict`:
+     - Check file extension `ext = target.suffix.lower()`:
+       - `.py`: Parse with `ast.parse(target.read_text(encoding="utf-8", errors="replace"), filename=str(target))`.
+         - On `SyntaxError as err`: return `{"syntax_check": f"SyntaxError at line {err.lineno}: {err.msg}", "syntax_ok": False, "line": err.lineno, "offset": err.offset, "error": f"SyntaxError: {err.msg} (line {err.lineno})"}`.
+         - On success: return `{"syntax_check": "OK", "syntax_ok": True, "checker": "ast.parse"}`.
+       - `.json`: Parse with `json.loads(...)`.
+         - On ` json.JSONDecodeError as err`: return `{"syntax_check": f"JSONDecodeError at line {err.lineno}: {err.msg}", "syntax_ok": False, "line": err.lineno, "error": str(err)}`.
+         - On success: return `{"syntax_check": "OK", "syntax_ok": True, "checker": "json.loads"}`.
+       - `.js` / `.mjs` / `.cjs`: If `shutil.which("node")`: run `subprocess.run(["node", "--check", str(target)], capture_output=True, text=True, timeout=4)`.
+         - Return `syntax_check: "OK"` if `returncode == 0`, else the first error line from `stderr`.
+       - `.swift`: If `shutil.which("swiftc")`: run `subprocess.run(["swiftc", "-parse", str(target)], capture_output=True, text=True, timeout=5)`.
+         - Return `syntax_check: "OK"` if `returncode == 0`, else `stderr`.
+       - Other extensions: return `{"syntax_check": "skipped", "syntax_ok": True}`.
+  2. In `_chat_action_tool` for `write_file`, `edit_file`, and `multi_edit_file`:
+     - Call `diag = _post_edit_diagnostics(target)`.
+     - Merge `"syntax_check": diag["syntax_check"], "syntax_ok": diag["syntax_ok"], "diagnostics": diag` into the returned dict.
+     - If ` not diag["syntax_ok"]`, include `"repair_hint": "Fix the syntax error reported in syntax_check before finishing."`.
+  3. In `_chat_tool_detail`:
+     - Append `[Syntax check: OK]` or `[Syntax check failed: ...]` to the diff preview so the user and model both see it clearly.
 
 ---
 
-### Task 8: `@file` Mentions & Conversation Compaction (`/compact`)
+#### Feature 1.4: Git-Aware Tools (`git_status`, `git_diff`) & Turn Checkpoints ("Restore Entire Turn")
 
-1. **`GET /api/workspace/files?q=...`**:
-   - Returns up to 20 matching workspace relative paths for fast `@file` autocomplete in the composer (`index.html`).
-   - When a message contains `@path/to/file.py`, `app.py` automatically attaches a fenced file preview or resolves the path in the prompt.
-2. **`POST /api/chat/compact` (`/compact`)**:
-   - Summarizes older turns of a long conversation into a structured state checkpoint (`Goal`, `Completed Changes`, `Active Files`, `Open Decisions`) so sessions can continue past the 32k context window without losing architectural context.
+- **Problem**:
+  - Multi-file turns require undoing each step one-by-one.
+  - Inspecting `git status` or `git diff` requires calling `run_shell` and clicking approve.
+- **Backend (`app.py`)**:
+  1. Add `git_status` and `git_diff` to `CHAT_READ_TOOLS`:
+     - `git_status(path: str = None)`: Runs `git status --short --branch` in the target/workspace directory (`timeout=10`), returning `{branch, status, clean, files, raw}`.
+     - `git_diff(path: str = None, staged: bool = False, commit: str = None, context_lines: int = 3)`: Runs `git diff` (with `--staged` if `staged=True`, and `-- <path>` if `path` is specified), returning `{diff, stats, truncated}`.
+  2. **Turn Checkpoints (`turn_id` & `POST /api/agent/undo-turn`)**:
+     - Update `_backup_file(target, turn_id=None)` to store `"turn_id": turn_id` inside `AGENT_BACKUPS_DIR / f"{bid}.json"`.
+     - Track a `turn_id = uuid.uuid4().hex[:16]` per `/api/chat` request and pass it into `_chat_action_tool(..., turn_id=turn_id)` (or via a `ContextVar` `_chat_turn_id`).
+     - Collect all `backup_id`s created during the turn into `turn_backups: list[dict]`.
+     - Whenever a file-modifying tool completes during `/api/chat`, emit SSE event:
+       `x_checkpoint: {"turn_id": turn_id, "backup_ids": [b["backup_id"] for b in turn_backups], "files": [b["name"] for b in turn_backups], "count": len(turn_backups)}`.
+     - Add endpoint `POST /api/agent/undo-turn`:
+       - Accepts `{"turn_id": str | None, "backup_ids": list[str] | None}`.
+       - Finds all matching backup JSON files (by `backup_ids` or scanning `AGENT_BACKUPS_DIR` for `turn_id`), sorts them in **reverse chronological order** (newest backup first, so multi-step edits to the same file roll back cleanly to the initial pre-turn state), restores each file, and returns `{"ok": True, "turn_id": turn_id, "restored_count": len(restored), "files": restored}`.
+- **Frontend (`index.html`)**:
+  - Handle `j.x_checkpoint` in `generate()` and save `bot.checkpoint = j.x_checkpoint` (and include `checkpoint` in `saveChat`).
+  - When `m.checkpoint && m.checkpoint.backup_ids?.length > 0`, render a **"Revert turn (N edits)"** button (`data-undo-turn`) in the turn header/actions that calls `POST /api/agent/undo-turn` and marks all steps in the turn as `Restored`.
 
 ---
 
-### Task 9: Continuous Agent Evals (`macos/eval_harness.py`) & Closing the Loop (Stages 4 & 6)
+#### Feature 1.5: Safe Read-Only Shell Allowlist (Zero-Click Inspection Commands)
 
-1. **Declarative Eval Suite (`macos/evals/*.json`)**:
-   - Each JSON file defines `{id, prompt, workspace_fixture, allowed_tools, assertions}` (e.g., `file_contains`, `syntax_valid`, `tool_called`, `test_exit_zero`).
-   - `macos/check_agent.py` runs offline deterministic evals on every `macos/build.sh` invocation so changes to `AGENT_CHAT_NOTE`, skills, or tool schemas are regression-tested before release.
-2. **Closing the Loop (`POST /api/agent/trigger`)**:
-   - Accepts a deterministic metric or check failure event (e.g., failed test command or healthcheck), runs the local model in read-only diagnostic mode (`2sigma` tier), and writes a structured `intent.md` (Anomaly, Evidence, Proposed Outcome, Affected Files, Open Questions) into `STATE/data/agent/intents/` for human triage.
+- **Problem**: Every `run_shell` call pauses for user approval, even safe read-only inspection or test commands (`git status`, `git diff`, `pytest`, `ls`).
+- **Backend (`app.py`)**:
+  1. Implement `_is_safe_readonly_shell(cmd: str) -> bool`:
+     - Must pass `_gate_shell_command(cmd)[0]`.
+     - Reject any shell control, chaining, redirection, subshell, or background operators:
+       `any(op in cmd for op in (";", "&&", "||", "|", ">", "<", "`", "$(", "\n", "\r", "&"))`.
+     - Parse with `shlex.split(cmd)`. If empty or parsing fails, return `False`.
+     - Check against safe read-only patterns:
+       - `git`: subcommand in `("status", "diff", "log", "show", "branch", "rev-parse", "ls-files", "blame")` and no dangerous flags (`--output`, `--ext-diff`, `-c`, `--exec`).
+       - Inspection binaries: `("ls", "pwd", "which", "whoami", "uname", "date", "wc", "head", "tail", "cat", "stat", "file")` (rejecting flags that write or execute).
+       - Verification/test runners:
+         - `pytest` or `python -m pytest` / `python3 -m pytest` / `python -m unittest` / `python3 -m unittest`
+         - `node --check <file>`
+         - `python -m py_compile <file>` / `python3 -m py_compile <file>`
+         - `cargo check`, `cargo test`
+         - `go test`, `go vet`
+         - `npm test`, `npm run test`, `npm run lint`, `npm run check`
+  2. In `harness_gate("run_shell", args, chat_id)`:
+     - Check `load_settings().get("agent", {}).get("auto_approve_readonly", True)`.
+     - When enabled and `_is_safe_readonly_shell(cmd)` is `True`, return `"safe", None, {**meta, "readonly_allowed": True}` so `/api/chat` executes it with zero clicks while still showing the expandable tool step and output!
 
 ---
 
-## Verification Checklist for Implementing Agents
+### Tier 2: Context, Sub-Agents & External Tooling
 
-Before marking any task in this playbook complete, run the full verification suite (matching Stage 4's "Verifying your work" rule):
+#### Feature 2.1: MCP (Model Context Protocol) Client Support for Custom Tools
+
+- **Problem**: Users cannot configure custom stdio MCP servers in `settings.json` to extend Local Studio's chat harness.
+- **Backend (`app.py`)**:
+  1. Extend `load_settings()` with `s.setdefault("mcp_servers", [])`.
+     - Each server entry has schema:
+       `{"id": str, "name": str, "command": str, "args": list[str], "env": dict[str, str], "enabled": bool, "trusted": bool}`.
+  2. Create a custom MCP manager (`_custom_mcp_clients: dict[str, McpClient]` and `_custom_mcp_tools: dict[str, list[dict]]`):
+     - Enhance `McpClient.__init__` to accept `env: dict | None = None`, `cwd: str | None = None`, and `allowed: set | None = None` (`allowed=None` allows any tool exposed by that server).
+     - Add `McpClient.list_tools(timeout=15) -> list[dict]` calling `self._request("tools/list", {}, timeout).get("tools", [])`.
+     - Implement `_get_mcp_chat_tools() -> tuple[list[dict], dict[str, tuple[dict, dict]]]`:
+       - For each enabled server in `load_settings()["mcp_servers"]`:
+         - Connect or reuse cached tool list.
+         - Convert each MCP tool `{name, description, inputSchema}` into an OpenAI function schema named `mcp__{server_id}__{tool_name}`.
+  3. Add REST endpoints for managing MCP servers:
+     - `GET /api/mcp/servers`: Returns configured servers and their cached tool counts / status.
+     - `POST /api/mcp/servers`: Adds or updates an MCP server config in `settings.json` and discovers its tools.
+     - `DELETE /api/mcp/servers/{server_id}`: Stops client and removes server from `settings.json`.
+     - `POST /api/mcp/servers/{server_id}/test`: Starts the server, runs `list_tools()`, and returns `{ok: True, tools: [...]}`.
+  4. Route `mcp__<server_id>__<tool_name>` calls in `/api/chat`:
+     - In `harness_gate()`: if `server.get("trusted")` is `True` or `"mcp"` in `_chat_session_perms.get(chat_id, set())`, return `"safe"`; otherwise return `"risky"` with an approval card showing the MCP server name, tool name, and JSON arguments.
+- **Frontend (`index.html`)**:
+  - Add an **MCP Servers** section in Settings (`#mcpSet`) where users can add a server (`Name`, `Command`, `Arguments`), test connection & see discovered tools, toggle enabled/trusted, or remove it.
+
+---
+
+#### Feature 2.2: Sub-Agent Delegation (`delegate_task` / Context-Isolated Worker)
+
+- **Problem**: All 12 tool rounds share the main chat's 32k context window. Heavy multi-file reading pollutes the parent KV cache.
+- **Backend (`app.py`)**:
+  1. Add `delegate_task` to `CHAT_READ_TOOLS` (with alias `run_subagent` in `_normalize_harness_args`):
+     - Schema:
+       - `task` (required `string`): Detailed description of the research, file exploration, or verification task.
+       - `role` (optional `string`, enum `["researcher", "verifier", "simplifier"]`, default `"researcher"`).
+  2. Implement `_run_subagent_task(task: str, role: str, workspace: str | None, timezone: str | None) -> dict`:
+     - Uses an isolated message list starting with a role-specific system prompt and the active workspace instructions.
+     - Provides safe read-only tools (`read_file`, `list_directory`, `find_files`, `grep_files`, `code_outline`, `git_status`, `git_diff`, `web_search`, `read_webpage`, `search_files`).
+     - Runs up to `SUBAGENT_MAX_ROUNDS = 4` turns against the active chat engine (or `_subagent_engine_hook` when testing offline).
+     - Returns `{"role": role, "task": task, "steps_taken": steps_summary, "summary": final_text[:4000], "files_inspected": files_list}` so the parent chat receives a compact, high-signal summary without the raw multi-file payloads!
+
+---
+
+#### Feature 2.3: Conversation Compaction (`/compact` & Summary-Preserving `_chat_fit_context`)
+
+- **Problem**: Long coding sessions eventually exceed the 32k token window and `_chat_fit_context()` drops whole older turns without keeping a summary.
+- **Backend (`app.py`)**:
+  1. Implement `_summarize_messages_deterministic(messages: list[dict]) -> str`:
+     - Extracts a structured markdown state summary from older turns:
+       - **User Goals & Requests**: bullet list of user prompts.
+       - **Files Touched / Inspected**: paths from `read_file`, `write_file`, `edit_file`, `multi_edit_file`.
+       - **Key Outcomes & Decisions**: concise excerpts from assistant conclusions.
+  2. Update `_chat_fit_context(body)`:
+     - When `cost() > CONTEXT - 1024` and older turns (`messages[1:next_user]`) are evicted, generate a compact `<conversation_checkpoint>` summary block of the evicted turns and insert/merge it right after the system message so earlier context is summarized rather than lost!
+  3. Add `POST /api/chat/compact`:
+     - Accepts `{"chat_id": str | None, "messages": list[dict], "use_llm": bool = False}`.
+     - Summarizes all but the last 2 turns into a single compact checkpoint message and returns `{"ok": True, "compacted_messages": new_messages, "summary": summary_text, "before_count": len(messages), "after_count": len(new_messages)}`.
+
+---
+
+### Tier 3: Developer & Power-User UX Polish
+
+#### Feature 3.1: Background / Long-Running Terminal Processes & Streaming Output
+
+- **Problem**: `run_shell` runs synchronously for up to 30s with no live output streaming and cannot start/inspect/stop background dev servers.
+- **Backend (`app.py`)**:
+  1. **Background Process Registry (`_bg_processes: dict[str, dict]`)**:
+     - Update `run_shell` schema to include optional `background: boolean` and `timeout: integer` (5..120s).
+     - Add `manage_process` tool to `CHAT_READ_TOOLS` (actions: `"list"`, `"status"`, `"logs"`, `"stop"`, `process_id: string`) so the model can inspect output or stop a background process it started.
+     - Add REST endpoints `GET /api/processes` and `POST /api/processes/{proc_id}/stop`.
+  2. **Live Streaming Output (`x_tool_output` SSE)**:
+     - Implement `_stream_shell_or_python(name, args, workspace, on_chunk)` or async queue streaming in `/api/chat`:
+     - While `run_shell` or `run_python` runs in the foreground, stream incremental stdout/stderr lines via SSE `{"x_tool_output": {"id": key, "chunk": text}}` so the frontend updates `.chtdetail` live line-by-line!
+
+---
+
+#### Feature 3.2: Multi-Edit (`multi_edit_file`) & Symbol Outline (`code_outline`) Tools
+
+- **Problem**:
+  - Applying 3 edits to a file takes 3 separate tool rounds.
+  - Finding function/class line ranges in a 6,000-line file like `app.py` takes multiple `grep_files` calls.
+- **Backend (`app.py`)**:
+  1. Add `multi_edit_file` to `CHAT_ACTION_TOOLS`:
+     - Schema: `{"path": string, "edits": [{"old_text": string, "new_text": string, "replace_all": boolean}]}`.
+     - In `harness_gate("multi_edit_file", ...)`: validates all edits sequentially against the file content using `_match_edit_block`, generates a single unified diff preview across all edits, and gates with `"edit"` permission scope.
+     - In `_chat_action_tool("multi_edit_file", ...)`: creates a single backup (`_backup_file`), writes the updated content atomically, and runs `_post_edit_diagnostics(target)`.
+  2. Add `code_outline` to `CHAT_READ_TOOLS`:
+     - Schema: `{"path": string, "kind": string (optional: "all"|"classes"|"functions")}`.
+     - For `.py` files: uses `ast.parse` to extract top-level classes, methods, functions/async functions (with decorators, arguments, `lineno`, and `end_lineno`), plus `# ---` section banners!
+     - For `.js`/`.ts`/`.swift`/`.go`/`.rs`/`.c`/`.cpp`: uses regex/line scanner to extract classes, structs, functions, and methods with line numbers.
+     - Returns `{"path": str(p), "name": p.name, "total_lines": len(lines), "symbols": symbols_list, "outline": formatted_text}`.
+
+---
+
+#### Feature 3.3: Slash Commands / Reusable Prompt Skills (`/review`, `/test`, `/commit`, `/simplify`, `/init`, `/compact`)
+
+- **Problem**: No quick `/` commands in the chat composer for common developer workflows.
+- **Backend (`app.py`)**:
+  1. Define `SLASH_COMMANDS` registry (`GET /api/chat/commands`):
+     - `/review`: Reviews uncommitted `git status` & `git diff` across 3 structured passes (`[Bugs]`, `[Security]`, `[Compliance]`).
+     - `/test`: Runs the project's test suite and diagnoses any failing checks.
+     - `/commit`: Inspects `git status` & `git diff`, drafts a conventional commit message, and asks before committing.
+     - `/simplify`: Reviews modified code for opportunities to simplify logic and remove duplication.
+     - `/init`: Explores the workspace and drafts a concise `AGENTS.md` / `CLAUDE.md` project instruction file.
+     - `/compact`: Compacts older conversation turns into a structured state checkpoint.
+  2. Implement `_expand_slash_command(messages: list[dict], workspace: str | None) -> list[dict]`:
+     - If the latest user message starts with `/review`, `/test`, `/commit`, `/simplify`, or `/init`, automatically attach live workspace `git status` / `git diff` (for `/review`, `/commit`, `/simplify`) and expand the prompt with the structured workflow instructions.
+- **Frontend (`index.html`)**:
+  - When the user types `/` at the start of `#input`, open the autocomplete popover listing `/review`, `/test`, `/commit`, `/simplify`, `/init`, `/compact` with descriptions.
+  - Selecting `/compact` triggers `POST /api/chat/compact` directly and updates `current.messages` in place with a toast notification!
+
+---
+
+## Verification Suite
+
+Run all checks below after implementing or modifying any feature:
 
 ```sh
 node macos/check_ui.js index.html
@@ -197,7 +290,4 @@ python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" app.py
 uv run -q --no-project --python 3.12 --with numpy python macos/check_search.py
 uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_app.py
 TMPDIR=/tmp uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_agent.py
-uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py build/DocumentReader
-./macos/build.sh
 ```
-- **Rule**: If a test fails, fix the implementation code, never weaken or delete the test.

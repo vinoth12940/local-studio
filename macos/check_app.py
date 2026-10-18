@@ -370,6 +370,21 @@ def test_runs_use_their_own_search_port():
     assert app.SEARCH_PORT == 8083, "the default is unchanged"
 
 
+
+@check
+def engine_status_survives_an_answer_that_is_not_json():
+    import httpx
+    from fastapi.testclient import TestClient
+    real_client, real_state = app.httpx.AsyncClient, app.engine_state
+    transport = httpx.MockTransport(lambda request: httpx.Response(502, text="<html>Bad gateway</html>"))
+    app.httpx.AsyncClient = lambda *a, **k: real_client(transport=transport, timeout=k.get("timeout"))
+    app.engine_state = lambda: {"mode": "text", "model_id": None}
+    try:
+        r = TestClient(app.app, base_url="http://127.0.0.1:7860").get("/api/llm/metrics")
+        assert r.status_code == 503 and r.json()["status"] == "starting", (r.status_code, r.text)
+    finally:
+        app.httpx.AsyncClient, app.engine_state = real_client, real_state
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

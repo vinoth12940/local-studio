@@ -10,8 +10,8 @@ coding/research agent harness, browser/macOS computer use, document/image attach
 semantic file search, and text-to-image via mflux. It ships as a self-contained macOS app
 (`Local Studio.app`) and also runs from a source checkout. There are only a handful of source files:
 
-- `app.py`: the entire FastAPI backend (one file, ~6,050 lines, organized by `# ----` section banners)
-- `index.html`: the entire single-page UI (~3,045 lines; inline CSS + one inline `<script>`; vanilla JS, `marked` from a CDN)
+- `app.py`: the entire FastAPI backend (one file, ~7,650 lines, organized by `# ----` section banners)
+- `index.html`: the entire single-page UI (~4,100 lines; inline CSS + one inline `<script>`; vanilla JS, `marked` from a CDN)
 - `catalog.json`: curated chat and image models
 - `search.py` + `search-requirements.txt`: the file-search service (~1,410 lines; EmbeddingGemma 2 on MLX) and its dependencies
 - `setup.sh` / `install.sh` / `start.sh` / `stop.sh` / `uninstall.sh`: zsh lifecycle scripts
@@ -46,7 +46,7 @@ uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py
 uv run -q --no-project --python 3.12 --with-requirements search-requirements.txt python search.py --eval build/search_samples
 ```
 
-`macos/check_agent.py` (~5,350 lines) verifies both the CuaDriver computer-use agent (gate table, view
+`macos/check_agent.py` (~5,570 lines) verifies both the CuaDriver computer-use agent (gate table, view
 trimmer, history folding, MCP client with a fake `cua-driver`, scripted runs) and the Chat Agent
 Harness (`harness_argument_repair_and_normalization`, `harness_path_and_shell_safety_fences`,
 `harness_tolerant_edit_matching`, `harness_backup_and_undo`, `harness_session_approval_and_reply`,
@@ -58,7 +58,22 @@ built by `macos/make_search_samples.py build/search_samples`.
 **Never test against the user's running Mac app.** Run a dev server on port 7861 with its own short
 `LOCAL_STUDIO_HOME` (plus `LOCAL_STUDIO_SEARCH_PORT`/`LOCAL_STUDIO_SEARCH_ROOTS`, see Search service);
 never run `stop.sh`, start an engine or start a CuaDriver daemon against the live app, because the
-engine ports and process patterns are shared.
+engine ports and process patterns are shared. `.claude/launch.json` defines such a server
+(`agent-ui-dev`: port 7861, `LOCAL_STUDIO_HOME=build/agent-ui-state`, search port 8093). Its default
+harness workspace is the checkout itself, so point the Code view at a scratch folder under
+`build/agent-ui-state/` before testing Save, the terminal or agent edits.
+
+`check_ui.js` only runs the script against a stub DOM to catch start-up errors: a selector, `data-*`
+attribute or response field that HTML, JS and `app.py` disagree on passes it silently, so check UI
+changes in the dev server. The stub `window` has no `addEventListener` (use `window.on…` properties), and code
+that runs at start-up must not touch a `let` declared further down (even `typeof` throws in its dead zone).
+The dev server shares engine ports with the running app: check agent turns by rendering synthetic messages
+into `current` from the console, never by sending a real chat.
+
+The look is a warm palette driven by the tokens in `:root` (light, `data-theme="dark"` and the
+`prefers-color-scheme` copy must stay in sync): `--brand` (terracotta) marks primary actions, running state and
+focus; `--accent` stays near-black/white for ordinary primary buttons; `--serif` is used for Chat replies and the
+welcome greeting only (`#v-chat .turn.bot .content`), never in the Code view.
 
 `AGENTS.md` is a shorter overlapping summary for other coding agents; when an invariant here changes,
 update it there too.
@@ -130,25 +145,32 @@ every route and static file) rejects requests with a non-loopback `Host`, a fore
 
 ### Chat Agent Harness
 
-`POST /api/chat` runs a bounded native tool-calling loop for local models: `CHAT_TOOLS` (18 tools,
-schemas defined inline in `app.py`), up to `CHAT_TOOL_ROUNDS = 12` rounds per turn.
+`POST /api/chat` runs a bounded native tool-calling loop for local models: `CHAT_TOOLS` (24 native tools plus dynamic custom MCP tools `mcp__<server_id>__<tool>`, schemas defined inline in `app.py`), up to `CHAT_TOOL_ROUNDS = 12` rounds per turn.
 
 - **Tool groups.** `CHAT_READ_TOOLS` run without approval (clock, `web_search`/`read_webpage`,
-  `search_files`/`read_file`, directory/find/grep, `todo_write` → `x_plan`, `memory_store`/`memory_recall`
-  in `STATE/data/agent/memory.json`). `CHAT_ACTION_TOOLS` (`write_file`, `edit_file`, `run_python`,
-  `run_shell`, `ask_user`) go through `harness_gate()` → safe/risky/blocked, executed by
-  `_chat_action_tool()`. Plus `use_computer` (escalates to a CuaDriver run, `x_agent {run_id}`) and
-  `reply` (for models that always call a tool). The system note is `AGENT_CHAT_NOTE`, applied in
-  `_with_agent_note()` together with recalled memories; it routes personal documents (passports,
-  visas, I-94s, tax forms…) to `search_files`, never `web_search`.
+  `search_files`/`read_file`, directory/find/grep, `code_outline`, `git_status`/`git_diff`,
+  `delegate_task`, `manage_process`, `todo_write` → `x_plan`, `memory_store`/`memory_recall`
+  in `STATE/data/agent/memory.json`). `CHAT_ACTION_TOOLS` (`write_file`, `edit_file`, `multi_edit_file`,
+  `run_python`, `run_shell`, `ask_user`, plus custom MCP server tools) go through `harness_gate()` →
+  safe/risky/blocked, executed by `_chat_action_tool()`. Plus `use_computer` (escalates to a CuaDriver
+  run, `x_agent {run_id}`) and `reply` (for models that always call a tool). The system note is
+  `AGENT_CHAT_NOTE`, applied in `_with_agent_note()` together with recalled memories and auto-loaded
+  workspace instructions (`AGENTS.md`, `CLAUDE.md`, `.localstudio.md`, `.cursorrules`); it routes
+  personal documents (passports, visas, I-94s, tax forms…) to `search_files`, never `web_search`.
 - **`read_file`** reads an indexed document by `file_id` (DocumentReader, `max_pages` clamped 1–4) or
   any file by `path`; a `search_files` filename passed as `path` is resolved back to its `file_id`.
   Web reads go through `_public_web_target()`/`_fetch_public_web()` (public-IP pinning).
-- **Edits.** `_match_edit_block()` matches exact → line-number prefixes stripped → trailing whitespace
-  normalized. `_make_diff_preview()` produces the approval diff; `_backup_file()` snapshots into
-  `STATE/data/agent/backups/<id>.json` for **Undo** (`POST /api/agent/undo`).
-- **Exec.** `run_python` (20 s, `python -I`) and `run_shell` (30 s, zsh) run in the workspace with a
-  minimal hand-built env and `start_new_session=True` so timeouts kill the process group.
+- **Edits & diagnostics.** `_match_edit_block()` matches exact → line-number prefixes stripped → trailing whitespace
+  normalized. `_make_diff_preview()` produces the approval diff; `_post_edit_diagnostics()` runs automatic syntax/lint
+  verification (`.py` via `ast.parse`, `.json` via `json.loads`, `.js` via `node --check`, `.swift` via `swiftc -parse`)
+  and returns `syntax_check` + `syntax_ok` in the tool output; `_backup_file()` snapshots into
+  `STATE/data/agent/backups/<id>.json` for per-step **Undo** (`POST /api/agent/undo`) and turn-level **Revert turn**
+  (`POST /api/agent/undo-turn` via `x_checkpoint`).
+- **Exec, safe read-only allowlist & background processes.** `run_python` (20 s, `python -I`) and `run_shell` (30 s, zsh)
+  run in the workspace with a minimal hand-built env and `start_new_session=True`, streaming live stdout/stderr via
+  `x_tool_output` SSE events. `_is_safe_readonly_shell()` pre-approves strict read-only inspection and test commands
+  (`git status`, `git diff`, `git log`, `pytest`, `ls`, `node --check`, etc.) with zero confirmation clicks.
+  `run_shell(background=True)` starts background processes managed via `manage_process` and `GET /api/processes`.
 - **Fences.** `_harness_path_fence(path, write=...)` resolves symlinks and blocks credential paths
   (`~/.ssh`, `~/.aws`, `~/.gnupg`, Keychains, `.env*` except example/sample/template, `*.pem`/`*.key`/
   `*.p12`/`*.pfx`) and, for writes, system dirs and `STATE/data/agent`. `_gate_shell_command()` blocks
@@ -156,16 +178,47 @@ schemas defined inline in `app.py`), up to `CHAT_TOOL_ROUNDS = 12` rounds per tu
   keystrokes and fork bombs. Tests: `harness_path_and_shell_safety_fences` in `check_agent.py`.
 - **Approvals.** `_ChatSession` emits `x_approval`/`x_question` (carrying `session_id`) and awaits
   `POST /api/chat/sessions/{sid}/reply` (15-min timeout, keepalive comments). `allow_session` caches
-  approval per `chat_id` for the `edit` or `exec` category (`_chat_session_perms`).
-- **Local-model resilience.** `_parse_harness_args()` repairs fenced/trailing-comma/Python-literal
+  approval per `chat_id` for the `edit`, `exec`, or `mcp` category (`_chat_session_perms`).
+- **Local-model resilience, sub-agents & compaction.** `_parse_harness_args()` repairs fenced/trailing-comma/Python-literal
   arguments; `_normalize_harness_args()` maps aliases (`filepath`→`path`, `old_str`→`old_text`,
-  `cmd`→`command`…). Repeating an identical call in a turn (`call_counts`) adds a `loop_warning`.
-  `_chat_fit_context()` masks older rounds' tool outputs to fit the 32k context. The workspace is a
-  `contextvars.ContextVar` (`_chat_workspace`, `_in_workspace()`), never `os.chdir`.
-- **UI.** `index.html` keeps each completed round in `bot.rounds` (`{thinking, thoughtMs, text, tools}`)
+  `cmd`→`command`, `run_subagent`→`delegate_task`…). `delegate_task` spins up a context-isolated read-only
+  sub-agent (`researcher`, `verifier`, `simplifier`). `_chat_fit_context()` masks older rounds' tool outputs
+  and preserves a `<conversation_checkpoint>` summary when evicting older turns; `POST /api/chat/compact`
+  and `/compact` compact long conversations on demand. The workspace is a `contextvars.ContextVar`
+  (`_chat_workspace`, `_in_workspace()`), never `os.chdir`.
+- **UI & Composer (`index.html`).** Keeps each completed round in `bot.rounds` (`{thinking, thoughtMs, text, tools}`)
   and renders `.chround` blocks in order (thinking → `.chround-note` → `.chattoolsteps` of
-  `<details class="chattoolstep">`, with Undo when a `backup_id` is present), then the final answer.
-  Related routes: `POST /api/workspace/pick` (osascript folder picker), `GET/POST/DELETE /api/agent/memory`.
+  `<details class="chattoolstep">`, with Undo when a `backup_id` is present and "Revert turn (N)" when `bot.checkpoint`
+  is present), then the final answer. A reply keeps running while the user opens other chats or views: `liveGen`
+  (`{chat, bot, attach}`) registers it, `turnHTML` draws it as `liveSkeletonHTML`, and `renderThread` calls
+  `liveGen.attach()` so the stream re-binds and repaints from `bot`; the live chat is reopened from memory, not the
+  server, and chats are saved at send so they are in the sidebar at once. `ctxUsage()`/`updateCtx()` show context used
+  and free (last reply's measured tokens plus a chars/3.2 estimate since) under the composer and in the Code status line. Composer supports `@file`/`@folder` fuzzy autocomplete (`GET /api/workspace/files`)
+  and `/` slash commands (`GET /api/chat/commands`: `/review`, `/test`, `/commit`, `/simplify`, `/init`, `/compact`),
+  plus custom MCP server management in Settings (`#mcpSet`, `GET/POST/DELETE /api/mcp/servers`).
+- **Code view (`#v-code`).** A three-pane workbench: explorer (Files / Changes / Outline), a textarea editor
+  with Code/Diff modes and a terminal, and the agent chat. There is one chat UI: `syncChatDock()` moves
+  `#chatScroll`, `.welcome` and `#composerWrap` between `#v-chat` and `#codeChatDock` on `showView()`, so
+  chat code must not assume those live in `#v-chat` (use `chatHost()`). The workspace is
+  `current.workspace || codeWorkspace` (`activeCodeWs()`). Routes: `GET /api/workspace/info|file|outline`,
+  `POST /api/workspace/file` (Save, goes through `write_file` with backup and diagnostics),
+  `POST /api/workspace/settings`, `GET /api/processes`, `POST /api/processes/{id}/stop`
+  (`POST /api/workspace/exec` still exists but the UI no longer uses it). Refreshes after agent tool events
+  (`CODE_MUTATING`) never overwrite an editor with unsaved changes (`codeDirty()`).
+- **Terminal (`# ---- terminal` in `app.py`).** A login `/bin/zsh -l` on a pty per `_Terminal`, started through a
+  tiny `python -I -c` wrapper (`_TERM_CTTY`) that clears the signal mask and takes the pty as controlling terminal
+  (job control, and SIGHUP when the server dies). `_term_env()` drops the app's uv/Python/`LOCAL_STUDIO_*`
+  variables and resets `PATH` so the user's login shell rebuilds it. Routes: `GET/POST /api/terminals`,
+  `GET /api/terminals/{id}/stream?offset=` (SSE of base64 chunks with absolute offsets, so a reloaded page
+  reattaches and replays the scrollback; an idle stream ends after 3 s so a stopping server never waits on an open
+  page, and the page reconnects from its offset), `POST …/input`, `POST …/resize`, `DELETE …`. At most 8; all closed at
+  exit (`atexit`). The UI draws it with xterm.js 5.5 + addon-fit loaded on first use from jsDelivr with SRI
+  (`XTERM_FILES`); bump the hashes with the versions.
+- **Permission prompts.** `permission_mode: "accept_edits"` in the `/api/chat` body grants the `edit` scope for that
+  request only (`harness_gate(..., extra_perms)`); commands still ask. The UI never persists that mode: every load starts
+  in "Ask before edits". A declined approval may carry `feedback`,
+  which goes back to the model in the tool result. The UI shows numbered options (1/2/3 keys, Esc declines),
+  Shift+Tab toggles the mode, and Esc stops a running reply.
 
 ### Computer-Use Agent (CuaDriver)
 
@@ -275,18 +328,11 @@ If a test fails, fix the implementation code — never skip, weaken, or delete a
 - Never mutate process-wide `os.getcwd()` in `app.py`; always use the `_chat_workspace` `ContextVar` (`_in_workspace(path)`).
 - When adding a Python dependency, add it to **both** `start.sh` and `APP_DEPS` in `setup.sh`. When adding a runtime file, add it to the copy list in `macos/build.sh`.
 
-## AI-Native SDLC & Agent Harness Phase 2 Playbook
+## Agent Harness roadmap
 
-For the next stage of Agent Harness features based on [Anthropic's AI-Native SDLC Playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook), see the step-by-step implementation specification in:
-- `docs/superpowers/plans/2026-10-17-ai-native-sdlc-agent-harness.md`
-
-It covers:
-1. Auto-loading workspace `CLAUDE.md` / `AGENTS.md` into `_with_agent_note()` and `/init` generation.
-2. **Plan Mode / Act Mode / Auto Mode** composer switch + `intent.md`, `spec.md`, and `plan.md` workflow.
-3. Built-in post-edit syntax/lint diagnostics (`_post_edit_diagnostics`), test-file write protection during bug fixes, and `PreToolUse` / `PostToolUse` hooks.
-4. Safe read-only shell allowlist (`git status`, `git diff`, `pytest`, etc.) to eliminate prompt fatigue.
-5. **Skills** discovery (`.claude/skills/<name>/SKILL.md` and `.agents/skills/<name>/SKILL.md`) and `load_skill` tool.
-6. **Subagents** (`run_subagent` with isolated context windows for `researcher`, `verifier`, `simplifier`) and turn-level 1-click rollback (`POST /api/agent/undo-turn`).
-7. Multi-pass code review via `REVIEW.md` and `/review` (`Bugs`, `Security`, `Compliance`, capped nits).
-8. `@file` composer autocomplete, `/compact` conversation summarization, declarative continuous evals (`macos/evals/*.json`), and deterministic trigger-to-`intent.md` loop closing (`POST /api/agent/trigger`).
-
+`docs/superpowers/plans/2026-10-17-ai-native-sdlc-agent-harness.md` is the spec and progress tracker for the
+harness features (Tier 1–3, all marked done). Ideas from
+[Anthropic's AI-Native SDLC Playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook) that are
+**not** built yet: a Plan/Act/Auto composer mode with `intent.md`/`spec.md`/`plan.md`, `PreToolUse`/`PostToolUse`
+hooks, test-file write protection, Skills discovery with a `load_skill` tool, `REVIEW.md`-driven review passes,
+declarative evals in `macos/evals/`, and `POST /api/agent/trigger`.
