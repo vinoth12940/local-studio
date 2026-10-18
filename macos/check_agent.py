@@ -4974,6 +4974,7 @@ def chat_clock_result_returns_to_the_model_with_timezone():
         assert events[-1]["choices"][0]["delta"]["content"] == "The clock has been checked."
 
 
+
 @check
 def web_search_reads_organic_results_and_honors_domain():
     real = app._fetch_public_web
@@ -5340,6 +5341,276 @@ def harness_memory_and_todo():
     assert todo_res["todos"][0]["status"] == "in_progress"
 
 
+@check
+def harness_workspace_instructions_and_mentions():
+    ws_dir = TMP / "ws_instr_test"
+    ws_dir.mkdir(parents=True, exist_ok=True)
+    (ws_dir / "CLAUDE.md").write_text("# Repo Rules\nAlways run pytest -q before finishing.\n")
+    (ws_dir / "hello.py").write_text("def greet(name):\n    return f'Hello {name}'\n")
+    sub = ws_dir / "pkg"
+    sub.mkdir(exist_ok=True)
+    (sub / "util.py").write_text("X = 42\n")
+
+    # 1. Auto-loading workspace instructions
+    instr = app._load_workspace_instructions(str(ws_dir))
+    assert any(it["name"] == "CLAUDE.md" and "Always run pytest -q" in it["content"] for it in instr)
+    noted = app._with_agent_note([{"role": "user", "content": "hi"}], workspace=str(ws_dir))
+    assert "WORKSPACE_INSTRUCTIONS" in noted[0]["content"] and "Always run pytest -q" in noted[0]["content"]
+
+    # 2. Workspace file autocomplete endpoint
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    r_files = c.get("/api/workspace/files", params={"workspace": str(ws_dir), "q": "hello"})
+    assert r_files.status_code == 200
+    paths = [it["path"] for it in r_files.json()["items"]]
+    assert "hello.py" in paths
+
+    # 3. @file and @folder mention expansion
+    msgs = [{"role": "user", "content": "Please inspect @hello.py and @pkg for issues"}]
+    expanded, sources = app._expand_workspace_mentions(msgs, str(ws_dir))
+    assert '<workspace_file path="hello.py"' in expanded[-1]["content"]
+    assert "def greet(name):" in expanded[-1]["content"]
+    assert '<workspace_folder path="pkg"' in expanded[-1]["content"]
+    assert "file: util.py" in expanded[-1]["content"]
+    assert any(s["name"] == "hello.py" for s in sources)
+
+
+@check
+def harness_post_edit_diagnostics_and_multi_edit():
+    ws_dir = TMP / "ws_diag_test"
+    ws_dir.mkdir(parents=True, exist_ok=True)
+    py_file = ws_dir / "mod.py"
+    py_file.write_text("class Calc:\n    def add(self, a, b):\n        return a + b\n\ndef helper():\n    return 10\n")
+
+    # 1. Code outline
+    outline = app._in_workspace(str(ws_dir), app._chat_read_tool, "code_outline", {"path": "mod.py"})
+    assert outline["symbol_count"] >= 2
+    names = [s["name"] for s in outline["symbols"]]
+    assert "Calc" in names and "helper" in names and ".add()" in outline["outline"]
+
+    # 2. Multi-edit with valid syntax -> syntax_check == "OK"
+    res_ok = app._in_workspace(
+        str(ws_dir),
+        app._chat_action_tool,
+        "multi_edit_file",
+        {
+            "path": "mod.py",
+            "edits": [
+                {"old_text": "return a + b", "new_text": "return int(a) + int(b)"},
+                {"old_text": "return 10", "new_text": "return 20"},
+            ],
+        },
+        turn_id="turn-diag-1",
+    )
+    assert res_ok["status"] == "edited" and res_ok["edits_applied"] == 2
+    assert res_ok["syntax_check"] == "OK" and res_ok["syntax_ok"] is True
+    assert "return int(a) + int(b)" in py_file.read_text() and "return 20" in py_file.read_text()
+
+    # 3. Broken syntax edit returns line error in syntax_check
+    res_bad = app._in_workspace(
+        str(ws_dir),
+        app._chat_action_tool,
+        "edit_file",
+        {"path": "mod.py", "old_text": "return 20", "new_text": "return (20"},
+        turn_id="turn-diag-2",
+    )
+    assert res_bad["status"] == "edited" and res_bad["syntax_ok"] is False
+    assert "SyntaxError" in res_bad["syntax_check"]
+
+
+@check
+def harness_turn_checkpoint_and_git_tools():
+    import subprocess
+    ws_dir = TMP / "ws_ckpt_git"
+    ws_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=str(ws_dir), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@local.studio"], cwd=str(ws_dir), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(ws_dir), capture_output=True, check=True)
+
+    f1 = ws_dir / "a.txt"
+    f1.write_text("initial a\n")
+    subprocess.run(["git", "add", "a.txt"], cwd=str(ws_dir), capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(ws_dir), capture_output=True, check=True)
+
+    # Modify a.txt twice and create b.txt in the same turn_id
+    tid = "turn-ckpt-99"
+    app._in_workspace(str(ws_dir), app._chat_action_tool, "edit_file", {"path": "a.txt", "old_text": "initial a", "new_text": "step 1"}, turn_id=tid)
+    app._in_workspace(str(ws_dir), app._chat_action_tool, "edit_file", {"path": "a.txt", "old_text": "step 1", "new_text": "step 2"}, turn_id=tid)
+    app._in_workspace(str(ws_dir), app._chat_action_tool, "write_file", {"path": "b.txt", "content": "new file b\n"}, turn_id=tid)
+    assert f1.read_text() == "step 2\n" and (ws_dir / "b.txt").exists()
+
+    # Check git_status and git_diff tools before revert
+    gs = app._in_workspace(str(ws_dir), app._chat_read_tool, "git_status", {})
+    assert gs["clean"] is False and any("a.txt" in ch["path"] for ch in gs["files"])
+    gd = app._in_workspace(str(ws_dir), app._chat_read_tool, "git_diff", {})
+    assert "+step 2" in gd["diff"]
+
+    # Revert entire turn via POST /api/agent/undo-turn
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    r_undo = c.post("/api/agent/undo-turn", json={"turn_id": tid})
+    assert r_undo.status_code == 200 and r_undo.json()["ok"] is True
+    assert f1.read_text() == "initial a\n"
+    assert not (ws_dir / "b.txt").exists()
+
+
+@check
+def harness_safe_readonly_shell_allowlist():
+    for safe_cmd in (
+        "git status",
+        "git diff --stat",
+        "git log -n 5 --oneline",
+        "pytest -q",
+        "python3 -m py_compile app.py",
+        "node --check index.html",
+        "ls -la",
+        "pwd",
+    ):
+        assert app._is_safe_readonly_shell(safe_cmd) is True, f"Expected safe: {safe_cmd}"
+
+    for unsafe_cmd in (
+        "rm -f foo.txt",
+        "ls -la && rm -f foo.txt",
+        "git commit -m 'msg'",
+        "git push origin main",
+        "python3 -c 'import os; os.system(\"id\")'",
+        "echo hello > out.txt",
+        "pip install requests",
+        "curl https://example.com",
+    ):
+        assert app._is_safe_readonly_shell(unsafe_cmd) is False, f"Expected unsafe: {unsafe_cmd}"
+
+
+@check
+def harness_background_processes_and_streaming():
+    chunks = []
+    rc, out, err = app._run_streamed_subprocess(
+        [sys.executable, "-c", "import time; print('line1', flush=True); print('line2', flush=True)"],
+        cwd=str(TMP),
+        env=dict(os.environ),
+        timeout=10,
+        on_output=lambda line: chunks.append(line.strip()),
+    )
+    assert rc == 0 and "line1" in out and "line2" in out
+    assert "line1" in chunks and "line2" in chunks
+
+    # Start a short background shell process and manage it
+    bg = app._in_workspace(str(TMP), app._start_bg_shell, "python3 -c 'import time; print(\"bg_ready\", flush=True); time.sleep(5)'", TMP, dict(os.environ))
+    pid = bg["process_id"]
+    try:
+        time.sleep(0.25)
+        listed = app._manage_bg_process("list")
+        assert any(p["process_id"] == pid for p in listed["processes"])
+        out_info = app._manage_bg_process("logs", pid)
+        assert out_info["process_id"] == pid
+        stopped = app._manage_bg_process("stop", pid)
+        assert stopped["status"] == "stopped"
+    finally:
+        app._manage_bg_process("stop", pid)
+
+
+@check
+def harness_subagent_compaction_and_slash_commands():
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+
+    # 1. Slash commands listing and expansion
+    r_cmds = c.get("/api/chat/commands")
+    assert r_cmds.status_code == 200 and any(cmd["command"] == "/review" for cmd in r_cmds.json()["commands"])
+    expanded = app._expand_slash_command([{"role": "user", "content": "/review focus on security"}], workspace=str(TMP))
+    assert "Perform a structured 3-pass code review" in expanded[-1]["content"]
+    assert "focus on security" in expanded[-1]["content"]
+
+    # 2. Conversation compaction endpoint
+    long_msgs = [
+        {"role": "user", "content": f"Question {i}: please update module_{i}.py"} if i % 2 == 0
+        else {"role": "assistant", "content": f"Updated module_{i}.py and verified tests."}
+        for i in range(10)
+    ]
+    r_comp = c.post("/api/chat/compact", json={"messages": long_msgs, "keep_recent": 4})
+    assert r_comp.status_code == 200 and r_comp.json()["compacted"] is True
+    assert r_comp.json()["before_count"] == 10 and r_comp.json()["after_count"] == 5
+    assert len(r_comp.json()["messages"]) == 5
+    assert "Conversation Checkpoint Summary" in r_comp.json()["messages"][0]["content"]
+
+    # 3. Custom MCP server configuration CRUD
+    r_add = c.post("/api/mcp/servers", json={"id": "test_srv", "command": "echo", "args": ["hello"], "enabled": False})
+    assert r_add.status_code == 200
+    r_list = c.get("/api/mcp/servers")
+    assert any(s["id"] == "test_srv" for s in r_list.json()["servers"])
+    r_del = c.delete("/api/mcp/servers/test_srv")
+    assert r_del.status_code == 200
+    assert not any(s["id"] == "test_srv" for s in c.get("/api/mcp/servers").json()["servers"])
+
+    # 4. Code Workbench endpoints (info, file read/write with syntax check, outline, exec)
+    ws_dir = TMP / "code_wb_test"
+    ws_dir.mkdir(exist_ok=True)
+    (ws_dir / "AGENTS.md").write_text("# Build\npytest\n", encoding="utf-8")
+    r_save = c.post("/api/workspace/file", json={"path": "demo.py", "content": "def greet(name):\n    return f'hi {name}'\n", "workspace": str(ws_dir)})
+    assert r_save.status_code == 200 and r_save.json()["syntax_check"] == "OK"
+    r_read = c.get("/api/workspace/file", params={"path": "demo.py", "workspace": str(ws_dir)})
+    assert r_read.status_code == 200 and "def greet" in r_read.json()["content"]
+    r_out = c.get("/api/workspace/outline", params={"path": "demo.py", "workspace": str(ws_dir)})
+    assert r_out.status_code == 200 and any("greet" in s["signature"] for s in r_out.json()["symbols"])
+    r_info = c.get("/api/workspace/info", params={"workspace": str(ws_dir)})
+    assert r_info.status_code == 200 and any(f["name"] == "AGENTS.md" for f in r_info.json()["instructions"])
+    r_exec = c.post("/api/workspace/exec", json={"command": "python3 -c \"print('wb_ok')\"", "workspace": str(ws_dir)})
+    assert r_exec.status_code == 200 and "wb_ok" in r_exec.json()["stdout"]
+
+
+
+@check
+def harness_accept_edits_mode_and_terminal():
+    ws = TMP / "term_ws"
+    ws.mkdir(exist_ok=True)
+    # "Accept edits" grants file edits for one request, never commands
+    args = {"path": str(ws / "x.py"), "content": "x = 1\n"}
+    assert app._in_workspace(str(ws), app.harness_gate, "write_file", args, None)[0] == "risky"
+    assert app._in_workspace(str(ws), app.harness_gate, "write_file", args, None, ("edit",))[0] == "safe"
+    assert app._in_workspace(str(ws), app.harness_gate, "run_shell", {"command": "touch y"}, None, ("edit",))[0] == "risky"
+    assert "chat-x" not in app._chat_session_perms
+
+    # The terminal is a real login shell on a pty, in the workspace, with job control
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    zdot = TMP / "zdot"                                   # an empty ZDOTDIR: the user's own ~/.zshrc never runs in a check
+    zdot.mkdir(exist_ok=True)
+    (zdot / ".zshrc").write_text("PS1='ready> '\n")
+    os.environ["ZDOTDIR"] = str(zdot)
+    try:
+        r = c.post("/api/terminals", json={"workspace": str(ws), "rows": 30, "cols": 100})
+    finally:
+        os.environ.pop("ZDOTDIR", None)
+    assert r.status_code == 200, r.text
+    tid = r.json()["id"]
+    term = app._terminals[tid]
+    try:
+        seen, pos, deadline = b"", 0, time.time() + 10
+        while time.time() < deadline and b"ready> " not in seen:
+            data, pos, _ = term.read(pos, 1)
+            seen += data
+        assert b"ready> " in seen, seen[-400:]
+        assert c.post(f"/api/terminals/{tid}/input", json={"data": "echo term_$((40+2)); pwd; stty size; [[ -o monitor ]] && echo job$((2*2))ctl\n"}).status_code == 200
+        seen, deadline = b"", time.time() + 15
+        while time.time() < deadline and b"job4ctl" not in seen:            # the echoed command line never contains the output
+            data, pos, _ = term.read(pos, 1)
+            seen += data
+        assert b"term_42" in seen and ws.name.encode() in seen and b"30 100" in seen and b"job4ctl" in seen, seen[-800:]
+        t0 = time.time()                                  # an idle stream ends on its own, so it never holds a stopping server open
+        c.get(f"/api/terminals/{tid}/stream", params={"offset": term.end})
+        assert time.time() - t0 < 8, "an idle terminal stream must end by itself"
+        assert c.post(f"/api/terminals/{tid}/resize", json={"rows": 40, "cols": 120}).status_code == 200
+        assert any(t["id"] == tid for t in c.get("/api/terminals").json()["terminals"])
+        c.post(f"/api/terminals/{tid}/input", json={"data": "exit\n"})
+        deadline = time.time() + 10
+        while term.exit_code is None and time.time() < deadline:
+            time.sleep(0.05)
+        assert term.exit_code is not None, "the shell should exit"
+        events = c.get(f"/api/terminals/{tid}/stream", params={"offset": 0}).text
+        assert '"exit"' in events and '"d"' in events
+        assert c.post(f"/api/terminals/{tid}/input", json={"data": "x"}).status_code == 409
+    finally:
+        assert c.delete(f"/api/terminals/{tid}").status_code == 200
+    assert tid not in app._terminals
+    assert c.post("/api/terminals", json={"workspace": "~/.ssh"}).status_code == 400
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:
@@ -5348,3 +5619,4 @@ if __name__ == "__main__":
         fn()
         print(f"   ok {fn.__name__}")
     print("   agent checks OK")
+
