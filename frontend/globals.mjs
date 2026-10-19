@@ -14,9 +14,11 @@ import * as chat_composer from "./chat/composer.mjs";
 import * as chat_live from "./chat/live.mjs";
 import * as chat_computer from "./chat/computer.mjs";
 import * as images_images from "./images/images.mjs";
+import * as code_editor from "./code/editor.mjs";
+import * as code_terminal from "./code/terminal.mjs";
 
 window.showView = (...args) => ui_views.showView(...args);
-const SPACES = [main, core_util, core_markdown, ui_theme, ui_views, ui_engine, chat_list, chat_thread, chat_attachments, chat_composer, chat_live, chat_computer, images_images];
+const SPACES = [main, core_util, core_markdown, ui_theme, ui_views, ui_engine, chat_list, chat_thread, chat_attachments, chat_composer, chat_live, chat_computer, images_images, code_editor, code_terminal];
 const STORES = () => [chat_attachments.attachmentsState, chat_list.listState, chat_thread.threadState, main.mainState];            // names more than one module assigns live in these
 window.LS = new Proxy({}, {
   get: (_, k) => STORES().find((s) => k in s)?.[k] ?? SPACES.map((m) => m[k]).find((v) => v !== undefined),
