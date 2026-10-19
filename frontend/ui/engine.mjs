@@ -1,6 +1,6 @@
 // ui/engine.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
 import {
-  $, activeChat, closeMenus, gib, jpost, listState, mainState, toast, updateHeader, updateSend
+  $, activeChat, closeMenus, gib, jpost, libraryState, listState, toast, updateHeader, updateSend
 } from "../modules.mjs";
 
 // ---------------- engine status
@@ -14,11 +14,11 @@ async function poll() {
   const dotCls = engineState === "ready" ? "ok" : engineState === "loading" ? "warn" : "bad";
   const emode = health?.mode, vision = emode === "vision";
   const label = engineState === "ready" ? (vision ? "Ready · Vision" : emode === "gguf" ? "Ready · llama.cpp" : "Ready") : engineState === "loading" ? (health?.phase === "warming_up" ? "Warming up…" : "Loading model…") : "Engine stopped";
-  mainState.runningName = engineState === "down" ? null : (health?.model_name || null);
-  mainState.runningMode = engineState === "down" ? null : emode;
+  libraryState.runningName = engineState === "down" ? null : (health?.model_name || null);
+  libraryState.runningMode = engineState === "down" ? null : emode;
   updateHeader();
-  $("engName").textContent = mainState.runningName || activeChat()?.name || "No model";
-  $("mModel").textContent = mainState.runningName || activeChat()?.name || "–";
+  $("engName").textContent = libraryState.runningName || activeChat()?.name || "No model";
+  $("mModel").textContent = libraryState.runningName || activeChat()?.name || "–";
   $("engDesc").textContent = emode === "gguf" ? "llama.cpp server (GGUF)" : vision ? "mlx-vlm server (images + text)" : "mlx-dspark with speculative decoding";
   const port = emode === "gguf" ? 8082 : vision ? 8081 : 8080;
   $("apiUrl").textContent = `http://127.0.0.1:${port}/v1`;
