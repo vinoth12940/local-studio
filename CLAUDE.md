@@ -8,9 +8,12 @@ Local Studio is a private, on-device AI studio and local-model Agent Harness for
 chat (MLX models with DFlash/DSpark speculative decoding, or GGUF on llama.cpp), multi-step workspace
 coding/research agent harness, browser/macOS computer use, document/image attachments, on-device
 semantic file search, and text-to-image via mflux. It ships as a self-contained macOS app
-(`Local Studio.app`) and also runs from a source checkout. There are only a handful of source files:
+(`Local Studio.app`) and also runs from a source checkout. The source files:
 
-- `app.py`: the entire FastAPI backend (one file, ~7,650 lines, organized by `# ----` section banners)
+- `app.py`: the entrypoint `uvicorn app:app` loads (23 lines: `APP_VERSION`, `from studio.main import app`, and a live
+  `__getattr__` so the check suites can read any backend name as `app.X`)
+- `studio/`: the FastAPI backend (~8,400 lines), split by concern; see Backend layout below
+- `requirements-app.txt`: exact pins of the backend's Python packages
 - `index.html`: the entire single-page UI (~4,100 lines; inline CSS + one inline `<script>`; vanilla JS, `marked` from a CDN)
 - `catalog.json`: curated chat and image models
 - `search.py` + `search-requirements.txt`: the file-search service (~1,410 lines; EmbeddingGemma 2 on MLX) and its dependencies
@@ -33,12 +36,12 @@ macos/release.sh          # build + DMG in build/, signs/notarizes if a Develope
 
 `macos/build.sh` is the primary validation step before a PR or release: it runs `node macos/check_ui.js index.html`
 (executes the UI script against a stub DOM so start-up errors such as a `const` used before its
-declaration fail the build), `ast.parse`s `app.py` and `search.py`, and runs the offline verification
+declaration fail the build), `ast.parse`s `app.py` and every file under `studio/`, and runs the offline verification
 suites (`check_search.py`, `check_app.py`, `check_agent.py`, `check_document.py`). Individual checks:
 
 ```sh
 node macos/check_ui.js index.html
-python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" app.py
+python3 -c "import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]" app.py studio/**/*.py
 uv run -q --no-project --python 3.12 --with numpy python macos/check_search.py
 uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_app.py
 TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py [check_name ...]
@@ -64,7 +67,7 @@ harness workspace is the checkout itself, so point the Code view at a scratch fo
 `build/agent-ui-state/` before testing Save, the terminal or agent edits.
 
 `check_ui.js` only runs the script against a stub DOM to catch start-up errors: a selector, `data-*`
-attribute or response field that HTML, JS and `app.py` disagree on passes it silently, so check UI
+attribute or response field that HTML, JS and the backend disagree on passes it silently, so check UI
 changes in the dev server. The stub `window` has no `addEventListener` (use `window.on…` properties), and code
 that runs at start-up must not touch a `let` declared further down (even `typeof` throws in its dead zone).
 The dev server shares engine ports with the running app: check agent turns by rendering synthetic messages
@@ -82,14 +85,54 @@ The backend has no project/venv: `start.sh` runs it with
 `uv run --no-project --python 3.12 --with-requirements requirements-app.txt uvicorn app:app`. `requirements-app.txt`
 holds exact pins and is shared by `start.sh`, `APP_DEPS` in `setup.sh` and the check suites; add a Python dependency
 there, never as a bare `--with`. `search-requirements.txt` is pinned the same way (its hash change re-runs Search setup). After editing
-`app.py`, restart the UI server (`./stop.sh && ./start.sh --ui`); there is no auto-reload. Logs and
+`app.py` or `studio/`, restart the UI server (`./stop.sh && ./start.sh --ui`); there is no auto-reload. Logs and
 pid files go to `logs/` (`ui.log`, `llm.log`, `vlm.log`, `gguf.log`, `download-<id>.log`).
 
 ## Architecture
 
+### Backend layout and the import rule
+
+`studio/` was split out of the single-file `app.py` (refactor P1, `docs/refactor-progress.json`); each module keeps the
+names it had there. Imports only flow down this list (no cycles); `studio/main.py` lists every module in this order
+(`MODULES`) and builds the app:
+
+- `config.py`: `ROOT`/`STATE` and the paths under them, ports, `ENGINES`, `CATALOG`, `agent_lock`
+- `infra/`: `sse`, `system` (memory, pids, the clock tool), `text`, `edits` (edit matching, diff previews, post-edit
+  diagnostics), `harness_args` (argument repair), `workspace` (the `_chat_workspace` ContextVar), `processes`
+  (`run_shell`/`run_python` subprocesses), `mcp_client` (stdio MCP client + the CuaDriver allowlist), `request_log`
+- `security/`: `local_only`, `fences` (path fence, shell gate, read-only allowlist), `harness_gate`, `agent_gate`
+- `storage/`: `settings`, `flags`, `memory`, `backups`, `chats`
+- `services/`: `models`, `engines`, `attachments`, `images`, `search`, `terminal`, `web`, `mcp_custom`, `agent/{cua,views,loop}`,
+  `harness` (the chat agent loop's tools, sessions, sub-agents and compaction), `updates`
+- `api/`: one `APIRouter` per area (`system`, `models`, `engines`, `chat`, `memory`, `undo`, `processes`, `terminal`, `mcp`,
+  `workspace`, `attachments`, `chats`, `images`, `search`, `agent`, `updates`, `storage`), included by `studio/main.py`
+
+Two exceptions to "down only": `security/harness_gate.py` reads custom MCP trust flags from `services/mcp_custom.py`, and
+`security`/`infra` modules use small `infra`/`storage` helpers. Keep each module's locks and global dicts in that module, and
+keep sync handlers sync (they run in the threadpool and take `threading.Lock`s).
+
+**Names rebound at run time are read through their owner.** A check suite's `X = fake` patch, or a `global X`, rebinds the
+name in the module that defines it. Other modules must read it as `owner.X` (`engines.ensure_engine(...)`,
+`config.CONTEXT`), never via `from owner import X`, which takes a copy the rebind never reaches. Which names these are:
+`macos/fixtures/patch_points.json` plus the `global`s (`active_chats`, `_agent_cli`, `_agent_current`, `_agent_last_use`,
+`_agent_reaper`, `_cua_grant`); `check_app.py rebound_names_are_read_through_their_owner` enforces it.
+
+**Patching in the suites.** Patch the module that defines the name: `studio.services.engines.ensure_engine = fake`, not
+`app.ensure_engine`. The suites install `macos/patch_guard.py`, which raises on `app.X = ...` for anything `app.py` does not
+define; save/restore loops use `patch_guard.owner(app, name)`. Reading `app.X` is fine (it forwards to the owner, live).
+
+**Contracts.** `check_app.py` compares the routes (`macos/fixtures/routes.json`; routes that could answer the same request
+must keep their order), the SSE events and their fields plus the UI's handlers (`sse_contract.json`), and the patch points
+(`patch_points.json`). A change that is meant updates the fixture in the same commit:
+`LOCAL_STUDIO_UPDATE_FIXTURES=1 uv run ... python macos/check_app.py route_contract_is_unchanged`.
+
+**Flags.** Behavior changes from the refactor sit behind flags in `data/settings.json` that default to the old behavior
+(`studio/storage/flags.py`, `FLAGS`): `logging.json_requests` (off) writes slow, failing and non-GET requests to
+`logs/requests.jsonl`.
+
 ### Code vs. user data
 
-`ROOT` (where `app.py` lives) holds code; `STATE` = `$LOCAL_STUDIO_HOME` holds user data
+`ROOT` (where `app.py` lives; `studio/config.py` computes it as the parent of `studio/`) holds code; `STATE` = `$LOCAL_STUDIO_HOME` holds user data
 (`gallery/`, `uploads/`, `logs/`, `data/settings.json`, `data/chats/`, `data/search/`,
 `data/agent/runs/`, `data/agent/memory.json`, `data/agent/backups/`). From a checkout `STATE`
 defaults to the checkout itself (those folders are gitignored). The Mac app bundles the code into
@@ -102,7 +145,7 @@ inside the signed app bundle, which would invalidate its resource seal after lau
 ### One engine at a time
 
 Chat goes through one of three external engine processes, and only one runs at once (each can
-hold ~16 GB+). `ENGINES` in `app.py` defines them:
+hold ~16 GB+). `ENGINES` in `studio/config.py` defines them (the rest is `studio/services/engines.py`):
 
 | mode | process | port |
 |---|---|---|
@@ -129,7 +172,7 @@ external clients. Everything binds to `127.0.0.1` only.
 ### Search service
 
 `search.py` is a fourth process on port 8083, separate from the chat engines and exempt from
-the one-at-a-time rule (it holds ~2 GB). `app.py` is its only launcher (`_start_search`), always
+the one-at-a-time rule (it holds ~2 GB). `studio/services/search.py` is its only launcher (`_start_search`), always
 with relative file names and `cwd=ROOT`, because the bundled path contains a space and
 `stop.sh`/`_stop_search` find it by the literal `python search.py --port 8083`. Keep those
 patterns in sync. Its dependencies live in `search-requirements.txt` and are installed by
@@ -139,14 +182,14 @@ library and numpy so `macos/check_search.py` can run without a model. For develo
 `LOCAL_STUDIO_SEARCH_ROOTS` to a sample folder so the real default folders are never crawled, and
 `LOCAL_STUDIO_SEARCH_PORT` (for example 8093) so a development server gets its own search
 service and can never reach or stop the one in the app the user is running.
-Because these routes return the text of the user's files, `LocalOnly` in `app.py` (now a guard on
+Because these routes return the text of the user's files, `LocalOnly` in `studio/security/local_only.py` (now a guard on
 every route and static file) rejects requests with a non-loopback `Host`, a foreign `Origin`, or
 `Sec-Fetch-Site: cross-site|same-site`; the service itself refuses any request that carries an
 `Origin` or is cross-site (`_local_request`).
 
 ### Chat Agent Harness
 
-`POST /api/chat` runs a bounded native tool-calling loop for local models: `CHAT_TOOLS` (24 native tools plus dynamic custom MCP tools `mcp__<server_id>__<tool>`, schemas defined inline in `app.py`), up to `CHAT_TOOL_ROUNDS = 12` rounds per turn.
+`POST /api/chat` runs a bounded native tool-calling loop for local models: `CHAT_TOOLS` (24 native tools plus dynamic custom MCP tools `mcp__<server_id>__<tool>`, schemas defined inline in `studio/services/harness.py`; the loop's route is `studio/api/chat.py`), up to `CHAT_TOOL_ROUNDS = 12` rounds per turn.
 
 - **Tool groups.** `CHAT_READ_TOOLS` run without approval (clock, `web_search`/`read_webpage`,
   `search_files`/`read_file`, directory/find/grep, `code_outline`, `git_status`/`git_diff`,
@@ -206,7 +249,7 @@ every route and static file) rejects requests with a non-loopback `Host`, a fore
   `POST /api/workspace/settings`, `GET /api/processes`, `POST /api/processes/{id}/stop`
   (`POST /api/workspace/exec` still exists but the UI no longer uses it). Refreshes after agent tool events
   (`CODE_MUTATING`) never overwrite an editor with unsaved changes (`codeDirty()`).
-- **Terminal (`# ---- terminal` in `app.py`).** A login `/bin/zsh -l` on a pty per `_Terminal`, started through a
+- **Terminal (`studio/services/terminal.py`, routes in `studio/api/terminal.py`).** A login `/bin/zsh -l` on a pty per `_Terminal`, started through a
   tiny `python -I -c` wrapper (`_TERM_CTTY`) that clears the signal mask and takes the pty as controlling terminal
   (job control, and SIGHUP when the server dies). `_term_env()` drops the app's uv/Python/`LOCAL_STUDIO_*`
   variables and resets `PATH` so the user's login shell rebuilds it. Routes: `GET/POST /api/terminals`,
@@ -223,7 +266,7 @@ every route and static file) rejects requests with a non-loopback `Host`, a fore
 
 ### Computer-Use Agent (CuaDriver)
 
-The `# ---- agent` section of `app.py` also lets a local model drive an isolated Chrome browser and Mac apps
+`studio/services/agent/` (`cua.py` daemon and permissions, `views.py` snapshots, `loop.py` runs) also lets a local model drive an isolated Chrome browser and Mac apps
 through CuaDriver (`com.trycua.driver`, https://github.com/trycua/cua, >= 0.28.2), used as an MCP server over
 stdio (`cua-driver mcp --socket ...`, hand-written JSON-RPC client, no dependency). It is off by
 default (`data/settings.json` → `agent`) and independent of the chat engine rule except that a run
@@ -299,12 +342,13 @@ runs `setup.sh --migrate` (copies data from `~/local-studio`), then `start.sh`, 
 `http://127.0.0.1:7860` in a WKWebView. On quit it runs `stop.sh` unless "Keep Running After Quit"
 is on. `setup.sh` talks to the app through a line protocol on stdout (`@check`, `@step`, `@log`,
 `@done`, `@error`), so keep that format intact when editing it. `macos/build.sh` copies a fixed list
-of files into the bundle (`app.py index.html catalog.json requirements-app.txt search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh`).
+of files into the bundle (`app.py index.html catalog.json requirements-app.txt search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh`)
+plus `studio/` (rsync, never `__pycache__`; the build fails if the bundle contains bytecode).
 Any new runtime file must be added to that list.
 
 ## Versioning and releases
 
-The version lives in `APP_VERSION` in `app.py`. `build.sh`/`release.sh` read it from there for
+The version lives in `APP_VERSION` in `app.py` (a bare literal on its own line; `studio/config.py` parses it from there). `build.sh`/`release.sh` read it from there for
 the bundle and the DMG name, and the build number is the git commit count. The README also shows
 the version (badge and DMG filename), so update those together. Commit messages follow the pattern
 `Local Studio X.Y.Z: <summary>` with a bulleted body for releases.
@@ -313,7 +357,7 @@ the version (badge and DMG filename), so update those together. Commit messages 
 
 Run all checks before reporting any task complete, and include the verification output:
 - UI check: `node macos/check_ui.js index.html` (must exit 0)
-- Syntax check: `python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" app.py` (must exit 0)
+- Syntax check: `python3 -c "import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]" app.py studio/**/*.py` (must exit 0)
 - Search check: `uv run -q --no-project --python 3.12 --with numpy python macos/check_search.py`
 - App check: `uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_app.py`
 - Agent Harness check: `TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py`
@@ -326,7 +370,7 @@ If a test fails, fix the implementation code — never skip, weaken, or delete a
 
 - Never resolve mutable data paths (`gallery/`, `uploads/`, `logs/`, `data/`) from `ROOT`; always resolve from `STATE` (`$LOCAL_STUDIO_HOME`), because `ROOT` is read-only inside the signed `Local Studio.app` bundle.
 - Never run `stop.sh` or start/stop an engine against the user's live `LOCAL_STUDIO_HOME` during tests; always isolate test runs with a temporary `LOCAL_STUDIO_HOME` and a short `TMPDIR=/tmp` (macOS limits `cua.sock` paths to 104 bytes).
-- Never mutate process-wide `os.getcwd()` in `app.py`; always use the `_chat_workspace` `ContextVar` (`_in_workspace(path)`).
+- Never mutate process-wide `os.getcwd()` in the backend; always use the `_chat_workspace` `ContextVar` (`_in_workspace(path)`).
 - When adding a Python dependency, add an exact pin to `requirements-app.txt` (read by `start.sh`, `APP_DEPS` in `setup.sh` and the checks). When adding a runtime file, add it to the copy list in `macos/build.sh`.
 
 ## Agent Harness roadmap

@@ -12,7 +12,8 @@ This file provides repository instructions and architectural guidance for coding
 
 ### Key Source Files
 
-- `app.py`: Single-file FastAPI backend (~7,650 lines, organized by `# ----` section banners).
+- `app.py`: the entrypoint `uvicorn app:app` loads (`APP_VERSION`, `from studio.main import app`, a live `__getattr__` for the suites).
+- `studio/`: the FastAPI backend split by concern: `config.py`, `infra/`, `security/` (LocalOnly, fences, gates), `storage/` (settings, flags, memory, backups, chats), `services/` (models, engines, harness, agent, search, terminal, ...), `api/` (one APIRouter per area), `main.py` (builds the app). Imports flow down that list only. See CLAUDE.md, Backend layout.
 - `index.html`: Single-page vanilla JS + CSS frontend (~4,100 lines).
 - `search.py` + `search-requirements.txt`: On-device semantic & lexical file search service (~1,410 lines, EmbeddingGemma 2 on MLX, port 8083).
 - `catalog.json`: Curated MLX, GGUF, and mflux models.
@@ -32,7 +33,7 @@ Always run verification checks before completing changes. `macos/build.sh` runs 
 ```sh
 # Run individual fast checks:
 node macos/check_ui.js index.html
-python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" app.py
+python3 -c "import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]" app.py studio/**/*.py
 uv run -q --no-project --python 3.12 --with numpy python macos/check_search.py
 uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_app.py
 TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py [check_name ...]
@@ -52,24 +53,24 @@ uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py
 ## Architectural Invariants
 
 ### 1. Code (`ROOT`) vs. User Data (`STATE`)
-- `ROOT` (where `app.py` resides) contains read-only application code. Inside `Local Studio.app`, `ROOT` is `Contents/Resources/app`.
+- `ROOT` (where `app.py` resides; `studio/config.py` computes it as the parent of `studio/`) contains read-only application code. Inside `Local Studio.app`, `ROOT` is `Contents/Resources/app`.
 - `STATE` (`$LOCAL_STUDIO_HOME`) holds all mutable user data:
   - `data/settings.json`, `data/chats/`, `data/search/index.db`
   - `data/agent/runs/`, `data/agent/memory.json`, `data/agent/backups/`
   - `gallery/`, `uploads/`, `logs/`
 - **Rule**: Always resolve mutable paths from `STATE`, never `ROOT`.
 - **Bytecode**: `start.sh` sets `PYTHONDONTWRITEBYTECODE=1` so Python never writes `__pycache__` into the signed `.app` bundle (which would break macOS code-signing seals).
-- **Dependencies**: If you add a Python package dependency to `app.py`, add an exact pin to `requirements-app.txt`, which `start.sh`, `APP_DEPS` in `setup.sh` and the checks all read. If you add a new runtime file, add it to the copy list in `macos/build.sh`.
+- **Dependencies**: If you add a Python package dependency to the backend, add an exact pin to `requirements-app.txt`, which `start.sh`, `APP_DEPS` in `setup.sh` and the checks all read. If you add a new runtime file, add it to the copy list in `macos/build.sh`.
 
 ### 2. Single Active Chat Engine
 Only one heavy LLM engine process runs at a time (`ensure_engine(mode, model)` under `engine_lock`):
 - `text` (port 8080): `mlx-dspark serve` (MLX + DFlash/DSpark speculative decoding)
 - `vision` (port 8081): `python -m mlx_vlm server`
 - `gguf` (port 8082): `llama-server`
-- Process match patterns in `ENGINES` (`app.py`) and `stop.sh` must stay synchronized.
+- Process match patterns in `ENGINES` (`studio/config.py`) and `stop.sh` must stay synchronized.
 - Never stop or restart engines against the user's live `LOCAL_STUDIO_HOME` during tests; isolate dev servers on a separate port (e.g. `7861`) and temporary `LOCAL_STUDIO_HOME`.
 
-### 3. Chat Agent Harness (`app.py` & `index.html`)
+### 3. Chat Agent Harness (`studio/services/harness.py`, `studio/security/`, `studio/api/chat.py` & `index.html`)
 `POST /api/chat` implements a multi-round native tool loop (`CHAT_TOOLS`, up to `CHAT_TOOL_ROUNDS = 12`):
 - **Read-Only Tools (`CHAT_READ_TOOLS`)**:
   - `get_current_datetime`, `web_search`, `read_webpage`, `search_files`, `read_file`, `list_directory`, `find_files`, `grep_files`, `code_outline`, `git_status`, `git_diff`, `delegate_task`, `manage_process`, `todo_write`, `memory_store`, `memory_recall`.
@@ -102,8 +103,10 @@ Only one heavy LLM engine process runs at a time (`ensure_engine(mode, model)` u
 
 - Never resolve mutable data paths (`gallery/`, `uploads/`, `logs/`, `data/`) from `ROOT`; always resolve from `STATE` (`$LOCAL_STUDIO_HOME`), because `ROOT` is read-only inside the signed `Local Studio.app` bundle.
 - Never run `stop.sh` or start/stop an engine against the user's live `LOCAL_STUDIO_HOME` during tests; always isolate test runs with a temporary `LOCAL_STUDIO_HOME` and a short `TMPDIR=/tmp` (macOS limits `cua.sock` paths to 104 bytes).
-- Never mutate process-wide `os.getcwd()` in `app.py`; always use the `_chat_workspace` `ContextVar` (`_in_workspace(path)`).
+- Never mutate process-wide `os.getcwd()` in the backend; always use the `_chat_workspace` `ContextVar` (`_in_workspace(path)`).
 - Never skip, weaken, or delete a failing test in `macos/check_*.py`; fix the implementation code instead.
+- A name rebound at run time (a suite's patch or a `global`) is read as `owner.X` in other modules, never via `from owner import X`; suites patch the defining module (`studio.services.engines.ensure_engine = fake`), and `macos/patch_guard.py` rejects `app.X = ...` for names `app.py` does not define. `check_app.py` enforces this and compares route/SSE/patch-point contracts in `macos/fixtures/`.
+- Behavior changes go behind flags in `data/settings.json` that default to the old behavior (`studio/storage/flags.py`).
 - `node macos/check_ui.js` only catches start-up errors against a stub DOM (whose `window` has no `addEventListener`); mismatched selectors, `data-*` attributes or response fields between HTML, JS and `app.py` pass it silently. Check UI changes in the `agent-ui-dev` dev server from `.claude/launch.json` (port 7861, `LOCAL_STUDIO_HOME=build/agent-ui-state`), with the Code view pointed at a scratch folder, not the checkout. That server shares engine ports with the live app, so check agent turns with synthetic messages rendered client-side, never a real chat.
 - Theme colors come only from the `:root` tokens (keep light, `data-theme="dark"` and the `prefers-color-scheme` copy in sync); `--brand` is the terracotta accent, `--serif` is for Chat replies and the greeting only.
 

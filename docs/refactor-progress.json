@@ -312,7 +312,8 @@
   "verify": [
    "review"
   ],
-  "passes": false
+  "passes": true,
+  "note": "CLAUDE.md: Backend layout and the import rule (module map, rebound-name rule, suite patching, contracts, flags); paths updated. AGENTS.md: same in short."
  },
  {
   "id": "P2.check-ui-modules",
