@@ -1,0 +1,189 @@
+{
+ "chat_x_events": {
+  "x_agent": [
+   [
+    "<Name>"
+   ]
+  ],
+  "x_approval": [
+   [
+    "id",
+    "kind",
+    "name",
+    "path",
+    "perm_scope",
+    "preview",
+    "reason",
+    "session_id",
+    "summary",
+    "title"
+   ]
+  ],
+  "x_checkpoint": [
+   [
+    "backup_ids",
+    "count",
+    "files",
+    "turn_id"
+   ]
+  ],
+  "x_computer_setup": [
+   [
+    "enable",
+    "message"
+   ]
+  ],
+  "x_engine": [
+   [
+    "mode",
+    "model",
+    "status"
+   ]
+  ],
+  "x_mlx_dspark": [
+   [
+    "<Name>"
+   ]
+  ],
+  "x_plan": [
+   [
+    "<Subscript>"
+   ]
+  ],
+  "x_question": [
+   [
+    "id",
+    "options",
+    "question",
+    "session_id"
+   ]
+  ],
+  "x_sources": [
+   [
+    "<List>"
+   ],
+   [
+    "<Name>"
+   ]
+  ],
+  "x_tool": [
+   [
+    "id",
+    "name",
+    "status",
+    "summary"
+   ],
+   [
+    "id",
+    "name",
+    "status",
+    "summary",
+    "**"
+   ]
+  ],
+  "x_tool_output": [
+   [
+    "chunk",
+    "id"
+   ]
+  ],
+  "x_web_sources": [
+   [
+    "<ListComp>"
+   ]
+  ]
+ },
+ "chat_other_payloads": {
+  "choices": 1,
+  "error": 7
+ },
+ "agent_run_events": {
+  "answer": [
+   [
+    "markdown"
+   ]
+  ],
+  "approval": [
+   [
+    "args",
+    "box",
+    "n",
+    "reason",
+    "shot",
+    "title",
+    "tool"
+   ]
+  ],
+  "end": [
+   [
+    "i",
+    "status"
+   ],
+   [
+    "status"
+   ],
+   [
+    "status",
+    "**"
+   ]
+  ],
+  "error": [
+   [
+    "message"
+   ]
+  ],
+  "note": [
+   [
+    "text"
+   ]
+  ],
+  "question": [
+   [
+    "n",
+    "text"
+   ]
+  ],
+  "step": [
+   [
+    "args",
+    "decision",
+    "n",
+    "result",
+    "shot",
+    "summary",
+    "thought",
+    "tool"
+   ],
+   [
+    "args",
+    "decision",
+    "n",
+    "result",
+    "shot",
+    "summary",
+    "thought",
+    "tool",
+    "**"
+   ]
+  ],
+  "x_engine": [
+   [
+    "mode",
+    "model",
+    "status"
+   ]
+  ]
+ },
+ "terminal_stream": [
+  [
+   "Cache-Control"
+  ],
+  [
+   "d",
+   "o"
+  ],
+  [
+   "exit"
+  ]
+ ]
+}

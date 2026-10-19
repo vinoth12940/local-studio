@@ -1,0 +1,657 @@
+[
+ {
+  "id": "P0.progress-file",
+  "phase": "P0",
+  "description": "Create docs/refactor-progress.json from this approved list",
+  "verify": [
+   "python3 -c \"import json;json.load(open('docs/refactor-progress.json'))\""
+  ],
+  "passes": true
+ },
+ {
+  "id": "P0.routes-snapshot",
+  "phase": "P0",
+  "description": "check_app.py dumps an ORDERED list of (methods, path, endpoint name) from app.routes, including /openapi.json, /docs, /redoc and the /gallery mount, to macos/fixtures/routes.json and fails on any drift (order matters: include_router can change match order)",
+  "verify": [
+   "check_app.py passes",
+   "temporarily reorder two routes in a scratch copy -> check fails"
+  ],
+  "passes": true
+ },
+ {
+  "id": "P0.sse-contract",
+  "phase": "P0",
+  "description": "macos/fixtures/sse_contract.json: every chat x_* key (x_engine, x_sources, x_web_sources, x_plan, x_approval, x_question, x_tool, x_tool_output, x_checkpoint, x_agent, x_computer_setup, x_mlx_dspark) with its field set, every agent-run type (step, note, answer, end, error, approval, question, x_engine) with fields, and the terminal stream framing (base64 chunk + absolute offset). Check: AST over the backend finds no unlisted key/field, and index.html handles every listed key/type",
+  "verify": [
+   "check_app.py passes",
+   "adding an unlisted x_ key in a scratch copy -> check fails"
+  ],
+  "passes": true
+ },
+ {
+  "id": "P0.patch-inventory",
+  "phase": "P0",
+  "description": "macos/inventory_patches.py writes macos/fixtures/patch_points.json: every app.X the suites rebind or mutate (AST, incl. tuple assignments and the setattr HOOKS loops), owning banner AND destination module, cross-module readers, plus every name app code rebinds via `global`",
+  "verify": [
+   "script runs offline and output matches committed fixture"
+  ],
+  "passes": true
+ },
+ {
+  "id": "P0.patch-guard",
+  "phase": "P0",
+  "description": "Check-suite guard: after `import app`, app's module class raises on __setattr__ for any name app.py does not own (so a missed retarget fails loudly, including setattr restore loops). Plan for P1: re-exports via PEP 562 __getattr__ forwarding to the owner (no stale copies of `global`-rebound names). No-op today because app.py owns everything",
+  "verify": [
+   "all check suites pass unchanged",
+   "a scratch re-exported name patched via app.X -> guard raises"
+  ],
+  "passes": true
+ },
+ {
+  "id": "P0.characterization",
+  "phase": "P0",
+  "description": "Fill gaps only: direct LocalOnly cases (foreign Host, foreign Origin, Sec-Fetch-Site cross-site/same-site rejected; no-Origin loopback allowed). harness_gate, path fence, shell gate, _match_edit_block, _chat_fit_context, backup/undo are already covered by check_agent harness_* checks; confirm and list them",
+  "verify": [
+   "check_app.py",
+   "TMPDIR=/tmp check_agent.py"
+  ],
+  "passes": true
+ },
+ {
+  "id": "P0.full-baseline-green",
+  "phase": "P0",
+  "description": "Run every suite and ./macos/build.sh on untouched main and record output (only fast checks run so far)",
+  "verify": [
+   "check_search.py",
+   "check_agent.py",
+   "check_document.py build/DocumentReader",
+   "./macos/build.sh"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P0.bench",
+  "phase": "P0",
+  "description": "macos/bench_app.py: offline, temp STATE, fake streaming engine; p50/p95 per hot route, proxy first-token overhead, event-loop lag under 10 streams, threadpool saturation",
+  "verify": [
+   "bench runs twice with stable numbers (<20% spread)"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P0.perf-baseline",
+  "phase": "P0",
+  "description": "docs/perf-baseline.md with Mac model, date, bench output, UI transferred bytes and TTI from the 7861 dev server",
+  "verify": [
+   "file exists with all \u00a77.1 metrics"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P0.pins",
+  "phase": "P0",
+  "description": "requirements-app.txt with exact pins from the env that passed (fastapi==0.146.0, starlette==1.9.0, pydantic==2.14.1, uvicorn==0.54.0, httpx==0.28.1, anyio==4.15.1, python-multipart==0.0.32, pillow==13.0.0, pypdf==6.21.1, pypdfium2==5.14.0, python-docx==1.2.0, openpyxl==3.1.5 + transitive); used by start.sh, setup.sh APP_DEPS, build.sh check commands, launch.json; added to build.sh copy list; pin search-requirements.txt. (Touches scripts: exception to 'no product code in P0')",
+  "verify": [
+   "./setup.sh --check",
+   "UI started on 7861 from the pinned file answers /api/system",
+   "./macos/build.sh"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.skeleton",
+  "phase": "P1",
+  "description": "studio/ package (config.py first); app.py re-exports via __getattr__; build.sh copies studio/ excluding __pycache__, ast.parses every .py under it, and fails if the bundle contains __pycache__",
+  "verify": [
+   "./macos/build.sh",
+   "find 'build/Local Studio.app/Contents/Resources/app' -name __pycache__ prints nothing"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.import-rule",
+  "phase": "P1",
+  "description": "Rule enforced by a check: rebind-patched names (ensure_engine, model_installed, engine_state, _engine_ready, _search_proxy, CONTEXT, AGENT_SOCK, SEARCH_URL, CUA_DRIVER, McpClient, cua_status, browser_view, app_view, AGENT_RUNS, ...) are read from other modules as module.attr, never `from x import name`; mutated containers are exempt; stdlib modules are always called as subprocess.X/httpx.X/socket.X",
+  "verify": [
+   "AST lint in check_app.py passes"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.health",
+  "phase": "P1",
+  "description": "GET /api/health {ok, version, engine:{mode, model_id}, search: up|down}, takes no locks (additive; routes.json updated)",
+  "verify": [
+   "check_app.py health check",
+   "routes.json diff is exactly one added route"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.config",
+  "phase": "P1",
+  "description": "Move prelude + helpers (ROOT/STATE, ports, ENGINES, settings load/save) -> studio/config.py, studio/storage/settings.py",
+  "verify": [
+   "all suites",
+   "patch retarget list in commit"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.models",
+  "phase": "P1",
+  "description": "Move 'models on disk' + 'Hugging Face search' -> studio/services/models.py + studio/api/models.py",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.attachments",
+  "phase": "P1",
+  "description": "Move attachments -> services/attachments.py + api/attachments.py",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.chats",
+  "phase": "P1",
+  "description": "Move saved conversations -> storage/chats.py + api/chats.py",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.images",
+  "phase": "P1",
+  "description": "Move image jobs -> services/images.py + api/images.py (image_lock stays in that module)",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.search",
+  "phase": "P1",
+  "description": "Move search client -> services/search.py + api/search.py; launch pattern and cwd=ROOT unchanged",
+  "verify": [
+   "all suites",
+   "pattern grep equal in app code and stop.sh"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.engines",
+  "phase": "P1",
+  "description": "Move engines -> services/engines.py + api/engines.py (engine_lock stays there)",
+  "verify": [
+   "all suites",
+   "ENGINES patterns byte-identical to stop.sh"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.llm-proxy",
+  "phase": "P1",
+  "description": "Move llm_get, _sse, _counted, api_busy -> infra/sse.py + services/llm_proxy.py + api",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.terminal",
+  "phase": "P1",
+  "description": "Move terminal (app.py ~1665-1873 only) -> services/terminal.py + api/terminal.py",
+  "verify": [
+   "all suites",
+   "dev-server terminal reattach"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.security-harness",
+  "phase": "P1",
+  "description": "Move _harness_path_fence, _gate_shell_command, _is_safe_readonly_shell (verbatim), harness_gate, _parse/_normalize_harness_args -> studio/security/",
+  "verify": [
+   "all suites",
+   "_is_safe_readonly_shell body byte-identical (diff)"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.storage-harness",
+  "phase": "P1",
+  "description": "Move agent memory, _backup_file/_restore_backup_snap -> studio/storage/",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.harness",
+  "phase": "P1",
+  "description": "Move the rest of the harness (under the LLM proxy and terminal banners today): tool schemas, _ChatSession, exec/bg processes, read/action tools, web fetch, custom MCP, sub-agents, compaction, workspace routes, /api/chat -> services/harness/*, api/chat.py, api/workspace.py, api/mcp.py",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.agent-cua",
+  "phase": "P1",
+  "description": "Move McpClient, daemon, permissions, views (agent banner) -> services/agent/cua.py, services/agent/views.py",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.agent-gate",
+  "phase": "P1",
+  "description": "Move gate/tiers/URL classification -> studio/security/agent_gate.py (verbatim)",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.agent-loop",
+  "phase": "P1",
+  "description": "Move Adapter, AgentRun, _AgentLoop, run_agent, agent routes -> services/agent/loop.py + api/agent.py",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.versions-storage",
+  "phase": "P1",
+  "description": "Move versions & updates, storage & uninstall -> services + api",
+  "verify": [
+   "all suites"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.main",
+  "phase": "P1",
+  "description": "studio/main.py builds FastAPI(), LocalOnly, mounts, include_router in the original order; app.py is a few lines + APP_VERSION",
+  "verify": [
+   "routes.json unchanged in order",
+   "./macos/build.sh",
+   "dev server 7861 smoke"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.logging",
+  "phase": "P1",
+  "description": "Optional JSON-line log in its own file (request/session/engine ids, durations); ui.log etc. unchanged",
+  "verify": [
+   "all suites",
+   "logs/ui.log still written"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P1.docs",
+  "phase": "P1",
+  "description": "Update CLAUDE.md and AGENTS.md for the studio/ layout and the import rule",
+  "verify": [
+   "review"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P2.check-ui-modules",
+  "phase": "P2",
+  "description": "Extend check_ui.js to load the frontend/ ESM graph against the same stub DOM before any code moves; must still fail on TDZ",
+  "verify": [
+   "node macos/check_ui.js index.html",
+   "a scratch TDZ error in a module -> check fails"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P2.serve-frontend",
+  "phase": "P2",
+  "description": "Serve frontend/ read-only from ROOT (LocalOnly-guarded); add to build.sh copy list",
+  "verify": [
+   "check_app.py",
+   "build bundle contains frontend/"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P2.globals-bridge",
+  "phase": "P2",
+  "description": "frontend/globals.mjs sets every name inline handlers/innerHTML templates call (e.g. showView in index.html:1621); prefer delegated listeners",
+  "verify": [
+   "check_ui.js",
+   "dev server: Browse all models button works"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P2.core",
+  "phase": "P2",
+  "description": "Move api fetch, SSE parsing, stores -> frontend/core/",
+  "verify": [
+   "check_ui.js",
+   "dev server spot checks"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P2.chat",
+  "phase": "P2",
+  "description": "Move chat rendering (no redesign) -> frontend/chat/",
+  "verify": [
+   "check_ui.js",
+   "synthetic turn render, liveGen switch"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P2.code",
+  "phase": "P2",
+  "description": "Move Code view editor/explorer/terminal -> frontend/code/",
+  "verify": [
+   "check_ui.js",
+   "Save/Diff/Undo, terminal reload reattach"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P2.settings-ui",
+  "phase": "P2",
+  "description": "Move settings + ui helpers -> frontend/settings/, frontend/ui/",
+  "verify": [
+   "check_ui.js",
+   "settings, dark mode, 375 px"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.security-doc",
+  "phase": "P3",
+  "description": "docs/security.md: threat model mapped to OWASP Agentic Top 10 2026 (ASI01-ASI10 names from the primary document) and where each control lives",
+  "verify": [
+   "review against the OWASP PDF"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.fence-tests",
+  "phase": "P3",
+  "description": "Extended fence/gate cases from \u00a76.2 (symlink, ../, NUL, NFC/NFD, lookalikes, percent-encoding, wget|bash, ...) with no outcome change to existing cases",
+  "verify": [
+   "check_agent.py harness_path_and_shell_safety_fences + new checks"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.sanitizer-tests",
+  "phase": "P3",
+  "description": "DOM-free tests of the markdown allowlist sanitizer (\u00a76.4 list)",
+  "verify": [
+   "node test runs in build.sh"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.untrusted-framing",
+  "phase": "P3",
+  "description": "Frame custom MCP tool descriptions/outputs as untrusted; show full MCP command line + env in its first-run approval",
+  "verify": [
+   "check_agent.py new checks",
+   "dev server approval card"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.redaction",
+  "phase": "P3",
+  "description": "Redact secrets in logs and x_tool_output (flag security.redact)",
+  "verify": [
+   "check_agent.py new checks"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.headers",
+  "phase": "P3",
+  "description": "X-Content-Type-Options: nosniff everywhere; Content-Disposition + cache headers on gallery/upload media",
+  "verify": [
+   "check_app.py"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.uploads",
+  "phase": "P3",
+  "description": "Random upload names, magic-byte sniffing, 60 MB cap kept, fence on model-chosen paths (flag security.upload_sniff)",
+  "verify": [
+   "check_app.py"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.atomic-writes",
+  "phase": "P3",
+  "description": "NEW (finding): save_settings, chat PUT, compaction, upload meta and engine.json use plain write_text; switch to temp + os.replace",
+  "verify": [
+   "check_app.py new check"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.csp-report-only",
+  "phase": "P3",
+  "description": "Content-Security-Policy-Report-Only (flag security.csp), policy extended for Google Fonts (style-src fonts.googleapis.com, font-src fonts.gstatic.com) or self-hosted fonts; nonce for any inline script",
+  "verify": [
+   "check_app.py header check",
+   "dev server: zero reports in normal use"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.csp-enforce",
+  "phase": "P3",
+  "description": "Switch CSP to enforcing (ask first)",
+  "verify": [
+   "dev server full spot-check list with no violations"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.api-token",
+  "phase": "P3",
+  "description": "Local API token (flag security.api_token, off): 0600 file, HttpOnly SameSite=Strict cookie via WKHTTPCookieStore and start.sh one-time ?t= URL, Bearer for scripts; /api/system and /api/health open without user data",
+  "verify": [
+   "check_app.py token checks",
+   "start.sh flow on 7861",
+   "Swift wrapper build"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.sandbox",
+  "phase": "P3",
+  "description": "Seatbelt profile via /usr/bin/sandbox-exec for run_python/run_shell/background (flag harness.sandbox, off); refuse clearly if unavailable",
+  "verify": [
+   "check_agent.py new checks: write outside workspace denied, credential read denied, network denied for run_python"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P3.rlimits",
+  "phase": "P3",
+  "description": "RLIMIT_CPU/FSIZE/NOFILE in preexec_fn; RSS watchdog for memory",
+  "verify": [
+   "check_agent.py new checks"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P4.measure",
+  "phase": "P4",
+  "description": "Rerun bench, pick worst offenders vs \u00a77.2 targets",
+  "verify": [
+   "bench output in docs/perf-baseline.md"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P4.fixes",
+  "phase": "P4",
+  "description": "Only fixes the measurements point to (to_thread in async handlers, bounded executor for OCR/DOCX/diffs, rAF coalescer, thread virtualization)",
+  "verify": [
+   "all suites",
+   "bench delta recorded"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P4.stream-resume",
+  "phase": "P4",
+  "description": "Flag streams.resume: ring buffer per chat stream id with event ids; GET /api/chat/streams/{id}?after=N (additive); approval/question pauses survive reattach",
+  "verify": [
+   "check_app.py new checks",
+   "dev server reattach with synthetic stream"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P5.decide",
+  "phase": "P5",
+  "description": "Generate 2k chats / 50k messages in temp STATE; measure list/load; decide whether SQLite is justified",
+  "verify": [
+   "numbers in docs/perf-baseline.md"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P5.sqlite",
+  "phase": "P5",
+  "description": "Only if P5.decide says so: storage.sqlite flag (off), WAL, migrations, idempotent import, rollback to JSON, backup API",
+  "verify": [
+   "check_app.py storage checks",
+   "EXPLAIN QUERY PLAN no full scans"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P6.search-package",
+  "phase": "P6",
+  "description": "Package search.py the same way; launch pattern and cwd=ROOT unchanged",
+  "verify": [
+   "check_search.py",
+   "search eval"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P6.incremental-index",
+  "phase": "P6",
+  "description": "Debounced incremental reindex of edited files; 503 + Retry-After during a full index",
+  "verify": [
+   "check_search.py new checks"
+  ],
+  "passes": false
+ },
+ {
+  "id": "P6.release-audit",
+  "phase": "P6",
+  "description": "release.sh: dependency audit (uv audit only takes a project or --script: proposed PEP 723 stub generated from the requirements files, unverified), codesign --verify --deep --strict, spctl -a -vv with Developer ID",
+  "verify": [
+   "release.sh dry run"
+  ],
+  "passes": false
+ },
+ {
+  "id": "DoD.agent-12-rounds",
+  "phase": "DoD",
+  "description": "Synthetic 12-round agent turn renders correctly",
+  "verify": [
+   "dev server 7861, synthetic messages into current"
+  ],
+  "passes": false
+ },
+ {
+  "id": "DoD.undo-revert",
+  "phase": "DoD",
+  "description": "Undo and Revert turn",
+  "verify": [
+   "dev server, scratch workspace"
+  ],
+  "passes": false
+ },
+ {
+  "id": "DoD.compact",
+  "phase": "DoD",
+  "description": "/compact",
+  "verify": [
+   "dev server"
+  ],
+  "passes": false
+ },
+ {
+  "id": "DoD.ocr-read-file",
+  "phase": "DoD",
+  "description": "OCR read_file",
+  "verify": [
+   "check_agent OCR checks + check_document.py"
+  ],
+  "passes": false
+ },
+ {
+  "id": "DoD.terminal-reattach",
+  "phase": "DoD",
+  "description": "Terminal reattach after reload",
+  "verify": [
+   "dev server"
+  ],
+  "passes": false
+ },
+ {
+  "id": "DoD.model-switch-ui",
+  "phase": "DoD",
+  "description": "Model-switch UI (synthetic x_engine events, no real engine)",
+  "verify": [
+   "dev server"
+  ],
+  "passes": false
+ },
+ {
+  "id": "DoD.save-diagnostics",
+  "phase": "DoD",
+  "description": "Code view Save with diagnostics",
+  "verify": [
+   "dev server, scratch workspace"
+  ],
+  "passes": false
+ },
+ {
+  "id": "DoD.approval-prompts",
+  "phase": "DoD",
+  "description": "Approval prompts 1/2/3, Esc, Shift+Tab",
+  "verify": [
+   "dev server, synthetic x_approval"
+  ],
+  "passes": false
+ },
+ {
+  "id": "DoD.flags-listed",
+  "phase": "DoD",
+  "description": "Every flag listed with default and how to turn it on",
+  "verify": [
+   "docs/security.md + CLAUDE.md"
+  ],
+  "passes": false
+ }
+]

@@ -69,6 +69,9 @@ os.environ["HF_HUB_CACHE"] = str(TMP / "hub")             # a Mac with no models
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app  # noqa: E402
 import base64  # noqa: E402
+import patch_guard  # noqa: E402
+
+patch_guard.install(app)                                   # app.X = fake must reach the code that reads X
 
 REAL_PROFILE = app.AGENT_PROFILE
 app.AGENT_PROFILE = TMP / "NoProfile" / "local-studio"     # no check may read or write the real browser profile

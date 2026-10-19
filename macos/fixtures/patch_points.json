@@ -1,0 +1,600 @@
+{
+ "points": [
+  {
+   "name": "AGENT_PROFILE",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "AGENT_RUNS",
+   "banner": "(prelude)",
+   "destination": "studio.config",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "LLM proxy",
+    "approval gate"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "AGENT_SEARCH_SECONDS",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "AGENT_SOCK",
+   "banner": "(prelude)",
+   "destination": "studio.config",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "agent"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "AGENT_SOCK_WAIT_S",
+   "banner": "agent",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "AGENT_TOOLS",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "CONTEXT",
+   "banner": "(prelude)",
+   "destination": "studio.config",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "LLM proxy",
+    "engines",
+    "terminal"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "CUA_DRIVER",
+   "banner": "(prelude)",
+   "destination": "studio.config",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "agent",
+    "approval gate"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "McpClient",
+   "banner": "agent",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "terminal"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "SEARCH_URL",
+   "banner": "(prelude)",
+   "destination": "studio.config",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ],
+   "read_in_other_sections": [
+    "search"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_agent_adapter",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_agent_cli",
+   "banner": "agent",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": true
+  },
+  {
+   "name": "_agent_client",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_agent_current",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": true
+  },
+  {
+   "name": "_agent_daemon_running",
+   "banner": "agent",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_agent_engine_current",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_agent_last_use",
+   "banner": "agent",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": true
+  },
+  {
+   "name": "_agent_model",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_agent_now",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_agent_profile_in_use",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_agent_reaper_start",
+   "banner": "agent",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_agent_runs",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_agent_sleep",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_chat_read_tool",
+   "banner": "terminal",
+   "destination": "studio.services.harness",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_chat_sessions",
+   "banner": "LLM proxy",
+   "destination": "studio.services.harness",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "terminal"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_cua_cache",
+   "banner": "approval gate",
+   "destination": "studio.services.agent.loop",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_cua_perm",
+   "banner": "agent",
+   "destination": "studio.services.agent.cua",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "approval gate"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_download",
+   "banner": "models on disk",
+   "destination": "studio.services.models",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_enable_search",
+   "banner": "search",
+   "destination": "studio.services.search",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_engine_ready",
+   "banner": "engines",
+   "destination": "studio.services.engines",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "LLM proxy",
+    "approval gate",
+    "terminal"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_fetch_public_web",
+   "banner": "terminal",
+   "destination": "studio.services.harness",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_search_process",
+   "banner": "search",
+   "destination": "studio.services.search",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_search_proxy",
+   "banner": "search",
+   "destination": "studio.services.search",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "terminal"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_search_running",
+   "banner": "search",
+   "destination": "studio.services.search",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "_start_search",
+   "banner": "search",
+   "destination": "studio.services.search",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "agent_engine",
+   "banner": "(prelude)",
+   "destination": "studio.services.agent",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "approval gate",
+    "terminal"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "app_view",
+   "banner": "agent",
+   "destination": "studio.services.agent.views",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "approval gate"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "browser_view",
+   "banner": "agent",
+   "destination": "studio.services.agent.views",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "approval gate"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "cua_status",
+   "banner": "agent",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "approval gate"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "downloads",
+   "banner": "models on disk",
+   "destination": "studio.services.models",
+   "patched": "mutate",
+   "suites": [
+    "check_app.py"
+   ],
+   "read_in_other_sections": [
+    "search"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "engine_state",
+   "banner": "engines",
+   "destination": "studio.services.engines",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py",
+    "check_app.py"
+   ],
+   "read_in_other_sections": [
+    "LLM proxy",
+    "approval gate",
+    "models on disk",
+    "terminal"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "ensure_engine",
+   "banner": "engines",
+   "destination": "studio.services.engines",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [
+    "approval gate",
+    "terminal"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "gate",
+   "banner": "approval gate",
+   "destination": "studio.security.agent_gate",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "jobs",
+   "banner": "image jobs",
+   "destination": "studio.services.images",
+   "patched": "mutate",
+   "suites": [
+    "check_app.py"
+   ],
+   "read_in_other_sections": [
+    "LLM proxy"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "model_installed",
+   "banner": "models on disk",
+   "destination": "studio.services.models",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py",
+    "check_app.py"
+   ],
+   "read_in_other_sections": [
+    "approval gate",
+    "engines",
+    "image jobs",
+    "search",
+    "terminal"
+   ],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "search_job",
+   "banner": "search",
+   "destination": "studio.services.search",
+   "patched": "mutate",
+   "suites": [
+    "check_app.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "start_agent_daemon",
+   "banner": "agent",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  },
+  {
+   "name": "stop_agent_daemon",
+   "banner": "agent",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ],
+   "read_in_other_sections": [],
+   "rebound_by_global_in_app": false
+  }
+ ],
+ "module_objects_patched": [
+  "httpx",
+  "socket",
+  "subprocess"
+ ],
+ "rebound_by_global_in_app": [
+  "_agent_cli",
+  "_agent_current",
+  "_agent_last_use",
+  "_agent_reaper",
+  "_cua_grant",
+  "active_chats"
+ ]
+}

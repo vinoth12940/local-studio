@@ -2,6 +2,7 @@
 
     uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_app.py [check_name ...]
 """
+import ast
 import asyncio
 import hashlib
 import json
@@ -17,7 +18,10 @@ os.environ["HF_HUB_CACHE"] = str(TMP / "hub")             # a Mac with no models
 (TMP / "state").mkdir()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app  # noqa: E402
+import patch_guard  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
+
+patch_guard.install(app)                                   # app.X = fake must reach the code that reads X
 
 app.SEARCH_URL = "http://127.0.0.1:9"                     # nothing listens here: the service is "down"
 CHECKS = []
@@ -263,6 +267,48 @@ def every_route_is_local_only():
 
 
 @check
+def local_only_characterization():
+    """LocalOnly at the ASGI level, as it behaves today (refactor safety net: these outcomes must not change in the split).
+    Covers what the TestClient checks above cannot: no Host at all, websockets, lifespan, header case and padding."""
+    def call(scope_type="http", **headers):
+        seen, sent = [], []
+
+        async def inner(scope, receive, send):
+            seen.append(scope["type"])
+
+        async def receive():
+            return {"type": "http.request"}
+
+        async def send(msg):
+            sent.append(msg)
+        scope = {"type": scope_type, "headers": [(k.replace("_", "-").encode(), v.encode()) for k, v in headers.items()]}
+        if scope_type == "http":
+            scope.update(method="GET", path="/", raw_path=b"/", query_string=b"", root_path="", scheme="http", http_version="1.1")
+        asyncio.run(app.LocalOnly(inner)(scope, receive, send))
+        if seen:
+            return "passed"
+        if scope_type == "websocket":
+            return sent[0]["type"], sent[0].get("code")
+        return next(m["status"] for m in sent if m["type"] == "http.response.start")
+
+    assert call() == 403, "no Host header at all"
+    assert call(host="127.0.0.1:7860") == "passed", "a local script: loopback Host, no Origin"
+    assert call(host="localhost") == "passed" and call(host="[::1]:7860", origin="http://[::1]:7860") == "passed"
+    assert call(host="127.0.0.1:7860", origin="http://127.0.0.1:9999") == "passed", \
+        "today a loopback Origin on another port passes LocalOnly; browsers mark such a page Sec-Fetch-Site: same-site"
+    assert call(host="127.0.0.1:7860", origin="http://127.0.0.1:9999", sec_fetch_site="same-site") == 403
+    assert call(host="127.0.0.1:7860", sec_fetch_site=" Cross-Site ") == 403, "Sec-Fetch-Site is trimmed and lower-cased"
+    assert call(host="127.0.0.1:7860", sec_fetch_site="same-origin") == "passed"
+    assert call(host="127.0.0.1:7860", sec_fetch_site="none") == "passed"
+    assert call(host="LOCALHOST:7860") == 403, "today the Host name is compared case-sensitively"
+    assert call(host="127.0.0.1.evil.example:7860") == 403 and call(host="evil.example", origin="http://127.0.0.1:7860") == 403
+    assert call(host="127.0.0.1:7860", origin="null") == 403 and call(host="127.0.0.1:7860", origin="https://evil.example") == 403
+    assert call("websocket", host="127.0.0.1:7860", origin="https://evil.example") == ("websocket.close", 1008)
+    assert call("websocket", host="127.0.0.1:7860") == "passed"
+    assert call("lifespan") == "passed", "lifespan events are never filtered"
+
+
+@check
 def search_is_not_started_twice():
     """While the service is still loading (process up, /health not yet answering), a second
     "turn on" must not launch another copy."""
@@ -384,6 +430,130 @@ def engine_status_survives_an_answer_that_is_not_json():
         assert r.status_code == 503 and r.json()["status"] == "starting", (r.status_code, r.text)
     finally:
         app.httpx.AsyncClient, app.engine_state = real_client, real_state
+
+
+# ---------------------------------------------------------------- contracts (refactor safety net)
+# The studio/ split must not change routes, SSE events or what the check suites patch. Each contract is a committed fixture
+# under macos/fixtures/; a change that is meant must update the fixture in the same commit:
+#     LOCAL_STUDIO_UPDATE_FIXTURES=1 uv run ... python macos/check_app.py route_contract_is_unchanged sse_contract_is_unchanged
+REPO = Path(__file__).resolve().parent.parent
+FIXTURES = REPO / "macos" / "fixtures"
+UPDATE_FIXTURES = os.environ.get("LOCAL_STUDIO_UPDATE_FIXTURES") == "1"
+
+
+def _contract(name, actual):
+    path = FIXTURES / name
+    text = json.dumps(actual, indent=1) + "\n"
+    if UPDATE_FIXTURES:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return
+    assert path.exists(), f"{path.relative_to(REPO)} is missing: run with LOCAL_STUDIO_UPDATE_FIXTURES=1 once"
+    expected = json.loads(path.read_text())
+    if expected != actual:
+        import difflib
+        diff = "\n".join(difflib.unified_diff(json.dumps(expected, indent=1).splitlines(), json.dumps(actual, indent=1).splitlines(),
+                                              f"{name} (committed)", f"{name} (code)", lineterm="", n=2))
+        raise AssertionError(f"{name} changed. If this is intended, update the fixture "
+                             f"(LOCAL_STUDIO_UPDATE_FIXTURES=1) in the same commit:\n{diff}")
+
+
+def _routes():
+    """In order: Starlette matches the first route whose path fits, so moving routes into routers must keep this order."""
+    out = []
+    for r in app.app.routes:
+        if hasattr(r, "methods") and r.methods is not None:
+            out.append({"methods": sorted(r.methods), "path": r.path, "name": r.name})
+        else:                                                             # a Mount (/gallery) or a websocket route
+            out.append({"kind": type(r).__name__, "path": r.path, "name": r.name})
+    return out
+
+
+@check
+def route_contract_is_unchanged():
+    routes = _routes()
+    assert sum(1 for r in routes if "methods" in r and r["path"].startswith("/api/") or r.get("path") == "/") >= 90, len(routes)
+    _contract("routes.json", routes)
+
+
+def _backend_sources():
+    return [REPO / "app.py"] + sorted((REPO / "studio").glob("**/*.py"))
+
+
+# "type" values of dict literals that are not agent-run events: tool schemas, OpenAI content parts, ASGI messages, file entries
+_NOT_RUN_EVENTS = {"string", "object", "function", "integer", "boolean", "array", "number", "null", "text", "image_url",
+                   "websocket.close", "dir", "file"}
+
+
+def _dict_shape(d):
+    keys = sorted(k.value for k in d.keys if isinstance(k, ast.Constant))
+    return keys + (["**"] if any(k is None for k in d.keys) else [])
+
+
+def _sse_contract():
+    chat, run, other = {}, {}, {}
+    terminal = []
+    for path in _backend_sources():
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else None
+                if fn == "_sse" and node.args and isinstance(node.args[0], ast.Dict):
+                    d = node.args[0]
+                    keys = _dict_shape(d)
+                    if len(keys) == 1 and keys[0].startswith("x_"):
+                        v = d.values[0]
+                        shape = _dict_shape(v) if isinstance(v, ast.Dict) else ["<" + type(v).__name__ + ">"]
+                        chat.setdefault(keys[0], [])
+                        if shape not in chat[keys[0]]:
+                            chat[keys[0]].append(shape)
+                    else:
+                        other.setdefault("+".join(keys), 0)
+                        other["+".join(keys)] += 1
+            if isinstance(node, ast.Dict):
+                kv = {k.value: v for k, v in zip(node.keys, node.values) if isinstance(k, ast.Constant)}
+                t = kv.get("type")
+                if isinstance(t, ast.Constant) and isinstance(t.value, str) and t.value not in _NOT_RUN_EVENTS:
+                    shape = [k for k in _dict_shape(node) if k != "type"]
+                    run.setdefault(t.value, [])
+                    if shape not in run[t.value]:
+                        run[t.value].append(shape)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "api_terminal_stream":
+                for d in ast.walk(node):
+                    if isinstance(d, ast.Dict) and _dict_shape(d) not in terminal:
+                        terminal.append(_dict_shape(d))
+    sort = lambda m: {k: sorted(v) for k, v in sorted(m.items())}                                         # noqa: E731
+    return {"chat_x_events": sort(chat), "chat_other_payloads": dict(sorted(other.items())),
+            "agent_run_events": sort(run), "terminal_stream": sorted(terminal)}
+
+
+@check
+def sse_contract_is_unchanged():
+    """Every SSE event key and its fields, as the backend writes them, and the UI still reads each one."""
+    contract = _sse_contract()
+    _contract("sse_contract.json", contract)
+    ui = (REPO / "index.html").read_text()
+    for key in contract["chat_x_events"]:
+        assert f"j.{key}" in ui, f"index.html no longer handles the chat event {key}"
+    for kind in contract["agent_run_events"]:
+        assert f'e.type === "{kind}"' in ui, f"index.html no longer handles the agent run event {kind}"
+    for field in ("j.d", "j.o", "j.exit"):
+        assert field in ui, f"index.html no longer reads the terminal stream field {field}"
+    # The framing the UI parses byte for byte
+    assert app._sse({"x_plan": []}) == 'data: {"x_plan": []}\n\n'
+    assert app._agent_sse({"i": 3, "type": "note", "text": "t"}) == 'id: 3\ndata: {"i": 3, "type": "note", "text": "t"}\n\n'
+
+
+@check
+def patch_points_are_inventoried():
+    """macos/fixtures/patch_points.json lists every app.X the suites rebind or mutate and where it moves in the split."""
+    sys.path.insert(0, str(REPO / "macos"))
+    import inventory_patches
+    inv = inventory_patches.inventory(REPO)
+    missing = [p["name"] for p in inv["points"] if not p["destination"]]
+    assert not missing, f"add a destination module for {missing} in macos/inventory_patches.py"
+    _contract("patch_points.json", inv)
+
 
 if __name__ == "__main__":
     want = sys.argv[1:]
