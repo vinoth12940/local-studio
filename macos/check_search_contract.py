@@ -46,6 +46,52 @@ indexer.full_indexing = True; indexer.config = lambda: {'incremental': False}
 assert c.post('/search', json={'query':'synthetic'}).status_code == 200
 print('   ok search_full_index_retry_after_and_default_behavior')
 
+# A real full pass must release HTTP backpressure while wait_clear holds it,
+# and reinstate it when indexing resumes. No model or user's folders are used.
+import threading
+import time
+for reason in ('user', 'battery', 'busy'):
+    cfg = {'incremental': True, 'roots': [], 'removed': [],
+           'paused': reason == 'user', 'on_battery': False}
+    store = types.SimpleNamespace(get_meta=lambda key: None, sync=lambda *a, **kw: None,
+                                  pending=lambda: [{'id': 1, 'path': '/synthetic/pending.txt'}])
+    ix = search.Indexer(store, None, config=lambda: cfg, app_url=None)
+    ix.on_ac = lambda: reason != 'battery'
+    ix.app_busy = lambda: reason == 'busy'
+    indexing, release = threading.Event(), threading.Event()
+    def index_file(f):
+        indexing.set()
+        assert release.wait(5), 'test did not release synthetic indexing'
+        return 'ok'
+    ix.index_file = index_file
+    client = TestClient(search.make_app(None, None, ix, searcher), base_url='http://127.0.0.1:8083')
+    worker = threading.Thread(target=ix.run_pass)
+    worker.start()
+    try:
+        deadline = time.monotonic() + 5
+        while ix.state != 'paused' and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert ix.state == 'paused' and ix.paused_reason == reason
+        assert not ix.full_indexing
+        for endpoint, key in (('/search', 'results'), ('/passages', 'passages')):
+            result = client.post(endpoint, json={'query': 'already indexed'})
+            assert result.status_code == 200 and result.json() == {key: []}, result.text
+        cfg['paused'] = False
+        ix.on_ac = lambda: True
+        ix.app_busy = lambda: False
+        assert indexing.wait(5), 'full pass did not resume'
+        for endpoint in ('/search', '/passages'):
+            result = client.post(endpoint, json={'query': 'synthetic'})
+            assert result.status_code == 503 and result.headers['retry-after'] == '1', result.text
+    finally:
+        release.set()
+        ix.stop.set()
+        worker.join(5)
+    assert not worker.is_alive() and not ix.full_indexing and ix.problem is None
+    for endpoint in ('/search', '/passages'):
+        assert client.post(endpoint, json={'query': 'synthetic'}).status_code == 200
+    print(f'   ok search_full_pass_{reason}_pause_allows_queries_and_resume_restores_backpressure')
+
 state = Path(TEST_STATE.name)
 (state/'data').mkdir()
 (state/'data/settings.json').write_text(json.dumps({'security':{'api_token':True}}))

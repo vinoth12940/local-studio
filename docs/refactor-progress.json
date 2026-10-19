@@ -99,7 +99,7 @@
    "./macos/build.sh"
   ],
   "passes": true,
-  "note": "2026-10-18: setup.sh --check exit 0; pinned UI on 7861 answered /api/system; ./macos/build.sh exit 0 with --with-requirements. .claude/launch.json (gitignored) still uses bare --with: the sandbox blocks writing it."
+  "note": "2026-10-18 review follow-up: both .claude/launch.json configurations now use --with-requirements requirements-app.txt. The launch file is explicitly included by .gitignore so this correction is shared with future checkouts. Verified no bare --with arguments remain; isolated UI on 7861 and full build pass."
  },
  {
   "id": "P1.skeleton",
@@ -557,7 +557,7 @@
    "dev server reattach with synthetic stream"
   ],
   "passes": true,
-  "note": "2026-10-18: streams.resume defaults false. Bounded process-local buffers (8 streams/4096 events/2MiB/5min completed retention), monotonic IDs, additive GET replay and DELETE Stop. No existing SSE payload fields changed; fixture adds 2 uses of existing error payload and the 2 routes. App checks cover pause/disconnect/reply for approvals/questions, capacity, expiry/cursors; fake-engine /api/chat replay integration and Node transport/serialization tests pass. Browser 7861 synthetic-only source: reload during actual pending server approval, saved handle persists, Resume reply replays approval, allow finishes answer; no second POST, engine or CuaDriver. Zero CSP reports. Full build passed."
+  "note": "2026-10-18: streams.resume defaults false. Bounded process-local buffers (8 streams/4096 events/2MiB/5min completed retention), monotonic IDs, additive GET replay and DELETE Stop. No existing SSE payload fields changed; fixture adds 2 uses of existing error payload and the 2 routes. App checks cover pause/disconnect/reply for approvals/questions, capacity, expiry/cursors; fake-engine /api/chat replay integration and Node transport/serialization tests pass. Browser 7861 synthetic-only source: reload during actual pending server approval, saved handle persists, Resume reply replays approval, allow finishes answer; no second POST, engine or CuaDriver. Zero CSP reports. Full build passed. Review follow-up: failed replay now restores the saved answer, reasoning, tool history, rounds and Undo checkpoint. New generate()/serializer regressions cover 404, 410, exhausted network retries, partial replay then expiry, Stop and successful replay. Real-browser synthetic 404/410/partial/success checks verified displayed text and persisted chat readback. Full build passes (286 check outputs)."
  },
  {
   "id": "P5.decide",
@@ -599,7 +599,7 @@
    "check_search.py new checks"
   ],
   "passes": true,
-  "note": "2026-10-18: search.incremental defaults false. Existing crawler polls configured roots while idle; 0.5s debounce updates only changed paths and reembeds only stable edited/new files; deletions handled, unreadable subtrees retained. Targeted Store sync preserves unchanged rows. New check_search regression verifies rapid edits cause one final reembed, unchanged vectors preserved, deletion/addition and failed full-pass flag cleanup. Search API tests verify 503/Retry-After during full passes and old flag-off behavior; backend proxy preserves Retry-After. Token-enabled internal search calls are authenticated too. Full suite/build pass."
+  "note": "2026-10-18: search.incremental defaults false. Existing crawler polls configured roots while idle; 0.5s debounce updates only changed paths and reembeds only stable edited/new files; deletions handled, unreadable subtrees retained. Targeted Store sync preserves unchanged rows. New check_search regression verifies rapid edits cause one final reembed, unchanged vectors preserved, deletion/addition and failed full-pass flag cleanup. Search API tests verify 503/Retry-After during full passes and old flag-off behavior; backend proxy preserves Retry-After. Token-enabled internal search calls are authenticated too. Full suite/build pass. Review follow-up: full-index backpressure is suspended while wait_clear pauses. Real Indexer + HTTP regressions cover user, battery and busy pauses, query availability during the hold, 503/Retry-After when resumed, and availability on completion. Full build passes."
  },
  {
   "id": "P6.release-audit",

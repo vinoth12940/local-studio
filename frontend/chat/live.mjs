@@ -51,6 +51,8 @@ async function generate(resumeBot = null) {
   if (resumeBot && (listState.streaming || !resumeBot.stream_id)) return;
   const chat = listState.current;
   const bot = resumeBot || { role: "assistant", content: "", reasoning: "" };
+  // Replay rebuilds the reply from event zero; keep the saved version until it completes.
+  const savedReply = resumeBot ? structuredClone(resumeBot) : null;
   if (!resumeBot) chat.messages.push(bot);
   else {
     for (const key of Object.keys(bot)) if (!["role", "stream_id", "stream_pending"].includes(key)) delete bot[key];
@@ -286,6 +288,13 @@ async function generate(resumeBot = null) {
     const rTh = rEl.querySelector("details.thought");
     if (rTh && bot.rounds?.[rIdx]) bot.rounds[rIdx].thoughtOpen = rTh.open;
   });
+  if (savedReply && !streamFinished) {
+    const { error, stream_pending } = bot;
+    for (const key of Object.keys(bot)) delete bot[key];
+    Object.assign(bot, savedReply, { error, stream_pending });
+    // A failed replay cannot attach a partially replayed action to the restored reply.
+    actionRun = null;
+  }
   listState.streaming = null; liveGen = null; updateSend(); renderHistory();
   if (actionRun) return chAttachAction(chat, bot, el, actionRun);
   // Swap in the finished turn (actions + stats) without touching the rest of the thread.

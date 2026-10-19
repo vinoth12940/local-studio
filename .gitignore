@@ -11,5 +11,6 @@ __pycache__/
 .venv/
 # macOS
 .DS_Store
-.claude/
+.claude/*
+!.claude/launch.json
 build/

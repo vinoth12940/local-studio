@@ -65,3 +65,25 @@ Final complete build: **277 successful check outputs**, Swift compilation, bundl
 
 All flags remain opt-in. Replay buffers are bounded and process-local; expired handles do not restart actions.
 Resource/RSS controls and secret redaction have the limits documented in `docs/security.md`.
+
+## Review follow-up (2026-10-18)
+
+The review found two regressions and an unfinished launch configuration pinning step. All three are corrected:
+
+- Failed Resume restores the saved reply, reasoning, tool history, rounds and Undo checkpoint before saving.
+  Expired streams disable Resume; transient failures retain it. Successful replay replaces the saved reply.
+  `macos/check_chat_resume.mjs` exercises the actual `generate()` and serializer for 404, 410, network retry
+  exhaustion, partial replay followed by expiry, Stop, and successful replay. It runs in the build.
+- A full index releases search backpressure during user, battery and active-chat pauses, then restores it
+  when work resumes. The search HTTP suite exercises the real Indexer pause/resume loop for all three reasons
+  and checks both `/search` and `/passages`, including 503/Retry-After during resumed work.
+- Both `.claude/launch.json` configurations use `requirements-app.txt`. The launch file is now explicitly
+  included by `.gitignore`; other local Claude files remain ignored.
+
+Fresh full build: **286 successful check outputs**, native compilation, bundling and development signature
+verification, exit 0. Log: `build/review-fixes-verification/build.log`. The isolated dev UI on port 7861 used
+`/tmp/ls-review-fixes-ui`; synthetic 404/410/partial-replay/success cases verified visible answers and actual
+chat-save API readback. The first browser test used an invalid synthetic chat ID and received the expected
+400; rerunning with the application's ID generator passed all cases. No real chat was requested. The dev
+server was stopped after verification. Release audits and real-model evaluation were not rerun for these fixes;
+their earlier results above remain historical evidence.

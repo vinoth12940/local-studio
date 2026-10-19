@@ -69,14 +69,20 @@ class Indexer:
 
     def wait_clear(self):
         """Block while indexing should hold off. False means the service is stopping."""
-        while not self.stop.is_set():
-            reason = self.hold_reason(self.config())
-            if reason is None:
-                self.state, self.paused_reason = "indexing", None
-                return True
-            self.state, self.paused_reason = "paused", reason
-            self.stop.wait(1)
-        return False
+        full_indexing = self.full_indexing
+        try:
+            while not self.stop.is_set():
+                reason = self.hold_reason(self.config())
+                if reason is None:
+                    self.state, self.paused_reason = "indexing", None
+                    return True
+                # Existing results remain searchable while a full pass is on hold.
+                self.full_indexing = False
+                self.state, self.paused_reason = "paused", reason
+                self.stop.wait(1)
+            return False
+        finally:
+            self.full_indexing = full_indexing
 
     def _embed(self, fn, *args):
         try:
