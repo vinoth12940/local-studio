@@ -95,7 +95,7 @@
  },
  "chat_other_payloads": {
   "choices": 1,
-  "error": 7
+  "error": 9
  },
  "agent_run_events": {
   "answer": [

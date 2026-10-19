@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 
 from studio import config
 from studio.services import engines
+from studio.services import chat_streams
 from studio.services import harness
 from studio.services import models
 from studio.api.agent import agent_run
@@ -133,6 +134,10 @@ def _chat_computer_run(raw, expanded, model_id, chat_id, tool_evidence=""):
 @router.post("/api/chat")
 async def chat(request: Request):
     body = await request.json()
+    http_request = request
+    resumable = flag("streams.resume")
+    if resumable:
+        request = chat_streams.DetachedRequest()
     m = chat_model(body.pop("model_id", None))
     chat_id = body.pop("chat_id", None)
     if chat_id is not None:
@@ -444,4 +449,25 @@ async def chat(request: Request):
         yield _sse({"x_mlx_dspark": stats})
         yield "data: [DONE]\n\n"
 
+    if resumable:
+        if await http_request.is_disconnected():
+            raise HTTPException(499, "Chat request disconnected before streaming began")
+        stream = chat_streams.new_stream(_counted(relay()))
+        return StreamingResponse(stream.subscribe(), media_type="text/event-stream",
+                                 headers={"X-Chat-Stream-ID": stream.id, "Cache-Control": "no-store"})
     return StreamingResponse(_counted(relay()), media_type="text/event-stream")
+
+
+@router.get("/api/chat/streams/{stream_id}")
+async def resume_chat_stream(stream_id: str, after: int = 0):
+    stream = chat_streams.get_stream(stream_id)
+    stream.validate(after)
+    return StreamingResponse(stream.subscribe(after), media_type="text/event-stream",
+                             headers={"X-Chat-Stream-ID": stream.id, "Cache-Control": "no-store"})
+
+
+@router.delete("/api/chat/streams/{stream_id}")
+async def stop_chat_stream(stream_id: str):
+    stream = chat_streams.get_stream(stream_id)
+    stream.stop()
+    return {"ok": True}

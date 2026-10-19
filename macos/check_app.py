@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -944,6 +945,121 @@ def api_token_requires_private_credentials_and_bootstrap_is_one_time():
         app.save_settings(original)
         c.get("/api/system")  # disable/clear the in-process credential before later tests
         TOKEN_FILE.unlink(missing_ok=True); BOOTSTRAP_FILE.unlink(missing_ok=True)
+
+
+@check
+def chat_metadata_cache_detects_external_and_atomic_changes():
+    from studio.storage.chat_index import chat_metadata
+    from studio.storage.atomic import write_text_atomic
+    root = TMP / 'cache-chats'; root.mkdir()
+    path=root/'00000001.json'
+    write_text_atomic(path,json.dumps({'id':'00000001','title':'old','updated':1}))
+    assert chat_metadata(root)==[{'id':'00000001','title':'old','updated':1}]
+    from unittest.mock import patch
+    with patch.object(Path,'read_text',side_effect=AssertionError('unchanged chat was reparsed')):
+        assert chat_metadata(root)[0]['title']=='old'
+    path.write_text(json.dumps({'id':'00000001','title':'new','updated':2}))
+    assert chat_metadata(root)[0]['title']=='new'
+    write_text_atomic(path,json.dumps({'id':'00000001','title':'alt','updated':3}))
+    assert chat_metadata(root)[0]['title']=='alt'
+    path.write_text('{broken')
+    assert chat_metadata(root)==[]
+    path.unlink();assert chat_metadata(root)==[]
+
+
+@check
+def search_render_pool_does_not_starve_quick_routes():
+    from studio.infra.workers import isolated_io
+    import anyio.to_thread
+    original=app.load_settings()
+    app.save_settings({**original,'performance':{'isolated_io':True}})
+    started=threading.Event()
+    @isolated_io
+    def slow():
+        started.set();time.sleep(.15);return 'ok'
+    async def run():
+        limiter=anyio.to_thread.current_default_thread_limiter()
+        old=limiter.total_tokens;limiter.total_tokens=1
+        try:
+            tasks=[asyncio.create_task(slow()) for _ in range(12)]
+            while not started.is_set():await asyncio.sleep(.005)
+            t=time.monotonic()
+            result=await anyio.to_thread.run_sync(lambda:'quick')
+            assert result=='quick' and time.monotonic()-t<.1
+            assert await asyncio.gather(*tasks)==['ok']*12
+        finally:limiter.total_tokens=old
+    try:asyncio.run(run())
+    finally:app.save_settings(original)
+
+
+@check
+def resumable_chat_buffers_survive_disconnect_and_pending_approval():
+    import studio.services.chat_streams as streams
+    import studio.api.chat as chat_api
+    from studio.services.harness import _ChatSession, _chat_sessions
+    from fastapi import HTTPException
+    original=app.load_settings()
+    app.save_settings({**original,'streams':{'resume':True}})
+    async def run():
+        for kind,answer in [('approval',{'decision':'allow'}),('question',{'answer':'yes'})]:
+            session=_ChatSession();session.prepare(kind);_chat_sessions[session.id]=session
+            async def source():
+                yield f'data: {json.dumps({"x_"+kind:{"id":kind,"session_id":session.id}})}\n\n'
+                result=await session.wait_for_reply(streams.DetachedRequest(),timeout=3)
+                assert result==answer
+                yield 'data: {"choices":[{"delta":{"content":"done"}}]}\n\n'
+                yield 'data: [DONE]\n\n'
+            stream=streams.new_stream(source())
+            first=stream.subscribe()
+            prompt=await anext(first)
+            assert 'id: 1' in prompt and session.id in prompt
+            await first.aclose()  # disconnect only this reader, keeping the approval producer alive
+            assert not stream.task.done()
+            resumed=stream.subscribe(0)
+            assert session.id in await anext(resumed)
+            chat_api.chat_session_reply(session.id,answer)
+            tail=''.join([event async for event in resumed])
+            assert 'done' in tail and '[DONE]' in tail and stream.done
+            _chat_sessions.pop(session.id,None)
+        # The active stream cap refuses excess work rather than cancelling another reply.
+        async def forever():
+            await asyncio.Event().wait()
+            yield ''
+        from unittest.mock import patch
+        with patch.object(streams,'MAX_STREAMS',len(streams._STREAMS)):
+            # completed buffers can be evicted to make room
+            extra=streams.new_stream(forever())
+            await asyncio.sleep(0)
+            extra.stop();await extra.task
+            assert extra.done
+        kept = dict(streams._STREAMS); streams._STREAMS.clear()
+        with patch.object(streams,'MAX_STREAMS',1):
+            active=streams.new_stream(forever());await asyncio.sleep(0)
+            try:streams.new_stream(forever());assert False,'active stream was displaced'
+            except HTTPException as exc:assert exc.status_code==503
+            active.stop();await active.task
+        streams._STREAMS.clear();streams._STREAMS.update(kept)
+        # Both count and bytes are bounded; a cursor outside the retained window gets 410.
+        with patch.object(streams,'MAX_EVENTS',2), patch.object(streams,'MAX_BYTES',500):
+            async def many():
+                for i in range(8):yield f'data: {{"n":{i}}}\n\n'
+            bounded=streams.new_stream(many());await bounded.task
+            assert len(bounded.events)<=2 and bounded.bytes<=500
+            try:bounded.validate(0);assert False
+            except HTTPException as exc:assert exc.status_code==410
+        return stream.id,bounded.id
+    try:
+        finished,expired=asyncio.run(run())
+        from fastapi.testclient import TestClient
+        c=TestClient(app.app,base_url='http://127.0.0.1:7860')
+        assert c.get('/api/chat/streams/'+finished+'?after=1').status_code==200
+        assert c.get('/api/chat/streams/'+expired+'?after=0').status_code==410
+        assert c.get('/api/chat/streams/missing').status_code==404
+        app.save_settings(original)
+        assert c.get('/api/chat/streams/'+finished).status_code==404
+    finally:
+        app.save_settings(original)
+        streams._STREAMS.clear()
 
 if __name__ == "__main__":
     want = sys.argv[1:]

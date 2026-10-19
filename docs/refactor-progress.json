@@ -533,7 +533,8 @@
   "verify": [
    "bench output in docs/perf-baseline.md"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: Reran offline bench with fake engines/temp STATE at 200 and 2000 chats (50000 messages). Complete output recorded in docs/perf-baseline.md. Confirmed 946ms fast-route starvation during 60 slow renders and 73.56ms p95 scaled chat listing; other hot routes and loop lag within targets."
  },
  {
   "id": "P4.fixes",
@@ -543,7 +544,8 @@
    "all suites",
    "bench delta recorded"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: Measured fixes only, flags default false: performance.isolated_io uses a bounded dedicated render pool; performance.chat_index caches metadata with inode/mtime/size invalidation and JSON authoritative. Scaled chat-list p95 73.56 -> 20.87ms, saturated polling p95 946.12 -> 2.07ms; no >250ms stalls. Full output in docs/perf-baseline.md. Cache invalidation and dedicated-pool checks plus full build pass."
  },
  {
   "id": "P4.stream-resume",
@@ -553,7 +555,8 @@
    "check_app.py new checks",
    "dev server reattach with synthetic stream"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: streams.resume defaults false. Bounded process-local buffers (8 streams/4096 events/2MiB/5min completed retention), monotonic IDs, additive GET replay and DELETE Stop. No existing SSE payload fields changed; fixture adds 2 uses of existing error payload and the 2 routes. App checks cover pause/disconnect/reply for approvals/questions, capacity, expiry/cursors; fake-engine /api/chat replay integration and Node transport/serialization tests pass. Browser 7861 synthetic-only source: reload during actual pending server approval, saved handle persists, Resume reply replays approval, allow finishes answer; no second POST, engine or CuaDriver. Zero CSP reports. Full build passed."
  },
  {
   "id": "P5.decide",

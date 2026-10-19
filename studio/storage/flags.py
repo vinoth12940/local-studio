@@ -10,6 +10,9 @@ from studio.config import SETTINGS
 
 # flag -> (default, what turning it on does)
 FLAGS = {
+    "performance.isolated_io": (False, "Use a bounded dedicated pool for search media/render routes"),
+    "performance.chat_index": (False, "Cache chat titles/timestamps while validating file signatures on every list request"),
+    "streams.resume": (False, "Keep bounded chat SSE buffers and allow reattachment with event IDs"),
     "logging.json_requests": (False, "Write one JSON line per slow (>= 250 ms), failing or non-GET request to logs/requests.jsonl"),
     "security.api_token": (False, "Require the private local API token or startup cookie; readiness probes remain public"),
     "harness.sandbox": (False, "Run Python/shell tools under Seatbelt with workspace/temp writes and protected credential reads"),

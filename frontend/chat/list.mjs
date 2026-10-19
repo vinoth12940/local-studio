@@ -1,4 +1,5 @@
 // chat/list.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { savedMessages } from "./record.mjs";
 import { createStore } from "../core/store.mjs";
 import { $, api, confirmBox, esc, icon, jpost, newId, store, toast } from "../core/util.mjs";
 import { showView, syncChatDock, view } from "../ui/views.mjs";
@@ -126,7 +127,7 @@ $("wsPill").onclick = async (e) => {
 };
 async function saveChat(chat = listState.current) {
   if (!chat) return;
-  const msgs = chat.messages.map(({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources, agent_run, computerSetup, tool_steps, web_sources, plan, rounds, checkpoint }) => ({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources, agent_run, computerSetup, tool_steps, web_sources, plan, rounds, checkpoint }));
+  const msgs = savedMessages(chat);
   await jpost(`/api/chats/${chat.id}`, { title: chat.title, messages: msgs, ...(chat.workspace ? { workspace: chat.workspace } : {}) }, "PUT");
   loadChats();
 }

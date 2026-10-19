@@ -185,6 +185,20 @@
   "methods": [
    "GET"
   ],
+  "path": "/api/chat/streams/{stream_id}",
+  "name": "resume_chat_stream"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/chat/streams/{stream_id}",
+  "name": "stop_chat_stream"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
   "path": "/api/agent/memory",
   "name": "api_get_memory"
  },

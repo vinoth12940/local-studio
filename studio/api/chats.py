@@ -9,6 +9,8 @@ import time
 from fastapi import APIRouter, Body, HTTPException
 
 from studio.config import CHATS
+from studio.storage.flags import flag
+from studio.storage.chat_index import chat_metadata
 from studio.services.agent.loop import _forget_chat_context
 from studio.storage.atomic import write_text_atomic
 from studio.storage.chats import _chat_path
@@ -20,6 +22,8 @@ router = APIRouter()
 
 @router.get("/api/chats")
 def list_chats():
+    if flag("performance.chat_index"):
+        return chat_metadata(CHATS)
     out = []
     for p in CHATS.glob("*.json"):
         try:

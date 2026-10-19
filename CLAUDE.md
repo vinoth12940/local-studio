@@ -156,7 +156,8 @@ must keep their order), the SSE events and their fields plus the UI's handlers (
 `security.mcp_approval` (false), `security.api_token` (false), `harness.sandbox` (false),
 `harness.rlimits` (false), and `security.csp` ("off"; opt in with "report-only").
 See [docs/security.md](docs/security.md) for every flag, configuration examples, coverage and remaining P3 work.
-The user authorized completing the plan, including isolated enforcement validation. Production defaults remain unchanged.
+The user authorized completing the plan, including isolated enforcement validation. Production defaults remain unchanged. P4 adds `performance.isolated_io`, `performance.chat_index`, and
+`streams.resume` (all false); see the same document for opt-in settings and replay retention/stop behavior.
 
 ### Code vs. user data
 

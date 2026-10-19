@@ -5854,6 +5854,23 @@ def harness_kernel_limits_and_rss_watchdog():
         finally:app._manage_bg_process('stop',bg['process_id'])
     finally:app.save_settings(original)
 
+
+@check
+def chat_resume_flag_adds_ids_without_changing_payloads_or_reposting():
+    import studio.services.chat_streams as streams
+    with Env() as e, ChatEngine(chat_delta(content='Replay answer')):
+        settings=app.load_settings();settings['streams']={'resume':True};app.save_settings(settings)
+        r=e.c.post('/api/chat',json={'model_id':TEXT_MLX,'chat_id':'0a0b0c0d0e0f1234','messages':[{'role':'user','content':'Synthetic replay'}]})
+        assert r.status_code==200 and r.headers.get('x-chat-stream-id'),r.text
+        sid=r.headers['x-chat-stream-id']
+        assert 'id: 1' in r.text and 'Replay answer' in r.text
+        replay=e.c.get('/api/chat/streams/'+sid+'?after=0')
+        assert replay.status_code==200 and replay.text==r.text
+        assert app.active_chats==0
+        assert e.c.get('/api/chat/streams/'+sid+'?after=999999').status_code==400
+        assert not e.sessions
+    streams._STREAMS.clear()
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

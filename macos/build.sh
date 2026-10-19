@@ -13,7 +13,7 @@ BUILD=$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 
 echo "==> Checking UI script"
-if command -v node >/dev/null 2>&1; then node "$HERE/check_ui.js" "$ROOT/index.html" && node "$HERE/check_sanitizer.mjs"; else echo "   (node not found, skipped)"; fi
+if command -v node >/dev/null 2>&1; then node "$HERE/check_ui.js" "$ROOT/index.html" && node "$HERE/check_sanitizer.mjs" && node "$HERE/check_chat_stream.mjs"; else echo "   (node not found, skipped)"; fi
 python3 -c "import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]" "$ROOT/app.py" "$ROOT"/studio/**/*.py(N) \
   && echo "   app.py and studio/ OK"
 UV=$(command -v uv || echo ~/.local/bin/uv)

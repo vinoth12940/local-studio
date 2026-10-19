@@ -1,5 +1,6 @@
 // chat/live.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
 import { $, DEFAULT_MAX_TOKENS, esc, icon, jpost, newId, store, toast } from "../core/util.mjs";
+import { chatEvents } from "./stream.mjs";
 import { md } from "../core/markdown.mjs";
 import { view } from "../ui/views.mjs";
 import { poll } from "../ui/engine.mjs";
@@ -46,11 +47,17 @@ const liveSkeletonHTML = (i, waitingText = "Thinking…") => `<div class="turn b
     <div class="chhcardwrap"></div>
     <div class="content"><span class="shimmer">${waitingText}</span></div>
     <div class="err" hidden></div></div>`;
-async function generate() {
+async function generate(resumeBot = null) {
+  if (resumeBot && (listState.streaming || !resumeBot.stream_id)) return;
   const chat = listState.current;
-  const bot = { role: "assistant", content: "", reasoning: "" };
-  listState.current.messages.push(bot);
-  const idx = listState.current.messages.length - 1;
+  const bot = resumeBot || { role: "assistant", content: "", reasoning: "" };
+  if (!resumeBot) chat.messages.push(bot);
+  else {
+    for (const key of Object.keys(bot)) if (!["role", "stream_id", "stream_pending"].includes(key)) delete bot[key];
+    bot.content = ""; bot.reasoning = "";
+  }
+  const idx = chat.messages.indexOf(bot);
+  if (resumeBot) $("thread").querySelector(`.turn.bot[data-i="${idx}"]`)?.remove();
   // Stable DOM for the live reply: the thinking panel and answer are updated in place, so the
   // panel keeps its open/closed state and its own scroll position while tokens stream in.
   $("thread").insertAdjacentHTML("beforeend", liveSkeletonHTML(idx, listState.current.messages.some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"));
@@ -173,14 +180,12 @@ async function generate() {
   // rAF pauses while the window is hidden or covered; fall back to a timer so the reply keeps
   // rendering (and is complete when the user comes back).
   const repaint = () => { if (!raf) raf = document.hidden ? -setTimeout(paint, 150) : requestAnimationFrame(paint); };
+  let streamFinished = false;
   try {
-    const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: listState.streaming.signal });
-    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
-    for (;;) {
-      const { value, done } = await reader.read(); if (done) break;
-      buf += dec.decode(value, { stream: true }); let i;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        const evt = buf.slice(0, i); buf = buf.slice(i + 2);
+    for await (const evt of chatEvents(body, listState.streaming.signal, async (id) => {
+      bot.stream_id = id; bot.stream_pending = true;
+      if (!chat.deleted) await saveChat(chat);
+    }, resumeBot?.stream_id)) {
         for (const line of evt.split("\n")) {
           if (!line.startsWith("data:")) continue;
           const data = line.slice(5).trim(); if (data === "[DONE]") continue;
@@ -259,14 +264,16 @@ async function generate() {
           if (j.x_mlx_dspark) bot.stats = j.x_mlx_dspark;
           repaint();
         }
-      }
     }
+    streamFinished = true;
   } catch (e) {
+    if (e.resumeExpired) bot.stream_pending = false;
     if (e.name === "AbortError" && actionRun) {
       try { await jpost(`/api/agent/runs/${actionRun}/stop`); } catch {}
     }
     bot.error = e.name === "AbortError" ? (bot.content ? "" : "Stopped.") : String(e.message || e);
   }
+  if (bot.stream_id && (streamFinished || listState.streaming?.signal.aborted)) bot.stream_pending = false;
   if (raf) { raf < 0 ? clearTimeout(-raf) : cancelAnimationFrame(raf); paint(); }
   if (thinkStart && !thinkEnd) bot.thoughtSecs = (performance.now() - thinkStart) / 1000;
   if (curTools.length) advanceRound();

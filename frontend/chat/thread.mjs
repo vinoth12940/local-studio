@@ -241,13 +241,14 @@ function turnHTML(m, i, live = false) {
         : `<button class="linkbtn undo-btn" data-undo-turn="${esc(m.checkpoint.turn_id)}" title="Revert all ${m.checkpoint.files?.length || 1} file edit(s) from this turn">Revert turn (${m.checkpoint.count || m.checkpoint.files?.length || 1})</button>`)
     : "";
   const actions = live ? "" : `<div class="actions"><button class="iconbtn" data-act="copy" title="Copy">${icon("i-copy")}</button>${m.agent_run ? "" : `<button class="iconbtn" data-act="regen" title="Regenerate">${icon("i-redo")}</button>`}${ckptHTML}${perfLine(m.stats)}</div>${perfGrid(m.stats)}`;
+  const resume = m.stream_pending && m.stream_id && !live ? `<button class="btn sm" data-resume-stream>Resume reply</button>` : "";
   const agentTail = (agentRid ? `<div class="agtask"><button class="linkbtn" data-agview="${esc(agentRid)}">Task · view steps</button></div>` : "")
     + (m.computerSetup ? `<div class="agtask"><button class="btn sm" data-computer-setup="${m.computerSetup === "enable" ? "enable" : "settings"}">${m.computerSetup === "enable" ? "Enable computer access and continue" : "Computer access settings"}</button></div>` : "");
   const cut = !live && m.finish === "length" ? `<div class="cutoff">${icon("i-x", "width:14px;height:14px")}The reply hit the length limit. <button class="btn sm" data-act="continue">Continue</button></div>` : "";
   const stepsBlock = hasRounds
     ? `${chPlanHTML(m)}${chRoundsHTML(m)}${thoughtHTML(m, live)}`
     : `${thoughtHTML(m, live)}${chPlanHTML(m)}${chToolsHTML(m)}`;
-  return `<div class="turn bot" data-i="${i}">${stepsBlock}${chHarnessCardHTML(m)}<div class="content">${body}${tail}</div>${agentTail}${live ? "" : sourcesHTML(m) + chWebSourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
+  return `<div class="turn bot" data-i="${i}">${stepsBlock}${chHarnessCardHTML(m)}<div class="content">${body}${tail}</div>${resume}${agentTail}${live ? "" : sourcesHTML(m) + chWebSourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
 }
 $("thread").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.classList?.contains("chhcard-inp")) {
@@ -261,6 +262,12 @@ $("thread").addEventListener("keydown", (e) => {
   }
 });
 $("thread").onclick = async (e) => {
+  const resume = e.target.closest("[data-resume-stream]");
+  if (resume) {
+    const message = listState.current?.messages?.[+resume.closest(".turn.bot").dataset.i];
+    if (message) generate(message);
+    return;
+  }
   const full = e.target.closest(".uatts img[data-full]");
   if (full) { window.open(full.dataset.full, "_blank"); return; }
   const src = e.target.closest(".sources [data-open]");

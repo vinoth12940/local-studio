@@ -75,6 +75,9 @@ re-read when the file changes. All flags below default to the previous behavior:
 | `security.api_token` | `false` | `true`: require local bearer/cookie authentication; private token files and native/startup delivery described below. |
 | `harness.sandbox` | `false` | `true`: Seatbelt for harness Python/shell/background commands. |
 | `harness.rlimits` | `false` | `true`: kernel CPU/file/fd caps and RSS watchdog, with optional lower `harness.limits`. |
+| `performance.isolated_io` | `false` | `true`: isolate slow search rendering from quick API routes in a bounded executor. |
+| `performance.chat_index` | `false` | `true`: cache chat metadata while validating authoritative JSON signatures on every list request. |
+| `streams.resume` | `false` | `true`: retain bounded process-local chat SSE replay buffers and enable reconnect/reload resume. |
 | `logging.json_requests` | `false` | `true`: slow, failing and non-GET request metadata in `logs/requests.jsonl`; no bodies, headers or query strings. |
 | `security.redact` | `false` | `true`: filter the output/log surfaces described above. Restart child processes to replace their log descriptors. |
 | `security.upload_sniff` | `false` | `true`: validate supported upload signatures and reject binary text uploads. |
@@ -145,3 +148,18 @@ CSP modes/reporting, flagged magic validation, bounded uploads, symlink escape r
 media delivery, atomic write failure cleanup/readback, and route/SSE/patch-point contracts.
 `macos/check_sanitizer.mjs` exercises malicious markdown under plain Node. The full build also runs
 search, agent, document OCR, Swift compilation, bundling and signature checks.
+
+
+## Stream replay
+
+With `streams.resume=true`, POST `/api/chat` adds an `X-Chat-Stream-ID` header and monotonically
+increasing SSE `id` lines. Existing JSON payloads are unchanged. GET `/api/chat/streams/{id}?after=N`
+replays later frames; DELETE cancels the producer. The producer retains its approval/question session
+when an HTTP subscriber leaves. The client reconnects with GET, never another POST, and saves the handle
+so a page reload can offer Resume reply. Replaying from zero rebuilds the saved turn without duplicating
+actions. Stop aborts the reader and sends DELETE. Legacy streams have no replay header and retain EOF behavior.
+
+Buffers are process-local: at most eight streams, 4,096 events and 2 MiB per stream, with completed
+buffers retained for at most five minutes (earlier completed buffers can be evicted for capacity).
+An expired replay cursor returns 410 rather than restarting execution. Process restart loses buffers;
+a saved handle then reports unavailability. This is reconnection support, not durable job scheduling.

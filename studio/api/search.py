@@ -11,6 +11,7 @@ import httpx
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse, Response
 
+from studio.infra.workers import isolated_io
 from studio import config
 from studio.services import models
 from studio.services import search as services_search
@@ -112,28 +113,33 @@ def search_errors():
 
 
 @router.get("/api/search/thumb/{file_id}")
+@isolated_io
 def search_thumb(file_id: int, t: int = 0):
     r = services_search._search_proxy("GET", f"/thumb/{file_id}", params={"t": t})
     return Response(r.content, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
 
 
 @router.get("/api/search/preview/{file_id}")
+@isolated_io
 def search_preview(file_id: int, chunk_id: int | None = None):
     return services_search._search_proxy("GET", f"/preview/{file_id}", params={"chunk_id": chunk_id} if chunk_id else None).json()
 
 
 @router.get("/api/search/page/{file_id}/{page}")
+@isolated_io
 def search_page(file_id: int, page: int, chunk_id: int | None = None):
     r = services_search._search_proxy("GET", f"/page/{file_id}/{page}", params={"chunk_id": chunk_id} if chunk_id else None)
     return Response(r.content, media_type="image/jpeg", headers={"X-Pages": r.headers.get("x-pages", ""), "Cache-Control": "no-store"})
 
 
 @router.get("/api/search/image/{file_id}")
+@isolated_io
 def search_image(file_id: int):
     return Response(services_search._search_proxy("GET", f"/image/{file_id}").content, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/api/search/media/{file_id}")
+@isolated_io
 def search_media(file_id: int):
     """The audio or video file itself, for the preview player (FileResponse handles the player's
     range requests). The path comes from the index, never from the request, and nothing else is served."""

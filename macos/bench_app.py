@@ -271,8 +271,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--chats", type=int, default=200)
     ap.add_argument("--json")
+    ap.add_argument("--optimized", action="store_true", help="enable the measured P4 pool and chat metadata fixes")
     args = ap.parse_args()
 
+    if args.optimized:
+        app.save_settings({**app.load_settings(), "performance": {"isolated_io": True, "chat_index": True}})
     _, _, engine = serve(fake)
     m = app.chat_model()
     app.ENGINES["text"]["url"] = engine                           # in this process only: the fake engine, never port 8080
@@ -286,6 +289,7 @@ def main():
     ws = seed_workspace()
     chats_bytes = sum(p.stat().st_size for p in app.CHATS.glob("*.json"))
     result = {
+        "optimized": args.optimized,
         "date": time.strftime("%Y-%m-%d %H:%M"),
         "mac": platform.machine() + " " + platform.mac_ver()[0],
         "python": platform.python_version(),
