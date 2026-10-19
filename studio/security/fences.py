@@ -17,7 +17,7 @@ from studio.infra.workspace import _harness_root
 
 _HARNESS_SKIP_DIRS = frozenset((".git", "node_modules", "venv", ".venv", "__pycache__", "build", "dist", "target", "DerivedData", "Pods", "site-packages", ".Trash"))
 _HARNESS_SENSITIVE_NAMES = frozenset((".ssh", ".aws", ".gnupg", ".kube", ".npmrc", ".pypirc", ".netrc", "Keychains", "Passwords", "Cookies"))
-_HARNESS_SECRET_GLOBS = ("*.pem", "*.p12", "*.pfx", "*.keychain*", "id_rsa*", "id_ed25519*", "id_ecdsa*", "credentials.json", "secrets.json")
+_HARNESS_SECRET_GLOBS = ("*.pem", "*.key", "*.p12", "*.pfx", "*.keychain*", "id_rsa*", "id_ed25519*", "id_ecdsa*", "credentials.json", "secrets.json")
 _HARNESS_ALLOWED_ENV = frozenset((".env.example", ".env.sample", ".env.template"))
 _HARNESS_SYS_PREFIXES = ("/System", "/Library", "/usr", "/bin", "/sbin", "/etc", "/var", "/private/etc", "/Applications")
 
@@ -29,6 +29,8 @@ _SHELL_BLOCKED_RE = re.compile(
     r"|\b(?:curl|wget)\b[^|\n]*\|\s*(?:sh|bash|zsh|python\d*)\b"
     r"|\bdd\s+if="
     r"|:\(\)\s*\{"
+    r"|\b(\w+)\(\)\s*\{[^}]*\b\1\s*\|\s*\1\b"                  # fork bomb with a named function: f(){ f|f& };f
+    r"|\bosascript\b[^\n]*\b(?:keystroke|key\s+code)\b"
     r"|\b(?:chmod|chown)\b[^;\n]+(?:/etc|/System|/usr|/bin|/sbin|/Library|/var|/private)"
     r"|(?:/|\b)(?:\.ssh|\.aws|\.gnupg|Keychains)(?:/|\b)", re.I)
 
@@ -51,6 +53,11 @@ def _harness_path_fence(raw_path, write=False) -> Path:
     parts = set(resolved.parts) | set(p.parts)
     if parts & _HARNESS_SENSITIVE_NAMES:
         raise ValueError(f"Access to sensitive directory ({next(iter(parts & _HARNESS_SENSITIVE_NAMES))}) is blocked")
+    # macOS volumes are case-insensitive: ~/.AWS and ~/Library/keychains are the same folders
+    sensitive_low = {n.lower() for n in _HARNESS_SENSITIVE_NAMES}
+    hit = next((x for x in parts if x.lower() in sensitive_low), None)
+    if hit is not None:
+        raise ValueError(f"Access to sensitive directory ({hit}) is blocked")
     name_low = resolved.name.lower()
     if (name_low == ".env" or (name_low.startswith(".env.") and name_low not in _HARNESS_ALLOWED_ENV)):
         raise ValueError("Access to .env secret files is blocked")
@@ -61,11 +68,11 @@ def _harness_path_fence(raw_path, write=False) -> Path:
                         HOME / "Library/Safari", HOME / "Library/Cookies", HOME / "Library/Mail",
                         HOME / "Library/Messages", HOME / "Library/Passwords"):
         b_str = str(blocked_dir)
-        if res_str == b_str or res_str.startswith(b_str + "/"):
+        if res_str.lower() == b_str.lower() or res_str.lower().startswith(b_str.lower() + "/"):
             raise ValueError("Access to protected macOS user data is blocked")
     if write:
         for sys_prefix in _HARNESS_SYS_PREFIXES:
-            if res_str == sys_prefix or res_str.startswith(sys_prefix + "/"):
+            if res_str.lower() == sys_prefix.lower() or res_str.lower().startswith(sys_prefix.lower() + "/"):
                 raise ValueError(f"Writing to system path ({sys_prefix}) is blocked")
         if any(part.lower().endswith(".app") for part in resolved.parts):
             raise ValueError("Writing inside macOS application bundles (.app) is blocked")

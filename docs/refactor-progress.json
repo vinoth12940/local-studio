@@ -408,7 +408,8 @@
   "verify": [
    "check_agent.py harness_path_and_shell_safety_fences + new checks"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: check_agent harness_fences_extended_cases (fails on the previous fences at ~/.SSH/config). Fixed bypasses of documented blocks: credential folders in another letter case (~/.SSH, ~/.Aws, ~/Library/keychains on case-insensitive APFS), *.key files, osascript keystroke/key code, named fork bombs. Existing cases unchanged; _is_safe_readonly_shell untouched."
  },
  {
   "id": "P3.sanitizer-tests",
