@@ -50,6 +50,7 @@ import importlib
 
 from studio.api import attachments as api_attachments
 from studio.api import engines as api_engines
+from studio.api import images as api_images
 from studio.api import models as api_models
 from studio import config as studio_config
 from studio.infra import mcp_client
@@ -57,8 +58,8 @@ from studio.services import engines as services_engines
 from studio.services import models as services_models
 from studio.config import (
     AGENT_BACKUPS_DIR, AGENT_BUSY_MSG, AGENT_DIR, AGENT_DOWNLOADS, agent_engine, agent_lock, AGENT_SCRATCH_DIR,
-    APP_SUPPORT, BIN, BREW, CHATS, CUA_MIN, DOCUMENT_READER, DSPARK_PY, EDIT_MODEL, ENGINES, GALLERY, HOME,
-    LLAMA_SERVER, LOGS, ROOT, SEARCH_DEPS_OK, SEARCH_DIR, SEARCH_PORT, SEARCH_REQS, STATE, UPLOADS, UV,
+    APP_SUPPORT, BREW, CHATS, CUA_MIN, DOCUMENT_READER, DSPARK_PY, EDIT_MODEL, ENGINES, GALLERY, HOME, LLAMA_SERVER,
+    LOGS, ROOT, SEARCH_DEPS_OK, SEARCH_DIR, SEARCH_PORT, SEARCH_REQS, STATE, UPLOADS, UV,
 )
 from studio.infra.edits import _make_diff_preview, _match_edit_block, _post_edit_diagnostics
 from studio.infra.harness_args import _call_args, _normalize_harness_args, _parse_harness_args
@@ -74,7 +75,8 @@ from studio.security.fences import (
 )
 from studio.security.local_only import LocalOnly
 from studio.services.attachments import _extract, build_messages, TEXT_EXT
-from studio.services.models import chat_model, chat_models, downloads, image_model, search_model, start_download
+from studio.services.images import jobs
+from studio.services.models import chat_model, chat_models, downloads, search_model, start_download
 from studio.storage.backups import _backup_file, _restore_backup_snap
 from studio.storage.chats import _chat_path
 from studio.storage.memory import _load_agent_memory, _save_agent_memory
@@ -103,6 +105,8 @@ _MOVED = (
     "studio.api.engines",
     "studio.services.attachments",
     "studio.api.attachments",
+    "studio.services.images",
+    "studio.api.images",
 )                                                               # dependency order: owners first
 for _m in _MOVED:
     importlib.import_module(_m)
@@ -2608,168 +2612,6 @@ def delete_chat(cid: str):
     _forget_chat_context(cid)                                # the chat's turns also went to its agent runs as context
     return {"ok": True}
 
-# ---------------------------------------------------------------- image jobs
-
-jobs: dict[str, dict] = {}
-image_lock = threading.Lock()
-STEP_RE = re.compile(r"(\d+)/(\d+) \[")
-PEAK_RE = re.compile(r"(\d+)\s+peak memory footprint")
-TIME_STAT_RE = re.compile(r"^\d+(\.\d+)?\s+[a-z ]+$|\breal\b.*\buser\b.*\bsys\b")   # /usr/bin/time -l noise
-
-
-def run_image_job(job_id, cmd, meta):
-    job = jobs[job_id]
-    with image_lock:                      # one image at a time: each load is several GB
-        if job.get("cancelled"):
-            job.update(status="cancelled")
-            return
-        job.update(status="running", started=time.time())
-        # /usr/bin/time -l reports the process's peak memory footprint (incl. Metal buffers)
-        proc = subprocess.Popen(["/usr/bin/time", "-l", *cmd], stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, bufsize=1)
-        job["pid"] = proc.pid
-        buf, tail = "", []
-        while True:
-            ch = proc.stdout.read(1)
-            if not ch:
-                break
-            if ch in "\r\n":
-                line = buf.strip()
-                buf = ""
-                if not line:
-                    continue
-                m = STEP_RE.search(line)
-                if m:
-                    step, total = int(m.group(1)), int(m.group(2))
-                    job.update(step=step, total=total)
-                    if step == 1:
-                        job["first_step_at"] = time.time()
-                    if step == total:
-                        job["denoise_done_at"] = time.time()
-                elif (p := PEAK_RE.search(line)):
-                    job["peak_bytes"] = int(p.group(1))
-                elif not TIME_STAT_RE.search(line):
-                    tail = (tail + [line])[-15:]
-                    job["log"] = tail
-            else:
-                buf += ch
-        proc.wait()
-        end = time.time()
-        job["elapsed"] = round(end - job["started"], 1)
-        if job.get("first_step_at") and job.get("denoise_done_at") and job.get("total", 0) > 1:
-            job["sec_per_step"] = round((job["denoise_done_at"] - job["first_step_at"])
-                                        / (job["total"] - 1), 2)
-        out = GALLERY / meta["file"]
-        if job.get("cancelled"):
-            out.unlink(missing_ok=True)
-            job.update(status="cancelled")
-        elif proc.returncode == 0 and out.exists():
-            meta.update(elapsed=job["elapsed"], sec_per_step=job.get("sec_per_step"),
-                        peak_bytes=job.get("peak_bytes"), created=end)
-            (GALLERY / (out.stem + ".json")).write_text(json.dumps(meta, indent=2))
-            job.update(status="done", image=f"/gallery/{meta['file']}", meta=meta)
-        else:
-            job.update(status="error", returncode=proc.returncode)
-
-
-@app.post("/api/image")
-async def create_image(prompt: str = Form(...), width: int = Form(1024), height: int = Form(1024),
-                       steps: int = Form(20), seed: str = Form(""), guidance: str = Form(""),
-                       negative_prompt: str = Form(""), step_cache: str = Form(""),
-                       mode: str = Form("generate"), model_id: str = Form(""),
-                       images: list[UploadFile] = File(default=[])):
-    if agent_lock.locked():
-        raise HTTPException(409, AGENT_BUSY_MSG)
-    if mode == "edit" and not EDIT_MODEL:
-        raise HTTPException(400, "Editing needs the full Qwen-Image-2.1 checkpoint; the 4-bit "
-                                 "weights installed here are text-to-image only.")
-    im = image_model(model_id or None)
-    if mode != "edit" and not services_models.model_installed(im):
-        raise HTTPException(409, f"{im['name']} isn't downloaded. Get it from the Model library.")
-    seed_val = int(seed) if seed.strip() else secrets.randbelow(2**31)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    fname = f"{stamp}-{seed_val}-{uuid.uuid4().hex[:6]}.png"      # unique even for jobs queued together
-    meta = {"prompt": prompt, "mode": mode, "width": width, "height": height, "steps": steps,
-            "seed": seed_val, "model": im["repo"], "model_name": im["name"], "file": fname, "low_ram": True}
-
-    if mode == "edit":
-        if not images:
-            raise HTTPException(400, "edit mode needs at least one reference image")
-        paths = []
-        for up in images[:10]:
-            p = UPLOADS / f"{uuid.uuid4().hex}{Path(up.filename or 'x.png').suffix}"
-            p.write_bytes(await up.read())
-            paths.append(str(p))
-        cmd = [str(BIN / "mflux-generate-qwen-2.1-edit"), "--image-paths", *paths, "--quantize", "4"]
-        meta["references"] = [Path(p).name for p in paths]
-    else:
-        cmd = [str(BIN / im["command"])]
-        if im.get("base_model"):
-            cmd += ["--base-model", im["base_model"]]
-    # --low-ram evicts the text encoder/transformer between phases and tiles the VAE:
-    # peak ~10 GB instead of ~38 GB for Qwen-Image, ~10% slower — it keeps chat out of swap.
-    cmd += ["--low-ram", "--model", EDIT_MODEL if mode == "edit" else im["repo"],
-            "--prompt", prompt, "--steps", str(steps), "--seed", str(seed_val),
-            "--width", str(width), "--height", str(height), "--output", str(GALLERY / fname)]
-    if negative_prompt.strip():
-        cmd += ["--negative-prompt", negative_prompt]
-        meta["negative_prompt"] = negative_prompt
-    if guidance.strip():
-        cmd += ["--guidance", guidance]
-        meta["guidance"] = float(guidance)
-    if step_cache.strip() and mode != "edit" and im["id"] == "qwen-image-2.1":
-        cmd += ["--step-cache-ratio", step_cache]
-        meta["step_cache_ratio"] = float(step_cache)
-
-    job_id = uuid.uuid4().hex[:12]
-    jobs[job_id] = {"id": job_id, "status": "queued", "step": 0, "total": steps,
-                    "queued": time.time(), "log": []}
-    threading.Thread(target=run_image_job, args=(job_id, cmd, meta), daemon=True).start()
-    return {"job": job_id, "seed": seed_val}
-
-
-@app.get("/api/image/{job_id}")
-def image_status(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "no such job")
-    view = {k: v for k, v in job.items() if k != "pid"}
-    if job.get("started") and job["status"] == "running":
-        view["elapsed"] = round(time.time() - job["started"], 1)
-    return view
-
-
-@app.post("/api/image/{job_id}/cancel")
-def image_cancel(job_id: str):
-    job = jobs.get(job_id)
-    if not job or job["status"] not in ("queued", "running"):
-        raise HTTPException(404, "no running job")
-    job["cancelled"] = True
-    if job.get("pid"):
-        subprocess.run(["pkill", "-TERM", "-P", str(job["pid"])])   # mflux, child of /usr/bin/time
-    return {"ok": True}
-
-
-@app.get("/api/gallery")
-def gallery():
-    items = []
-    for meta_file in sorted(GALLERY.glob("*.json"), reverse=True):
-        try:
-            meta = json.loads(meta_file.read_text())
-            meta["url"] = f"/gallery/{meta['file']}"
-            items.append(meta)
-        except Exception:
-            continue
-    return items
-
-
-@app.delete("/api/gallery/{name}")
-def delete_image(name: str):
-    if not re.match(r"^[\w.-]+\.png$", name):
-        raise HTTPException(400, "bad name")
-    (GALLERY / name).unlink(missing_ok=True)
-    (GALLERY / (Path(name).stem + ".json")).unlink(missing_ok=True)
-    return {"ok": True}
 
 # ---------------------------------------------------------------- search
 # search.py is a fourth process (port 8083): it indexes the user's files and answers queries. At
@@ -6185,5 +6027,5 @@ def index():
     return FileResponse(ROOT / "index.html", headers={"Cache-Control": "no-cache"})
 
 
-for _router in (api_models.router, api_engines.router, api_attachments.router):
+for _router in (api_models.router, api_engines.router, api_attachments.router, api_images.router):
     app.include_router(_router)
