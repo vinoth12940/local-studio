@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode
@@ -55,17 +56,49 @@ FILES_PROMPT = ("The user enabled My files for this turn. Use search_files and r
 
 
 active_chats = 0
+CHAT_HEARTBEAT_SECONDS = 15
 
 
 async def _counted(gen):
     """Count open chat streams for /api/busy. The finally also runs when the user stops a reply."""
     global active_chats
     active_chats += 1
+    chunks = asyncio.Queue(maxsize=1)
+    async def produce():
+        # Keep the source in one task: HTTP clients may hold task-bound async
+        # context managers across yields. Buffer at most one SSE frame.
+        try:
+            try:
+                async for chunk in gen:
+                    await chunks.put((chunk, None))
+            finally:
+                await gen.aclose()
+        except Exception as error:
+            await chunks.put((None, error))
+        else:
+            await chunks.put((None, None))
+    producer = asyncio.create_task(produce())
     try:
-        async for chunk in gen:
+        while True:
+            try:
+                chunk, error = await asyncio.wait_for(chunks.get(), CHAT_HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                # In particular, keep the HTTP stream flowing while an approval is
+                # pending. A quiet model or user prompt must not look disconnected.
+                yield ": keepalive\n\n"
+                continue
+            if error is not None:
+                raise error
+            if chunk is None:
+                break
             yield chunk
     finally:
-        active_chats -= 1
+        try:
+            producer.cancel()
+            with suppress(asyncio.CancelledError):
+                await producer
+        finally:
+            active_chats -= 1
 
 
 AGENT_CHAT_NOTE = ("You have real tools in this conversation. Use get_current_datetime for the current date or time. "
@@ -229,13 +262,17 @@ class _ChatSession:
 
     async def wait_for_reply(self, request, timeout=600):
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        while True:
             if self.event.is_set():
                 return self.reply
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             if await request.is_disconnected():
                 return None
-            await asyncio.sleep(0.1)
-        return {"decision": "deny", "error": "Timed out waiting for response."}
+            await asyncio.sleep(min(0.1, remaining))
+        self.pending_id = None
+        return {"error": "Timed out waiting for your response. No action was taken.", "timed_out": True}
 
 
 def _execution_result(rc, out, err, **extra):

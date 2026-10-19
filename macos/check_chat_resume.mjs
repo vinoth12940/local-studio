@@ -9,7 +9,7 @@ const element = () => new Proxy(function () {}, {
     : key === 'style' ? { setProperty() {} } : key === 'dataset' ? {} : element(),
   set: () => true, apply: () => element(),
 });
-globalThis.document = new Proxy({}, { get: (_, key) => key === 'documentElement' ? { dataset: {} } : element() });
+globalThis.document = new Proxy({}, { get: (_, key) => key === 'documentElement' ? { dataset: {} } : key === 'hidden' ? false : element() });
 globalThis.window = globalThis;
 globalThis.localStorage = { getItem: () => null, setItem() {} };
 globalThis.matchMedia = () => ({ matches: false });
@@ -61,4 +61,45 @@ for (const scenario of ['404', '410', 'network', 'partial-then-expired', 'abort'
   }
   assert.equal(listState.streaming, null);
   console.log(`   ok chat_resume_${scenario}_preserves_saved_reply_or_commits_success`);
+}
+
+// A pending frame can remain suspended when the native window is covered.
+// Prompts must still update the tool state and request an immediate paint.
+const { chHarnessCardHTML } = await import('../frontend/chat/thread.mjs');
+for (const scenario of ['approval-stop', 'question-stop', 'tool-eof']) {
+  listState.current = { id: 'prompt-test', title: 'Prompt test', messages: [{ role: 'user', content: '/init' }] };
+  let saved, inspected = false, cancelledFrame = false;
+  globalThis.requestAnimationFrame = () => 123;
+  globalThis.cancelAnimationFrame = () => { cancelledFrame = true; };
+  globalThis.fetch = async (url, options = {}) => {
+    if (url === '/api/chat') {
+      const step = { id: '0-0', name: 'write_file', summary: 'Writing file: AGENTS.md', status: 'running' };
+      if (scenario === 'tool-eof') return new Response(frame(1, { x_tool: step }));
+      const isQuestion = scenario === 'question-stop';
+      const prompt = { id: '0-0', session_id: 'prompt-session', title: 'Create AGENTS.md', question: 'Create guidance?', kind: 'diff', preview: '+# Guide' };
+      return new Response(new ReadableStream({ start(c) {
+        c.enqueue(new TextEncoder().encode(frame(1, { x_tool: step }) + frame(2, { [isQuestion ? 'x_question' : 'x_approval']: prompt })));
+        options.signal.addEventListener('abort', () => c.error(new DOMException('Aborted', 'AbortError')));
+        setTimeout(() => {
+          const bot = listState.current.messages.at(-1);
+          assert.equal(bot.tool_steps[0].status, 'waiting');
+          assert(bot[isQuestion ? 'pendingQuestion' : 'pendingApproval']);
+          assert(chHarnessCardHTML(bot).includes(isQuestion ? 'Create guidance?' : 'Create AGENTS.md'));
+          assert(cancelledFrame, 'prompt must not wait for a suspended animation frame');
+          inspected = true;
+          listState.streaming.abort();
+        }, 10);
+      } }));
+    }
+    if (url === '/api/chats/prompt-test' && options.method === 'PUT') { saved = JSON.parse(options.body).messages[1]; return new Response('{}'); }
+    if (url === '/api/chats') return new Response('[]');
+    return new Promise(() => {});
+  };
+  await generate();
+  if (scenario !== 'tool-eof') assert(inspected);
+  assert.equal(saved.tool_steps[0].status, 'error');
+  assert.equal(saved.rounds[0].tools[0].status, 'error');
+  assert.match(saved.tool_steps[0].error, scenario === 'tool-eof' ? /ended before/ : /Stopped/);
+  assert.equal(listState.streaming, null);
+  console.log(`   ok chat_${scenario}_does_not_leave_running_tools`);
 }

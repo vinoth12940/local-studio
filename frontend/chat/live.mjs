@@ -190,6 +190,14 @@ async function generate(resumeBot = null) {
   // rAF pauses while the window is hidden or covered; fall back to a timer so the reply keeps
   // rendering (and is complete when the user comes back).
   const repaint = () => { if (!raf) raf = document.hidden ? -setTimeout(paint, 150) : requestAnimationFrame(paint); };
+  const showPrompt = (prompt) => {
+    const step = (bot.tool_steps || []).find((s) => s.id === prompt.id);
+    if (step) step.status = "waiting";
+    // Approval is interactive UI: paint it now, even when a previously queued
+    // animation frame was suspended while the window was covered.
+    if (raf) { raf < 0 ? clearTimeout(-raf) : cancelAnimationFrame(raf); }
+    paint(); updateSend(); scrollBottom(true);
+  };
   let streamFinished = false;
   try {
     for await (const evt of chatEvents(body, listState.streaming.signal, async (id) => {
@@ -211,14 +219,12 @@ async function generate(resumeBot = null) {
           }
           if (j.x_approval) {
             bot.pendingApproval = j.x_approval;
-            repaint(); updateSend();
-            scrollBottom(true);
+            showPrompt(j.x_approval);
             continue;
           }
           if (j.x_question) {
             bot.pendingQuestion = j.x_question;
-            repaint(); updateSend();
-            scrollBottom(true);
+            showPrompt(j.x_question);
             continue;
           }
           if (j.x_tool_output) {
@@ -302,6 +308,14 @@ async function generate(resumeBot = null) {
     Object.assign(bot, savedReply, { error, stream_pending });
     // A failed replay cannot attach a partially replayed action to the restored reply.
     actionRun = null;
+  }
+  if (!bot.stream_pending) {
+    for (const step of [...(bot.tool_steps || []), ...(bot.rounds || []).flatMap((r) => r.tools || [])]) {
+      if (["running", "waiting"].includes(step.status)) {
+        step.status = "error";
+        step.error = bot.error || (listState.streaming?.signal.aborted ? "Stopped." : "The reply ended before this tool returned a result.");
+      }
+    }
   }
   listState.streaming = null; liveGen = null; updateSend(); renderHistory();
   if (actionRun) return chAttachAction(chat, bot, el, actionRun);

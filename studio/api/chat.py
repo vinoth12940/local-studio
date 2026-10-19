@@ -318,7 +318,8 @@ async def chat(request: Request):
                             reply_payload = await session.wait_for_reply(request)
                             if reply_payload is None: return
                             answer = str(reply_payload.get("answer") or "").strip()
-                            result = {"question": question, "answer": answer} if answer else {"error": "The user skipped the question."}
+                            result = (reply_payload if reply_payload.get("timed_out") else
+                                      {"question": question, "answer": answer} if answer else {"error": "The user skipped the question."})
                     elif name in action_names and isinstance(args, dict):
                         decision, reason, meta = await asyncio.to_thread(_in_workspace, workspace, harness_gate, name, args, chat_id, extra_perms)
                         if decision == "blocked":
@@ -358,6 +359,8 @@ async def chat(request: Request):
                                 while not out_q.empty():
                                     yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
                                 result = await fut
+                            elif reply_payload.get("timed_out"):
+                                result = {**reply_payload, "verified": False}
                             else:
                                 feedback = str(reply_payload.get("feedback") or "").strip()[:2000]
                                 result = {"error": "The user declined this action." + (f" Do this instead: {feedback}" if feedback else ""),
@@ -399,6 +402,12 @@ async def chat(request: Request):
                                           **({"backup_id": result["backup_id"]} if result.get("backup_id") else {}),
                                           **({"syntax_check": result["syntax_check"], "syntax_ok": result.get("syntax_ok", True)} if result.get("syntax_check") else {}),
                                           **({"error": result["error"]} if result.get("error") else {})}})
+                    if result.get("timed_out"):
+                        # An unanswered prompt ends the turn. Do not ask the model
+                        # to retry the same unapproved action in another round.
+                        yield _sse({"error": result["error"]})
+                        yield "data: [DONE]\n\n"
+                        return
                     if result.get("backup_id"):
                         turn_backups.append({"backup_id": result["backup_id"], "name": result.get("name") or "file", "path": result.get("path")})
                         yield _sse({"x_checkpoint": {

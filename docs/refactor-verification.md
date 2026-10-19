@@ -107,3 +107,26 @@ their earlier results above remain historical evidence.
 - Isolated browser fixture at port 7861 used `/tmp/ls-harness-ui` and `/tmp/ls-harness-workspace`, stubbed
   chat requests, and confirmed the new chat request and persisted chat both carried the selected workspace.
   The visible fixture reported PASS. No real model turn, engine restart or live user-data test was performed.
+
+## Approval wait follow-up (2026-10-19)
+
+The installed build 131 was observed showing `Write AGENTS.md / Running…` with no visible approval card.
+The target file did not exist and the server log contained no approval reply. The turn eventually returned
+`The user declined this action`, identifying an unanswered approval timeout rather than a completed write.
+The exact reason that this live prompt was not displayed could not be confirmed.
+
+- Approval/question events now paint their interactive card immediately, cancelling an outstanding animation
+  frame that may have been suspended with a covered window. Their tool row says `Waiting for your response`.
+- A timed-out prompt reports the timeout and ends the turn without asking the model to retry the action.
+  A reply received during the last polling interval is checked before declaring a timeout.
+- Legacy streams send idle keepalives, keep their source generator in one task, and explicitly close it on
+  cancellation. A bounded queue retains at most one pending SSE frame. Resumable streams retain replay behavior.
+- Completed/stopped turns settle unfinished tool rows as errors; saved replies no longer retain a perpetual
+  `Running` label. Transient resumable-stream failures still preserve the pending reply for reconnection.
+- Added checks exercise real approval gating and file writes in temporary one-file workspaces: allow, deny,
+  timeout and Stop; heartbeat/cancellation cleanup; suspended-frame approval/question updates; and EOF cleanup.
+  Model requests are synthetic. The SSE contract fixture records one additional existing-shape `error` emission.
+- Interactive browser verification was blocked by automatic approval review's usage limit. Browser attempts
+  produced no successful visual verification of this fix. No live model turn or engine restart was used in tests.
+- Full build passed **295 check outputs**, native compilation and strict development-signature verification.
+  Evidence: `build/write-approval-verification/build.log`.

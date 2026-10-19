@@ -126,6 +126,7 @@ function diffLinesHTML(text, colored) {                                         
   }).join("");
 }
 function toolResultHTML(step) {
+  if (step.status === "waiting") return "Waiting for your response…";
   if (step.status === "running") return `<span class="shimmer">Running…</span>`;
   if (step.error) return `<span class="tbad">${esc(String(step.error).split("\n")[0].slice(0, 180))}</span>`;
   const d = String(step.detail || ""), lines = d ? d.split("\n") : [];
@@ -149,7 +150,7 @@ function chToolStepsInner(steps, openIds) {
   return (steps || []).map((step) => {
     const label = toolLabel(step.name), summary = String(step.summary || "Checking a tool");
     const ci = summary.indexOf(": "), arg = label ? (ci > 0 && ci < 40 ? summary.slice(ci + 2) : summary) : "";
-    const st = step.status === "running" ? "running" : step.status === "error" || step.error ? "error" : "done";
+    const st = ["running", "waiting"].includes(step.status) ? "running" : step.status === "error" || step.error ? "error" : "done";
     const undo = step.undone ? `<span class="undo-done">Restored</span>` : step.backup_id ? `<button class="undo-btn" data-undo="${esc(step.backup_id)}" title="Revert this change">Undo</button>` : "";
     const head = `<div class="th" title="${esc(step.error || summary)}"><span class="tdot"></span><span class="tname">${esc(label || summary)}</span>${arg ? `<span class="targ">${esc(arg)}</span>` : ""}${undo}${step.detail ? icon("i-right", "").replace('class="i"', 'class="i tchev"') : ""}</div><div class="tres">${toolResultHTML(step)}</div>`;
     if (!step.detail) return `<div class="chattoolstep st-${st}">${head}</div>`;
@@ -369,7 +370,11 @@ $("thread").onclick = async (e) => {
     if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = true);
     try {
       await jpost(`/api/chat/sessions/${sid}/reply`, { decision, ...(feedback ? { feedback } : {}) });
-      if (turnMsg) delete turnMsg.pendingApproval;
+      if (turnMsg) {
+        const step = (turnMsg.tool_steps || []).find((s) => s.id === turnMsg.pendingApproval?.id);
+        if (step?.status === "waiting") step.status = "running";
+        delete turnMsg.pendingApproval;
+      }
       if (card) card.remove();
     } catch (err) {
       toast(err.message || "Approval reply failed");

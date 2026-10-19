@@ -6006,6 +6006,79 @@ def chat_stop_cancels_running_python_for_legacy_and_resumable_streams():
         streams._STREAMS.clear()
 
 
+@check
+def chat_write_approval_allow_deny_timeout_and_stop():
+    import asyncio
+    import studio.api.chat as api_chat
+    from unittest.mock import patch
+    original_wait = app._ChatSession.wait_for_reply
+    async def short_wait(self, request):
+        return await original_wait(self, request, timeout=.02)
+    for outcome in ('allow', 'deny', 'timeout', 'stop'):
+        ws = TMP / ('write-approval-' + outcome)
+        ws.mkdir(exist_ok=True)
+        (ws / 'snake_game.html').write_text('<canvas></canvas>')
+        target = ws / 'AGENTS.md'
+        events = []
+        class Request:
+            async def json(self):
+                return {'model_id': TEXT_MLX, 'workspace': str(ws),
+                        'messages': [{'role': 'user', 'content': '/init'}]}
+            async def is_disconnected(self): return False
+        async def exercise():
+            response = await api_chat.chat(Request())
+            async for chunk in response.body_iterator:
+                events.append(chunk)
+                if 'x_approval' in chunk:
+                    prompt = json.loads(chunk[6:])['x_approval']
+                    assert not target.exists(), 'write happened before approval'
+                    assert prompt['path'] == str(target.resolve()) and prompt['preview'] == '+# Guide'
+                    if outcome == 'stop':
+                        await response.body_iterator.aclose()
+                        break
+                    if outcome != 'timeout':
+                        api_chat.chat_session_reply(prompt['session_id'], {'id': prompt['id'], 'decision': outcome})
+            assert not api_chat._chat_sessions and app.active_chats == 0
+        with Env(), ChatEngine(turns=[chat_action_deltas('write_file', '{"path":"AGENTS.md","content":"# Guide\\n"}'),
+                                     [chat_delta(content='Finished.')]]) as engine, \
+             patch.object(app._ChatSession, 'wait_for_reply', short_wait):
+            asyncio.run(asyncio.wait_for(exercise(), 3))
+        joined = ''.join(events)
+        assert target.exists() == (outcome == 'allow'), (outcome, joined)
+        if outcome == 'allow':
+            assert target.read_text() == '# Guide\n' and '"status": "done"' in joined
+        elif outcome == 'timeout':
+            assert 'Timed out waiting for your response' in joined and 'user declined' not in joined
+            assert len(engine.seen) == 1 and '[DONE]' in joined, 'timeout retried the unapproved action'
+        elif outcome == 'deny':
+            assert 'The user declined this action.' in joined
+
+
+@check
+def chat_idle_heartbeat_closes_pending_source_on_stop():
+    import asyncio
+    from unittest.mock import patch
+    import studio.services.harness as harness
+    async def exercise():
+        closed = asyncio.Event()
+        async def source():
+            owner = asyncio.current_task()
+            try:
+                yield 'data: {"pending":true}\n\n'
+                assert asyncio.current_task() is owner
+                await asyncio.Event().wait()
+            finally:
+                assert asyncio.current_task() is owner
+                closed.set()
+        stream = harness._counted(source())
+        assert 'pending' in await anext(stream)
+        assert await asyncio.wait_for(anext(stream), 1) == ': keepalive\n\n'
+        await stream.aclose()
+        assert closed.is_set() and harness.active_chats == 0
+    with patch.object(harness, 'CHAT_HEARTBEAT_SECONDS', .01):
+        asyncio.run(exercise())
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:
