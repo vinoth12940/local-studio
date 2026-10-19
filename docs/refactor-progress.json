@@ -67,7 +67,8 @@
    "check_document.py build/DocumentReader",
    "./macos/build.sh"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: ./macos/build.sh exit 0 on the safety-net commit (UI, ast, search, app, agent 175, document checks; 236 ok lines; signed)."
  },
  {
   "id": "P0.bench",
@@ -76,7 +77,7 @@
   "verify": [
    "bench runs twice with stable numbers (<20% spread)"
   ],
-  "passes": false
+  "passes": true
  },
  {
   "id": "P0.perf-baseline",
@@ -85,7 +86,7 @@
   "verify": [
    "file exists with all \u00a77.1 metrics"
   ],
-  "passes": false
+  "passes": true
  },
  {
   "id": "P0.pins",
