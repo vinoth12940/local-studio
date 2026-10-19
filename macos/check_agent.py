@@ -72,14 +72,19 @@ import base64  # noqa: E402
 import patch_guard  # noqa: E402
 import studio.config  # noqa: E402
 import studio.infra.mcp_client  # noqa: E402
+import studio.security.agent_gate  # noqa: E402
+import studio.services.agent.cua  # noqa: E402
+import studio.services.agent.loop  # noqa: E402
+import studio.services.agent.views  # noqa: E402
 import studio.services.engines  # noqa: E402
 import studio.services.models  # noqa: E402
 import studio.services.search  # noqa: E402
+import studio.services.web  # noqa: E402
 
 patch_guard.install(app)                                   # app.X = fake must reach the code that reads X
 
 REAL_PROFILE = app.AGENT_PROFILE
-app.AGENT_PROFILE = TMP / "NoProfile" / "local-studio"     # no check may read or write the real browser profile
+studio.services.agent.loop.AGENT_PROFILE = TMP / "NoProfile" / "local-studio"     # no check may read or write the real browser profile
 studio.config.CUA_DRIVER = str(TMP / "no-cua-driver")               # the real one is installed on this Mac: no check may run it
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -142,11 +147,11 @@ def agent_routes_are_local_only():
     c = TestClient(app.app, base_url="http://127.0.0.1:7860")
     assert c.get("/api/agent/status", headers={"origin": "https://evil.example"}).status_code == 403
     real = app.cua_status
-    app.cua_status = lambda: {"installed": False, "version": None, "ok_version": False, "telemetry": None}
+    studio.services.agent.cua.cua_status = lambda: {"installed": False, "version": None, "ok_version": False, "telemetry": None}
     try:
         st = c.get("/api/agent/status").json()
     finally:
-        app.cua_status = real
+        studio.services.agent.cua.cua_status = real
     assert st["enabled"] is False and st["running"] is None and st["cua"]["installed"] is False, st
 
 
@@ -304,13 +309,13 @@ def profile_in_use_pattern_is_anchored():
     import subprocess as sp
     prof = Path("/Users/x/Library/Application Support/Local Studio/BrowserProfiles/local-studio")
     real = app.AGENT_PROFILE
-    app.AGENT_PROFILE = prof
+    studio.services.agent.loop.AGENT_PROFILE = prof
     try:
         with Stub(lambda cmd: (1, "")) as s:
             app._agent_profile_in_use()
         pat = next(c for c in s.calls if c[0] == "pgrep")[-1]
     finally:
-        app.AGENT_PROFILE = real
+        studio.services.agent.loop.AGENT_PROFILE = real
 
     def hits(line):                                          # pgrep -f matches with POSIX extended regexes, as grep -E does
         return sp.run(["grep", "-E", "--", pat], input=line, capture_output=True, text=True).returncode == 0
@@ -371,7 +376,7 @@ def daemon_start_and_stop_use_open_and_pkill():
         assert not app.AGENT_SOCK.exists() and app._agent_daemon_running() is False
     # a daemon that never makes its socket is an error, not a hang
     real = app.AGENT_SOCK_WAIT_S
-    app.AGENT_SOCK_WAIT_S = 0.3
+    studio.services.agent.cua.AGENT_SOCK_WAIT_S = 0.3
     try:
         with Stub(lambda cmd: (0, "") if cmd[0] == "open" else (1, "")):
             try:
@@ -381,7 +386,7 @@ def daemon_start_and_stop_use_open_and_pkill():
             else:
                 raise AssertionError("expected McpError")
     finally:
-        app.AGENT_SOCK_WAIT_S = real
+        studio.services.agent.cua.AGENT_SOCK_WAIT_S = real
     # a socket path a unix socket can't hold is a clear error before anything is started
     real_sock = app.AGENT_SOCK
     studio.config.AGENT_SOCK = TMP / ("x" * 90) / "cua.sock"
@@ -402,11 +407,11 @@ def daemon_start_and_stop_use_open_and_pkill():
 def idle_reaper_stops_only_idle_daemons():
     stopped = []
     real_stop, real_last = app.stop_agent_daemon, app._agent_last_use
-    app.stop_agent_daemon = lambda: stopped.append(1)
+    studio.services.agent.cua.stop_agent_daemon = lambda: stopped.append(1)
     try:
-        app._agent_last_use = None
+        studio.services.agent.cua._agent_last_use = None
         assert app.agent_reap(now=10 ** 9) is False and not stopped                       # never used
-        app._agent_last_use = 1000.0
+        studio.services.agent.cua._agent_last_use = 1000.0
         assert app.agent_reap(now=1000.0 + app.AGENT_IDLE_S - 1) is False and not stopped  # recently used
         app.agent_lock.acquire()
         try:
@@ -418,7 +423,7 @@ def idle_reaper_stops_only_idle_daemons():
         t = time.time(); app.agent_touch()
         assert t <= app._agent_last_use <= time.time()
     finally:
-        app.stop_agent_daemon, app._agent_last_use = real_stop, real_last
+        studio.services.agent.cua.stop_agent_daemon, studio.services.agent.cua._agent_last_use = real_stop, real_last
 
 
 @check
@@ -430,17 +435,17 @@ def agent_client_is_a_singleton_that_ensures_the_daemon():
             made.append((argv, kw)); self.alive = True
         def close(self):
             self.alive = False
-    studio.infra.mcp_client.McpClient, app._agent_cli = Rec, None
-    app._agent_daemon_running = lambda: False
-    app.start_agent_daemon = lambda: started.append(1)
-    app._agent_reaper_start = lambda: None
+    studio.infra.mcp_client.McpClient, studio.services.agent.cua._agent_cli = Rec, None
+    studio.services.agent.cua._agent_daemon_running = lambda: False
+    studio.services.agent.cua.start_agent_daemon = lambda: started.append(1)
+    studio.services.agent.cua._agent_reaper_start = lambda: None
     try:
         a = app.agent_client(); b = app.agent_client()
         assert a is b and len(made) == 1 and len(started) == 2
         assert made[0][0] == [app.CUA_DRIVER, "mcp", "--socket", str(app.AGENT_SOCK)]
         assert made[0][1]["prepare"] is app._ensure_agent_daemon and made[0][1]["touch"] is app.agent_touch
     finally:
-        studio.infra.mcp_client.McpClient, app._agent_daemon_running, app.start_agent_daemon, app._agent_reaper_start, app._agent_cli = saved
+        studio.infra.mcp_client.McpClient, studio.services.agent.cua._agent_daemon_running, studio.services.agent.cua.start_agent_daemon, studio.services.agent.cua._agent_reaper_start, studio.services.agent.cua._agent_cli = saved
 
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "agent"
@@ -1374,7 +1379,7 @@ def web_client(**over):
 
 
 def web_adapter(**over):
-    app._agent_sleep = lambda s: SLEPT.append(s)
+    studio.services.agent.loop._agent_sleep = lambda s: SLEPT.append(s)
     SLEPT.clear()
     c = web_client(**over)
     return c, app.Adapter(c, "ls-abc123")
@@ -1988,13 +1993,13 @@ def read_page_matches_words_across_parts():
     # and within the time cap: past it only the parts up to the current one are read
     saved = app.AGENT_SEARCH_SECONDS
     try:
-        app.AGENT_SEARCH_SECONDS = -1
+        studio.services.agent.loop.AGENT_SEARCH_SECONDS = -1
         a4.execute("scroll", {"direction": "down"})
         n = len(_sem_reads(c4))
         a4.execute("read_page", {"query": "weather"})
         assert [x.get("continuation") for x in _sem_reads(c4)[n:]] == [None, "bc-1"], _sem_reads(c4)[n:]
     finally:
-        app.AGENT_SEARCH_SECONDS = saved
+        studio.services.agent.loop.AGENT_SEARCH_SECONDS = saved
     # a run: the matches are what the model sees next, and their refs can be clicked
     model = Model(tc("open_url", url=LONG), tc("read_page", query="MacBook Pro M4 price"), tc("click", ref=e), tc("done", answer="ok"))
     c5, _, _ = paged_adapter(4, extra)
@@ -2112,7 +2117,7 @@ def stale_retry_rechecks_the_gate():
                     r["facts"] = {**r["facts"], "is_submit": True}
         return v
 
-    app.browser_view = view
+    studio.services.agent.views.browser_view = view
     try:
         c, a = web_adapter(get_browser_state=state)
         a.execute("open_url", {"url": "https://github.com/login"})
@@ -2150,7 +2155,7 @@ def stale_retry_rechecks_the_gate():
                     if r["facts"]["name"] == "Username or email address":
                         r["facts"] = {**r["facts"], "autocomplete": "one-time-code"}
             return out_
-        app.browser_view = sensitive
+        studio.services.agent.views.browser_view = sensitive
         c.script["browser_type"] = [STALE, _tr(_fx("browser_type_result"))]
         where["sens"] = True
         n = len(c.of("browser_type"))
@@ -2164,7 +2169,7 @@ def stale_retry_rechecks_the_gate():
         out = a.execute("click", {"ref": ref})
         assert out.startswith("Clicked") and len(c.of("browser_click")) == n + 2, (out, c.of("browser_click")[n:])
     finally:
-        app.browser_view = real_view
+        studio.services.agent.views.browser_view = real_view
     # apps: the same rule, keyed by the app
     real_app_view = app.app_view
     flip = {"on": False}
@@ -2175,7 +2180,7 @@ def stale_retry_rechecks_the_gate():
             for r in out_["refs"].values():
                 r["facts"] = {**r["facts"], "is_submit": True}
         return out_
-    app.app_view = aview
+    studio.services.agent.views.app_view = aview
     try:
         c2, a2, v2 = _opened()
         e2 = _aref(v2, 150)
@@ -2185,7 +2190,7 @@ def stale_retry_rechecks_the_gate():
         out = a2.execute("click_app", {"ref": e2})
         assert out == "Error: the app changed and its refs were renumbered; use the newest view" and len(c2.of("click")) == 1, (out, c2.names())
     finally:
-        app.app_view = real_app_view
+        studio.services.agent.views.app_view = real_app_view
 
 
 WRONG_TEXT = ("refused (browser_wrong_target_refused): CDP window no longer has an exact geometry or singleton-cardinality "
@@ -2751,19 +2756,19 @@ class Env:
     def __enter__(self):
         self.saved = {k: getattr(app, k) for k in HOOKS}
         self.settings = app.SETTINGS.read_text() if app.SETTINGS.exists() else None
-        app._agent_sleep = lambda s: None
-        app._agent_client = lambda: "CLIENT"
+        studio.services.agent.loop._agent_sleep = lambda s: None
+        studio.services.agent.loop._agent_client = lambda: "CLIENT"
         def make(client, session):
             self.sessions.append((client, session))
             if self.client is not None:                     # a real Adapter on a FakeClient, with the run's session label
                 self.adapter = app.Adapter(self.client, session)
             return self.adapter
-        app._agent_adapter = make
-        app._agent_model = self.model
+        studio.services.agent.loop._agent_adapter = make
+        studio.services.agent.loop._agent_model = self.model
         studio.services.engines.ensure_engine = lambda mode, m, **kw: self.engines.append((mode, m["id"]))
-        app._agent_engine_current = lambda mode, m: mode in self.current
+        studio.services.agent.loop._agent_engine_current = lambda mode, m: mode in self.current
         studio.services.models.model_installed = lambda m: True
-        app.cua_status = lambda: dict(CUA_OK)
+        studio.services.agent.cua.cua_status = lambda: dict(CUA_OK)
         app._cua_cache.clear()
         app._cua_perm.clear()
         s = app.load_settings()
@@ -3017,7 +3022,7 @@ def limits_end_with_a_partial_answer():
         clock[0] += 400
         return tc("note", text="x")
     with Env(FakeAdapter(view), Model(note, note, note, tc("done", answer="best so far")), max_minutes=15) as e:
-        app._agent_now = lambda: clock[0]
+        studio.services.agent.loop._agent_now = lambda: clock[0]
         e.start()
         e.finish()
         assert len(e.model.calls) == 4 and "You have reached the time limit." in e.model.text(3)
@@ -3096,7 +3101,7 @@ def note_field_not_in_gate_or_title():
     def spy(name, args, facts, ctx):
         gated.append(dict(args))
         return real(name, args, facts, ctx)
-    app.gate = spy
+    studio.security.agent_gate.gate = spy
     try:
         with Env(ad, Model(tc("click", ref="e1", note="Zeta Widget costs $42 secret-note-text"), tc("done", answer="ok"))) as e:
             e.start()
@@ -3111,7 +3116,7 @@ def note_field_not_in_gate_or_title():
             blob = json.dumps([x for x in e.run_.events if x["type"] in ("step", "approval")])
             assert blob.count("secret-note-text") == 1 and e.ev("step")[0]["note"].startswith("Zeta")       # only the step event's note field
     finally:
-        app.gate = real
+        studio.security.agent_gate.gate = real
 
 
 @check
@@ -3154,7 +3159,7 @@ def time_limit():
         clock[0] += 400
         return tc("note", text="x")
     with Env(FakeAdapter(), Model(*[note] * 6), max_minutes=15) as e:
-        app._agent_now = lambda: clock[0]
+        studio.services.agent.loop._agent_now = lambda: clock[0]
         e.start()
         e.finish()
         assert len(e.model.calls) == 4, len(e.model.calls)                       # 0, 400, 800 s in; at 1200 s it stops (+1 wrap-up, no answer)
@@ -3163,7 +3168,7 @@ def time_limit():
     clock = [1000.0]
     ad = FakeAdapter(fview(("e1", "button", "Buy")))
     with Env(ad, Model(tc("click", ref="e1"), tc("done", answer="ok")), max_minutes=1) as e:
-        app._agent_now = lambda: clock[0]
+        studio.services.agent.loop._agent_now = lambda: clock[0]
         e.start()
         e.status("waiting")
         clock[0] += 3600
@@ -3390,10 +3395,10 @@ def permissions_are_checked_once_and_block_runs():
     with Env(FakeAdapter(), Model(tc("done", answer="ok"), tc("done", answer="ok"))) as e:
         def no_daemon():
             raise AssertionError("the status route must never start CuaDriver")
-        app._agent_client = no_daemon
+        studio.services.agent.loop._agent_client = no_daemon
         assert e.c.get("/api/agent/status").json()["permissions"] == both(None, None)
         cl = PermClient(scr=False)
-        app._agent_client = lambda: cl
+        studio.services.agent.loop._agent_client = lambda: cl
         # the first run looks once (with the daemon it starts), finds Screen Recording missing and ends with the message
         e.start()
         e.finish()
@@ -3426,11 +3431,11 @@ def run_is_refused_until_ready():
         studio.services.models.model_installed = lambda m: False
         assert "Download" in post().json()["detail"]
         studio.services.models.model_installed = lambda m: True
-        app.cua_status = lambda: {"installed": False, "version": None, "ok_version": False, "telemetry": None}
+        studio.services.agent.cua.cua_status = lambda: {"installed": False, "version": None, "ok_version": False, "telemetry": None}
         assert "CuaDriver" in post().json()["detail"]
-        app.cua_status = lambda: {"installed": True, "version": "0.28.1", "ok_version": False, "telemetry": True}
+        studio.services.agent.cua.cua_status = lambda: {"installed": True, "version": "0.28.1", "ok_version": False, "telemetry": True}
         assert "0.28.2" in post().json()["detail"]
-        app.cua_status = lambda: dict(CUA_OK)
+        studio.services.agent.cua.cua_status = lambda: dict(CUA_OK)
         s = app.load_settings(); s["agent"]["enabled"] = False; app.save_settings(s)
         assert post().status_code == 409
         assert e.model.calls == [] and e.sessions == [] and not app.agent_lock.locked()
@@ -3575,7 +3580,7 @@ def profile_crash_flag_repaired_before_prepare():
     (prof / "Default").mkdir(parents=True)
     prefs = prof / "Default" / "Preferences"
     prefs.write_text(json.dumps({"profile": {"exit_type": "Crashed", "exited_cleanly": False, "name": "Me"}, "other": [1, 2]}))
-    app.AGENT_PROFILE = prof
+    studio.services.agent.loop.AGENT_PROFILE = prof
     try:
         seen = []
         c, a = web_adapter(browser_prepare=lambda args: (seen.append(json.loads(prefs.read_text())["profile"]["exit_type"]), _tr(_fx("browser_prepare")))[1])
@@ -3603,7 +3608,7 @@ def profile_crash_flag_repaired_before_prepare():
             app.subprocess.run = orig
         assert json.loads(prefs.read_text())["profile"]["exit_type"] == "Crashed"
     finally:
-        app.AGENT_PROFILE = real
+        studio.services.agent.loop.AGENT_PROFILE = real
 
 
 @check
@@ -3663,7 +3668,7 @@ def profile_downloads_always_ask():
     (prof / "Default").mkdir(parents=True)
     prefs = prof / "Default" / "Preferences"
     prefs.write_text(json.dumps({"profile": {"exit_type": "Normal", "exited_cleanly": True}, "download": {"prompt_for_download": False, "x": 1}}))
-    app.AGENT_PROFILE = prof
+    studio.services.agent.loop.AGENT_PROFILE = prof
     try:
         app._repair_agent_profile()
         d = json.loads(prefs.read_text())
@@ -3683,7 +3688,7 @@ def profile_downloads_always_ask():
             app.subprocess.run = orig
         assert json.loads(prefs.read_text())["download"]["prompt_for_download"] is False
     finally:
-        app.AGENT_PROFILE = real
+        studio.services.agent.loop.AGENT_PROFILE = real
 
 
 def _quality(by_window):
@@ -3725,7 +3730,7 @@ def profile_reset_refused_while_running():
     (prof / "Default").mkdir(parents=True)
     (prof / "Default" / "Cookies").write_text("x")
     (TMP / "Profiles" / "other").mkdir()
-    app.AGENT_PROFILE = prof
+    studio.services.agent.loop.AGENT_PROFILE = prof
     c = TestClient(app.app, base_url="http://127.0.0.1:7860")
     try:
         app.agent_lock.acquire()
@@ -3739,14 +3744,14 @@ def profile_reset_refused_while_running():
         # a Chrome still using the profile (a run just ended, or another Local Studio): refused, nothing deleted
         (prof / "Default").mkdir(parents=True)
         real_use = app._agent_profile_in_use
-        app._agent_profile_in_use = lambda: True
+        studio.services.agent.loop._agent_profile_in_use = lambda: True
         try:
             r = c.post("/api/agent/profile/reset")
             assert r.status_code == 409 and prof.exists() and "browser" in r.json()["detail"], r.text
         finally:
-            app._agent_profile_in_use = real_use
+            studio.services.agent.loop._agent_profile_in_use = real_use
     finally:
-        app.AGENT_PROFILE = real
+        studio.services.agent.loop.AGENT_PROFILE = real
 
 
 @check
@@ -4012,7 +4017,7 @@ def delete_waits_for_the_thread():
 def cua_status_is_cached_and_grant_runs_once():
     import threading as th
     calls, real = [], app.cua_status
-    app.cua_status = lambda: (calls.append(1), dict(CUA_OK))[1]
+    studio.services.agent.cua.cua_status = lambda: (calls.append(1), dict(CUA_OK))[1]
     app._cua_cache.clear()
     c = TestClient(app.app, base_url="http://127.0.0.1:7860")
     try:
@@ -4023,7 +4028,7 @@ def cua_status_is_cached_and_grant_runs_once():
         c.get("/api/agent/status")
         assert len(calls) == 2
     finally:
-        app.cua_status = real
+        studio.services.agent.cua.cua_status = real
         app._cua_cache.clear()
     if app._cua_grant is not None:
         app._cua_grant.join(5)
@@ -4125,7 +4130,7 @@ def _aref(v, index):
 
 def _opened(name="Notes", **kw):
     c, a = app_client(**kw)
-    app._agent_sleep = lambda s: SLEPT.append(s)
+    studio.services.agent.loop._agent_sleep = lambda s: SLEPT.append(s)
     SLEPT.clear()
     assert not a.execute("open_app", {"name": name}).startswith("Error")
     return c, a, a.observe()
@@ -4134,7 +4139,7 @@ def _opened(name="Notes", **kw):
 @check
 def open_app_binds_window():
     c, a = app_client()
-    app._agent_sleep = lambda s: SLEPT.append(s)
+    studio.services.agent.loop._agent_sleep = lambda s: SLEPT.append(s)
     SLEPT.clear()
     out = a.execute("open_app", {"name": "notes"})                                 # any case
     assert out.startswith("Opened Notes") and not out.startswith("Error"), out
@@ -4298,7 +4303,7 @@ def mixed_client():
     w, app_wins = web_client().script, c.script["list_windows"]
     c.script.update({k: v for k, v in w.items() if k not in ("list_windows", "bring_to_front", "end_session")})
     c.script["list_windows"] = lambda a: GOOD_WIN if a["pid"] == 47601 else app_wins(a)
-    app._agent_sleep = lambda s: SLEPT.append(s)
+    studio.services.agent.loop._agent_sleep = lambda s: SLEPT.append(s)
     return c, app.Adapter(c, "ls-abc123")
 
 
@@ -4376,7 +4381,7 @@ def app_stale_snapshot_rebinds_or_errors():
     # the app quit: observe raises McpError for the loop to turn into a line, execute never does
     c4.script["list_windows"] = _tr({"windows": []})
     c4.script["get_window_state"] = _tr({"status": "error"}, ok=False, text="no such window")
-    app._agent_sleep = lambda s: None
+    studio.services.agent.loop._agent_sleep = lambda s: None
     try:
         a4.observe()
         raise AssertionError("observe should raise")
@@ -4991,27 +4996,27 @@ def web_search_reads_organic_results_and_honors_domain():
     <a class="result__snippet">Current <b>Mac</b> lineup.</a>
     <a class="result__a" href="https://unrelated.example/">Unrelated</a><a class="result__snippet">Other</a>'''
     seen = []
-    app._fetch_public_web = lambda url: (seen.append(url) or url, "text/html", html)
+    studio.services.web._fetch_public_web = lambda url: (seen.append(url) or url, "text/html", html)
     try:
         result = app._chat_read_tool("web_search", {"query": "site:apple.com Mac lineup"})
         assert result["results"] == [{"url": "https://www.apple.com/mac/", "title": "Mac & Apple", "snippet": "Current Mac lineup."}], result
         assert "html.duckduckgo.com/html/?q=" in seen[0] and "site%3Aapple.com" in seen[0]
-        app._fetch_public_web = lambda url: (url, "text/html", "<form>Verify you are human</form>")
+        studio.services.web._fetch_public_web = lambda url: (url, "text/html", "<form>Verify you are human</form>")
         assert app._chat_read_tool("web_search", {"query": "Mac"})["verified"] is False
-    finally: app._fetch_public_web = real
+    finally: studio.services.web._fetch_public_web = real
 
 
 @check
 def web_page_evidence_keeps_publication_dates_and_bounds_prompt_size():
     real = app._fetch_public_web
     html = '<title>Release</title><meta property="article:published_time" content="2026-10-16"><header>Published October 16, 2026</header><nav>Ignore navigation</nav><article>' + 'verified source facts ' * 1000 + '</article>'
-    app._fetch_public_web = lambda url: (url, "text/html", html)
+    studio.services.web._fetch_public_web = lambda url: (url, "text/html", html)
     try:
         result = app._chat_read_tool("read_webpage", {"url": "https://example.com/release"})
         assert result["published_at"] == "2026-10-16" and result["title"] == "Release"
         assert "Published October 16, 2026" in result["text"] and "Ignore navigation" not in result["text"]
         assert result["truncated"] and len(result["text"]) <= 6000
-    finally: app._fetch_public_web = real
+    finally: studio.services.web._fetch_public_web = real
 
 
 @check
