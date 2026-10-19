@@ -14,7 +14,8 @@ This file provides repository instructions and architectural guidance for coding
 
 - `app.py`: the entrypoint `uvicorn app:app` loads (`APP_VERSION`, `from studio.main import app`, a live `__getattr__` for the suites).
 - `studio/`: the FastAPI backend split by concern: `config.py`, `infra/`, `security/` (LocalOnly, fences, gates), `storage/` (settings, flags, memory, backups, chats), `services/` (models, engines, harness, agent, search, terminal, ...), `api/` (one APIRouter per area), `main.py` (builds the app). Imports flow down that list only. See CLAUDE.md, Backend layout.
-- `index.html`: Single-page vanilla JS + CSS frontend (~4,100 lines).
+- `index.html`: the page's markup and CSS, loading `frontend/main.mjs` as a module.
+- `frontend/`: the UI's vanilla JS ES modules by concern (`core/`, `ui/`, `chat/`, `code/`, `images/`, `library/`, `settings/`, `search/`, `agent/`, boot in `main.mjs`). Modules import directly from modules that run before them and through `frontend/modules.mjs` for later ones (keeps the start-up order); names several modules assign live in `createStore` stores (`listState.current`, ...); names inline handlers call are set on `window` in `frontend/globals.mjs`. See CLAUDE.md, UI modules.
 - `search.py` + `search-requirements.txt`: On-device semantic & lexical file search service (~1,410 lines, EmbeddingGemma 2 on MLX, port 8083).
 - `catalog.json`: Curated MLX, GGUF, and mflux models.
 - `setup.sh` / `install.sh` / `start.sh` / `stop.sh` / `uninstall.sh`: zsh lifecycle scripts.
@@ -70,7 +71,7 @@ Only one heavy LLM engine process runs at a time (`ensure_engine(mode, model)` u
 - Process match patterns in `ENGINES` (`studio/config.py`) and `stop.sh` must stay synchronized.
 - Never stop or restart engines against the user's live `LOCAL_STUDIO_HOME` during tests; isolate dev servers on a separate port (e.g. `7861`) and temporary `LOCAL_STUDIO_HOME`.
 
-### 3. Chat Agent Harness (`studio/services/harness.py`, `studio/security/`, `studio/api/chat.py` & `index.html`)
+### 3. Chat Agent Harness (`studio/services/harness.py`, `studio/security/`, `studio/api/chat.py` & `frontend/chat/`)
 `POST /api/chat` implements a multi-round native tool loop (`CHAT_TOOLS`, up to `CHAT_TOOL_ROUNDS = 12`):
 - **Read-Only Tools (`CHAT_READ_TOOLS`)**:
   - `get_current_datetime`, `web_search`, `read_webpage`, `search_files`, `read_file`, `list_directory`, `find_files`, `grep_files`, `code_outline`, `git_status`, `git_diff`, `delegate_task`, `manage_process`, `todo_write`, `memory_store`, `memory_recall`.
@@ -88,9 +89,9 @@ Only one heavy LLM engine process runs at a time (`ensure_engine(mode, model)` u
   - `_parse_harness_args()` and `_normalize_harness_args()` repair malformed JSON tool arguments and map common parameter aliases (`filepath` → `path`, `old_str` → `old_text`, `cmd` → `command`, `run_subagent` → `delegate_task`, etc.).
   - `_chat_fit_context()` masks older tool outputs in multi-round turns and preserves a structured `<conversation_checkpoint>` summary when evicting older turns so the 32k context window does not lose earlier context.
   - Workspace path isolation uses `contextvars.ContextVar` (`_chat_workspace`) rather than mutating process-wide `os.getcwd()`.
-- **Step-by-Step Per-Round UI (`index.html`)**:
+- **Step-by-Step Per-Round UI (`frontend/chat/`)**:
   - Multi-round turns record each completed tool round in `bot.rounds` (`{thinking, thoughtMs, text, tools}`) and render `.chround` blocks chronologically so each round shows its own collapsible `Thought for Xs · N words`, intermediate note (`.chround-note`), live streaming output (`x_tool_output`), turn checkpoint rollback (`x_checkpoint`), and expandable tool steps (`.chattoolsteps`) before the final answer.
-- **Code view (`#v-code`, `index.html`)**:
+- **Code view (`#v-code`, `frontend/code/`)**:
   - Three panes: explorer (Files / Changes / Outline), editor with Code/Diff modes plus a terminal, and the agent chat. `syncChatDock()` moves the single chat UI (`#chatScroll`, `.welcome`, `#composerWrap`) between `#v-chat` and `#codeChatDock`; use `chatHost()` rather than assuming `#v-chat`.
   - Backed by `GET /api/workspace/info|file|outline`, `POST /api/workspace/file` (Save via `write_file`: backup + diagnostics), `POST /api/workspace/settings`, and `/api/processes`. Refreshes never overwrite unsaved editor changes (`codeDirty()`).
   - The terminal is a real login zsh on a pty (`_Terminal`, `/api/terminals*`: SSE output with absolute offsets so a reload reattaches; an idle stream ends after 3 s so shutdown never waits on it and the page reconnects; input/resize/delete; max 8; closed at exit), drawn with xterm.js loaded on first use from jsDelivr with SRI hashes (`XTERM_FILES`).
@@ -107,7 +108,7 @@ Only one heavy LLM engine process runs at a time (`ensure_engine(mode, model)` u
 - Never skip, weaken, or delete a failing test in `macos/check_*.py`; fix the implementation code instead.
 - A name rebound at run time (a suite's patch or a `global`) is read as `owner.X` in other modules, never via `from owner import X`; suites patch the defining module (`studio.services.engines.ensure_engine = fake`), and `macos/patch_guard.py` rejects `app.X = ...` for names `app.py` does not define. `check_app.py` enforces this and compares route/SSE/patch-point contracts in `macos/fixtures/`.
 - Behavior changes go behind flags in `data/settings.json` that default to the old behavior (`studio/storage/flags.py`).
-- `node macos/check_ui.js` only catches start-up errors against a stub DOM (whose `window` has no `addEventListener`); mismatched selectors, `data-*` attributes or response fields between HTML, JS and `app.py` pass it silently. Check UI changes in the `agent-ui-dev` dev server from `.claude/launch.json` (port 7861, `LOCAL_STUDIO_HOME=build/agent-ui-state`), with the Code view pointed at a scratch folder, not the checkout. That server shares engine ports with the live app, so check agent turns with synthetic messages rendered client-side, never a real chat.
+- `node macos/check_ui.js` only loads the UI module graph against a stub DOM and catches start-up errors (TDZ, missing exports) (whose `window` has no `addEventListener`); mismatched selectors, `data-*` attributes or response fields between HTML, JS and the backend pass it silently. Check UI changes in the `agent-ui-dev` dev server from `.claude/launch.json` (port 7861, `LOCAL_STUDIO_HOME=build/agent-ui-state`), with the Code view pointed at a scratch folder, not the checkout. That server shares engine ports with the live app, so check agent turns with synthetic messages rendered client-side (`window.LS.current`, `LS.renderThread()`, or a stubbed `fetch` for `POST /api/chat`), never a real chat.
 - Theme colors come only from the `:root` tokens (keep light, `data-theme="dark"` and the `prefers-color-scheme` copy in sync); `--brand` is the terracotta accent, `--serif` is for Chat replies and the greeting only.
 
 ---

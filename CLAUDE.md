@@ -14,7 +14,8 @@ semantic file search, and text-to-image via mflux. It ships as a self-contained 
   `__getattr__` so the check suites can read any backend name as `app.X`)
 - `studio/`: the FastAPI backend (~8,400 lines), split by concern; see Backend layout below
 - `requirements-app.txt`: exact pins of the backend's Python packages
-- `index.html`: the entire single-page UI (~4,100 lines; inline CSS + one inline `<script>`; vanilla JS, `marked` from a CDN)
+- `index.html`: the page's markup and CSS (~1,240 lines; `marked` from a CDN) and `<script type="module" src="frontend/main.mjs">`
+- `frontend/`: the UI's code, vanilla JS ES modules by concern (see UI modules below); served read-only from `ROOT` at `/frontend/`
 - `catalog.json`: curated chat and image models
 - `search.py` + `search-requirements.txt`: the file-search service (~1,410 lines; EmbeddingGemma 2 on MLX) and its dependencies
 - `setup.sh` / `install.sh` / `start.sh` / `stop.sh` / `uninstall.sh`: zsh lifecycle scripts
@@ -66,12 +67,33 @@ engine ports and process patterns are shared. `.claude/launch.json` defines such
 harness workspace is the checkout itself, so point the Code view at a scratch folder under
 `build/agent-ui-state/` before testing Save, the terminal or agent edits.
 
-`check_ui.js` only runs the script against a stub DOM to catch start-up errors: a selector, `data-*`
-attribute or response field that HTML, JS and the backend disagree on passes it silently, so check UI
-changes in the dev server. The stub `window` has no `addEventListener` (use `window.on…` properties), and code
-that runs at start-up must not touch a `let` declared further down (even `typeof` throws in its dead zone).
-The dev server shares engine ports with the running app: check agent turns by rendering synthetic messages
-into `current` from the console, never by sending a real chat.
+`check_ui.js` only loads the UI's module graph (`frontend/main.mjs` and its imports) against a stub DOM to catch
+start-up errors (a temporal-dead-zone access, a missing export): a selector, `data-*` attribute or response field that
+HTML, JS and the backend disagree on passes it silently, so check UI changes in the dev server. The stub `window` has
+no `addEventListener` (use `window.on…` properties), and code that runs at start-up must not touch a `let` declared
+further down (even `typeof` throws in its dead zone). The dev server shares engine ports with the running app: check
+agent turns from the console with the `window.LS` handle (`LS.current.messages.push(...)`, then `LS.renderThread()`),
+or stub `fetch` for `POST /api/chat` with a synthetic SSE stream; never send a real chat.
+
+### UI modules (`frontend/`)
+
+Split from `index.html`'s inline script in the refactor's P2 (`docs/refactor-progress.json`), moved, not redesigned:
+`core/` (`util`: `$`, `esc`, `store`, `api`/`jpost`, `toast`; `markdown`: the allowlist sanitizer; `store`: `createStore`),
+`ui/` (`theme`, `views`, `engine`), `chat/` (`list`, `thread`, `attachments`, `composer`, `live`, `computer`),
+`images/`, `code/` (`editor`, `terminal`), `library/`, `settings/` (`settings`, `agent`), `search/`, `agent/`
+(`helpers`: pure, plain node can import it; `state`; `agent`), and `main.mjs` (boot only).
+
+- **Order.** Modules run in the order their code had: `frontend/modules.mjs` lists them that way. A module imports
+  directly from modules that run before it, and through `modules.mjs` for anything later (a direct import would make
+  that module run first and change the order of start-up statements). Functions can be called across modules at any
+  time; a `let`/`const` from a later module is in its dead zone until that module has run.
+- **Stores.** An ES module cannot assign a binding it imports, so a name more than one module assigns lives in its
+  module's store (`createStore`, `core/store.mjs`): `listState` (`current`, `streaming`, `ctxWindow`, `codeWorkspace`,
+  `chRun`), `threadState` (`stick`, `sysRam`), `attachmentsState` (`pending`), `libraryState` (`runningName`,
+  `runningMode`), `searchState` (`noFilesOnce`). Write `listState.current = chat`, never a local copy. Stores notify
+  subscribers on writes; nothing subscribes yet.
+- **Globals.** Module code is not global: anything an inline handler or an `innerHTML` template calls by name must be
+  set on `window` in `frontend/globals.mjs` (today only `showView`). Prefer delegated listeners over new inline handlers.
 
 The look is a warm palette driven by the tokens in `:root` (light, `data-theme="dark"` and the
 `prefers-color-scheme` copy must stay in sync): `--brand` (terracotta) marks primary actions, running state and
@@ -230,7 +252,7 @@ every route and static file) rejects requests with a non-loopback `Host`, a fore
   and preserves a `<conversation_checkpoint>` summary when evicting older turns; `POST /api/chat/compact`
   and `/compact` compact long conversations on demand. The workspace is a `contextvars.ContextVar`
   (`_chat_workspace`, `_in_workspace()`), never `os.chdir`.
-- **UI & Composer (`index.html`).** Keeps each completed round in `bot.rounds` (`{thinking, thoughtMs, text, tools}`)
+- **UI & Composer (`frontend/chat/`).** Keeps each completed round in `bot.rounds` (`{thinking, thoughtMs, text, tools}`)
   and renders `.chround` blocks in order (thinking → `.chround-note` → `.chattoolsteps` of
   `<details class="chattoolstep">`, with Undo when a `backup_id` is present and "Revert turn (N)" when `bot.checkpoint`
   is present), then the final answer. A reply keeps running while the user opens other chats or views: `liveGen`
@@ -300,7 +322,7 @@ holds `agent_lock`, which `/api/chat`, `/api/image`, `/api/engine/*` and `/api/b
   and downloads are set to prompt, into `STATE/data/agent/downloads`.
 - **Routes.** `/api/agent/*` (status, enable, settings, permissions, telemetry/disable, run, runs/{id}/
   events|reply|stop|takeover|resume, runs, shots, profile/reset, memory, undo). `LocalOnly` guards them with every other
-  route. Inline task cards and Settings → Computer access are in `index.html`; the old Agent navigation entry stays hidden.
+  route. Inline task cards and Settings → Computer access are in `frontend/chat/computer.mjs` and `frontend/settings/agent.mjs`; the old Agent navigation entry stays hidden.
 - **Document reads.** My files requests search/read tools rather than rewriting the user's message
   with a fixed excerpt set. `/text/{file_id}` reads the actual indexed PDF/image through bundled
   `Contents/MacOS/DocumentReader` (`macos/document_reader.swift`), using PDFKit and on-device Vision
@@ -343,7 +365,7 @@ runs `setup.sh --migrate` (copies data from `~/local-studio`), then `start.sh`, 
 is on. `setup.sh` talks to the app through a line protocol on stdout (`@check`, `@step`, `@log`,
 `@done`, `@error`), so keep that format intact when editing it. `macos/build.sh` copies a fixed list
 of files into the bundle (`app.py index.html catalog.json requirements-app.txt search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh`)
-plus `studio/` (rsync, never `__pycache__`; the build fails if the bundle contains bytecode).
+plus `frontend/*.mjs` and `studio/` (rsync, never `__pycache__`; the build fails if the bundle contains bytecode).
 Any new runtime file must be added to that list.
 
 ## Versioning and releases

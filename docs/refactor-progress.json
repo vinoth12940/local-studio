@@ -356,7 +356,8 @@
    "check_ui.js",
    "dev server spot checks"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: 023ca37 + ea6f069: frontend/core/{util,markdown,store}.mjs; markdown sanitizer moved verbatim."
  },
  {
   "id": "P2.chat",
@@ -366,7 +367,8 @@
    "check_ui.js",
    "synthetic turn render, liveGen switch"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: 95e0587: frontend/chat/{list,thread,attachments,composer,live,computer}.mjs. Dev server (fetch for POST /api/chat stubbed with synthetic SSE, no engine): send, Stop, a reply running while another chat is open + reattach (liveGen), 12-round synthetic turn (12 .chround, 12 steps), x_engine switch shows Loading..., approvals 1 (allow) / Esc (deny) with real keys, Shift+Tab in Code view, /compact (10 -> 5 messages), Undo restored a real backup, Revert turn posts turn_id and marks the turn."
  },
  {
   "id": "P2.code",
@@ -376,7 +378,8 @@
    "check_ui.js",
    "Save/Diff/Undo, terminal reload reattach"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: b1b68cc: frontend/code/{editor,terminal}.mjs. Dev server on scratch ws-demo: open, edit, Save (write_file), Diff; terminal reattached after reload."
  },
  {
   "id": "P2.settings-ui",
@@ -386,7 +389,8 @@
    "check_ui.js",
    "settings, dark mode, 375 px"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: aaf1a57, 69efda8, fcfdcf4, a99cda5, 917b709: settings/{settings,agent}, search, library, ui/{theme,views,engine}, images, agent/{helpers,state,agent}. Dev server: all views, Settings sections, light/dark tokens switch, 375 px has no horizontal scroll and matches the pre-module layout. Stores are plain createStore objects; nothing subscribes yet (rendering unchanged)."
  },
  {
   "id": "P3.security-doc",
