@@ -378,6 +378,25 @@ def rel(frm, to):
     return r if r.startswith(".") else "./" + r
 
 
+STORE_JS = """// One store per concern (refactor P2). Names that more than one module assigns live in a store, because an ES module
+// cannot assign a binding it imports. A store is a plain object whose property writes notify its subscribers; nothing
+// subscribes yet, so rendering works exactly as before (the P2 split moves code, it does not redesign rendering).
+export function createStore(initial) {
+  const subs = new Set();
+  const subscribe = (fn) => { subs.add(fn); return () => subs.delete(fn); };
+  return new Proxy({ ...initial }, {
+    get: (t, k) => (k === "subscribe" ? subscribe : t[k]),
+    set: (t, k, v) => {
+      const old = t[k];
+      t[k] = v;
+      if (old !== v) for (const fn of subs) fn(k, v, old);
+      return true;
+    },
+  });
+}
+"""
+
+
 def _store_name(module):
     return module.split("/")[-1] + "State"
 
@@ -435,7 +454,7 @@ def generate(n, report=False):
         out = f"{kind} {', '.join(keep)}; " if keep else ""
         if obj not in created:
             created.add(obj)
-            out += "const " + obj + " = { " + ", ".join(f"{k}: {v}" for k, v in props) + " };"
+            out += "const " + obj + " = createStore({ " + ", ".join(f"{k}: {v}" for k, v in props) + " });"
         else:
             out += " ".join(f"{obj}.{k} = {v};" for k, v in props)
         semi = node.end_byte
@@ -471,6 +490,10 @@ def generate(n, report=False):
         if module == "main":
             head = ["// The UI's entry point: index.html loads it as a module. What is not split into frontend/ yet still lives here,",
                     "// in its original order (the refactor's P2 split, docs/refactor-progress.json).", 'import "./globals.mjs";']
+        if module in stored.values() and module != "main":
+            head.append(_import_line(["createStore"], rel(path(module), "frontend/core/store.mjs")))
+        elif module == "main" and "main" in stored.values():
+            head.append('import { createStore } from "./core/store.mjs";')
         # names of modules that run earlier: imported directly (they have run already, so the order does not change);
         # names of modules that run later: through the hub, which keeps the original order
         back = sorted((o for o in imports[module] if o != "main" and module != "main" and rank[o] < rank[module]), key=lambda o: rank[o])
@@ -512,6 +535,7 @@ def generate(n, report=False):
     if rest_names:                                                 # not split out yet: main.mjs, which already runs last
         hub.append("export {\n  " + _wrap(rest_names) + "\n} from \"./main.mjs\";")
     files["frontend/modules.mjs"] = "\n".join(hub) + "\n"
+    files["frontend/core/store.mjs"] = STORE_JS
     alias = lambda m: m.replace("/", "_")                                            # noqa: E731
     g = ["// The page's globals, set in one place (refactor P2). Inline handlers and innerHTML templates call these by name, and",
          "// window.LS is a console handle for debugging (CLAUDE.md: render synthetic turns into LS.current, then LS.renderThread()).",
@@ -588,7 +612,7 @@ def _checks(an, off, units, modules, owner, stored, dep_order, files):
     for p, text in files.items():
         if p.endswith(".mjs"):
             g = Analysis(text)
-            extra = sorted({r.name for r in g.refs if r.decl is None} - baseline - ({"Proxy"} if p.endswith("globals.mjs") else set()))
+            extra = sorted({r.name for r in g.refs if r.decl is None} - baseline - ({"Proxy", "Set"} if p.endswith(("globals.mjs", "core/store.mjs")) else set()))
             if extra:
                 problems.append(f"free: {p} uses names nothing declares or imports: {extra}")
     return problems

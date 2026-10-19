@@ -1,4 +1,5 @@
 // chat/thread.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { createStore } from "../core/store.mjs";
 import { $, esc, icon, jpost, toast } from "../core/util.mjs";
 import { agNoImages, md } from "../core/markdown.mjs";
 import { chatHost, showView, view } from "../ui/views.mjs";
@@ -61,7 +62,7 @@ function renderThread() {
   renderHistory(); updateSend(); updateCtx();
 }
 // First run: no chat model yet — recommend one that fits this Mac's memory.
-const threadState = { sysRam: 0 };
+const threadState = createStore({ sysRam: 0 });
 function renderOnboarding(w) {
   $("chatScroll").style.display = "none";
   const wrap = $("composerWrap"); chatHost().appendChild(wrap); wrap.style.display = "none";

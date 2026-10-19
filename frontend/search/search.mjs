@@ -1,9 +1,10 @@
 // search/search.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { createStore } from "../core/store.mjs";
 import { $, api, confirmBox, esc, human, icon, jpost, store, toast } from "../core/util.mjs";
 import { view } from "../ui/views.mjs";
 
 // ---------------- search
-let sr = null, srTimer = 0, srSeq = 0, useFiles = store.get("useFiles", false); const searchState = { noFilesOnce: false };
+let sr = null, srTimer = 0, srSeq = 0, useFiles = store.get("useFiles", false); const searchState = createStore({ noFilesOnce: false });
 function syncFiles() {
   const can = !!(sr && sr.enabled && sr.running && !sr.error);
   $("filesPill").classList.toggle("on", useFiles && can);

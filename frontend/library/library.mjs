@@ -1,4 +1,5 @@
 // library/library.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { createStore } from "../core/store.mjs";
 import { $, api, confirmBox, esc, human, icon, jpost, toast } from "../core/util.mjs";
 import { closeMenus, showView, view } from "../ui/views.mjs";
 import { engineState, poll } from "../ui/engine.mjs";
@@ -8,7 +9,7 @@ import { syncThink } from "../chat/composer.mjs";
 import { agRenderModels } from "../modules.mjs";
 
 // ---------------- library
-let lib = null, libTab = "chat"; const libraryState = { runningName: null, runningMode: null };
+let lib = null, libTab = "chat"; const libraryState = createStore({ runningName: null, runningMode: null });
 const activeChat = () => lib?.chat.find((m) => m.active);
 const activeImage = () => lib?.image.find((m) => m.active);
 function updateHeader() {

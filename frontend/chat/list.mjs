@@ -1,10 +1,11 @@
 // chat/list.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { createStore } from "../core/store.mjs";
 import { $, api, confirmBox, esc, icon, jpost, newId, store, toast } from "../core/util.mjs";
 import { showView, syncChatDock, view } from "../ui/views.mjs";
 import { activeCodeWs, chDetach, chResume, liveGen, loadCodeView, renderThread, scrollBottom } from "../modules.mjs";
 
 // ---------------- chats
-let chats = []; const listState = { current: null, streaming: null, ctxWindow: 32768 };
+let chats = []; const listState = createStore({ current: null, streaming: null, ctxWindow: 32768 });
 listState.codeWorkspace = store.get("code_workspace", null);
 listState.chRun = null;          // the task this chat started in Agent mode: { chat, msg, starting, s (run state, see agFresh), el, ui }
 const chLive = () => !!(listState.chRun && (listState.chRun.starting || listState.chRun.s.live));

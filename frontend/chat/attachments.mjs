@@ -1,9 +1,10 @@
 // chat/attachments.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { createStore } from "../core/store.mjs";
 import { $, api, esc, icon, toast } from "../core/util.mjs";
 import { updateSend } from "../modules.mjs";
 
 // attachments
-const attachmentsState = { pending: [] };            // {key, name, busy, meta?, error?, preview?}
+const attachmentsState = createStore({ pending: [] });            // {key, name, busy, meta?, error?, preview?}
 const DOC_ICON = (n) => /\.(xlsx|xlsm|csv|tsv)$/i.test(n) ? "i-sheet" : "i-file";
 function attMeta(m) {
   if (m.kind === "image") return m.scanned ? `Scanned PDF · ${m.images.length} of ${m.pages} pages` : `Image · ${m.width}×${m.height}`;
