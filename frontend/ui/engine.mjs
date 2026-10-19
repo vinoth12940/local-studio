@@ -1,5 +1,7 @@
 // ui/engine.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import { $, activeChat, closeMenus, gib, jpost, mainState, toast, updateHeader, updateSend } from "../modules.mjs";
+import {
+  $, activeChat, closeMenus, gib, jpost, listState, mainState, toast, updateHeader, updateSend
+} from "../modules.mjs";
 
 // ---------------- engine status
 let health = null, metrics = null, engineState = "down";
@@ -31,7 +33,7 @@ async function poll() {
   if (health && engineState === "ready") {
     $("eDr").textContent = (health.drafter || "none").split("/").pop(); $("eMode").textContent = emode === "gguf" ? "llama.cpp" : (health.mode || "–");
     $("eCap").textContent = health.max_draft ?? "–"; $("eKv").textContent = health.kv_bits ? `${health.kv_bits}-bit` : "bf16";
-    mainState.ctxWindow = health.context_window || mainState.ctxWindow; $("ctxMax").textContent = `${Math.round(mainState.ctxWindow / 1024)}k`;
+    listState.ctxWindow = health.context_window || listState.ctxWindow; $("ctxMax").textContent = `${Math.round(listState.ctxWindow / 1024)}k`;
     $("eWarn").textContent = (health.warnings || []).map((w) => w.message || w).join(" ");
   }
   if (metrics) {

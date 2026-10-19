@@ -2,1267 +2,10 @@
 // in its original order (the refactor's P2 split, docs/refactor-progress.json).
 import "./globals.mjs";
 import {
-  $, agAnswerMd, agNoImages, api, chatHost, closeMenus, confirmBox, DEFAULT_MAX_TOKENS, engineState, esc, gib, human,
-  icon, jpost, md, newId, poll, showView, store, syncChatDock, toast, view
+  $, agAnswerMd, api, autosize, chDetach, chLive, closeMenus, compactCurrentChat, confirmBox, ctxUsage, engineState,
+  esc, fmtTok, gib, human, icon, jpost, listState, loadChats, newChat, newId, openChat, poll, renderThread, saveChat,
+  scrollBottom, send, showView, store, syncThink, threadState, toast, toggleMode, updateWorkspaceUI, view
 } from "./modules.mjs";
-
-// ---------------- chats
-let chats = [], current = null, streaming = null; const mainState = { ctxWindow: 32768 };
-let codeWorkspace = store.get("code_workspace", null);
-let chRun = null;          // the task this chat started in Agent mode: { chat, msg, starting, s (run state, see agFresh), el, ui }
-const chLive = () => !!(chRun && (chRun.starting || chRun.s.live));
-let thinking = store.get("think", true), effort = store.get("effort", "");
-async function loadChats() { try { chats = await api("/api/chats"); } catch { chats = []; } renderHistory(); }
-function groupOf(ts) {
-  const d = new Date(ts * 1000), now = new Date(), day = 864e5;
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  if (d >= start) return "Today"; if (d >= start - day) return "Yesterday"; if (d >= start - 7 * day) return "Previous 7 days"; if (d >= start - 30 * day) return "Previous 30 days"; return "Older";
-}
-function renderHistory() {
-  const q = $("search").value.trim().toLowerCase();
-  const list = chats.filter((c) => !q || c.title.toLowerCase().includes(q));
-  const h = $("history");
-  if (!list.length) { h.innerHTML = `<div class="hempty">${q ? "No matching chats" : "Your conversations will appear here."}</div>`; return; }
-  let html = "", last = "";
-  for (const c of list) {
-    const g = groupOf(c.updated);
-    if (g !== last) { html += `<div class="hgroup">${g}</div>`; last = g; }
-    const on = (view === "chat" || view === "code") && current && current.id === c.id;
-    const live = liveGen && liveGen.chat.id === c.id ? `<span class="hlive" title="Answering…"></span>` : "";
-    html += `<div class="hitem${on ? " on" : ""}" data-id="${c.id}">${live}<span class="t">${esc(c.title)}</span><span class="acts"><button data-act="rename" title="Rename">${icon("i-pen")}</button><button data-act="delete" title="Delete">${icon("i-trash")}</button></span></div>`;
-  }
-  h.innerHTML = html;
-}
-$("search").oninput = renderHistory;
-$("history").onclick = async (e) => {
-  const item = e.target.closest(".hitem"); if (!item) return;
-  const id = item.dataset.id, act = e.target.closest("button")?.dataset.act;
-  if (act === "delete") {
-    const c = chats.find((x) => x.id === id);
-    if (!(await confirmBox("Delete chat?", `“${c?.title}” will be permanently deleted.`))) return;
-    if (liveGen?.chat.id === id) { liveGen.chat.deleted = true; streaming?.abort(); }    // its reply must not save the chat again
-    await api(`/api/chats/${id}`, { method: "DELETE" });
-    if (current?.id === id) newChat();
-    loadChats(); return;
-  }
-  if (act === "rename") {
-    const t = item.querySelector(".t"), old = t.textContent;
-    t.outerHTML = `<input value="${esc(old)}">`;
-    const inp = item.querySelector("input"); inp.focus(); inp.select();
-    let finished = false;
-    const done = async (save) => { if (finished) return; finished = true; if (save && inp.value.trim() && inp.value !== old) { const c = await api(`/api/chats/${id}`); c.title = inp.value.trim(); await jpost(`/api/chats/${id}`, c, "PUT"); if (current?.id === id) current.title = c.title; if (liveGen?.chat.id === id) liveGen.chat.title = c.title; } loadChats(); };
-    inp.onkeydown = (ev) => { if (ev.key === "Enter") done(true); if (ev.key === "Escape") done(false); };
-    inp.onblur = () => done(true); return;
-  }
-  if (e.target.tagName === "INPUT") return;
-  await openChat(id);
-};
-async function openChat(id) {
-  let c;
-  if (liveGen && liveGen.chat.id === id) c = liveGen.chat;                               // still answering: the copy in memory is the live one
-  else { try { c = await api(`/api/chats/${id}`); } catch { return toast("Could not open chat"); } }
-  chDetach(); current = c;
-  if (c.workspace) { codeWorkspace = c.workspace; store.set("code_workspace", codeWorkspace); }
-  if (view !== "code") showView("chat");
-  else { syncChatDock(); renderThread(); loadCodeView(); }
-  scrollBottom(true);
-  chResume();
-}
-function newChat() {
-  chDetach();
-  const ws = view === "code" && activeCodeWs();
-  current = ws ? { id: newId(), title: "New coding task", workspace: ws, messages: [] } : null;
-  if (view !== "code") showView("chat");
-  else syncChatDock();
-  renderThread();
-}
-$("newChat").onclick = () => { chDetach(); current = null; showView("chat"); renderThread(); };
-document.addEventListener("keydown", (e) => { if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); newChat(); } });
-function updateWorkspaceUI() {
-  const ws = current?.workspace;
-  const pill = $("wsPill");
-  if (!pill) return;
-  const txt = $("wsTxt");
-  const clear = $("wsClear");
-  $("modeFoot").hidden = !ws; $("footTxt").hidden = !!ws;
-  const compactBtn = $("compactBtn");
-  if (compactBtn) compactBtn.style.display = (current?.messages?.length || 0) > 4 ? "" : "none";
-  if (ws) {
-    pill.classList.add("on");
-    const name = ws.split("/").filter(Boolean).pop() || ws;
-    if (txt) txt.textContent = name.length > 16 ? name.slice(0, 14) + "…" : name;
-    pill.title = `Active workspace: ${ws} (click to change, or × to clear)`;
-    if (clear) clear.style.display = "inline";
-  } else {
-    pill.classList.remove("on");
-    if (txt) txt.textContent = "Workspace";
-    pill.title = "Set active workspace folder for file & shell tools";
-    if (clear) clear.style.display = "none";
-  }
-}
-$("wsPill").onclick = async (e) => {
-  if (e.target.id === "wsClear" || e.target.closest("#wsClear")) {
-    if (current) {
-      delete current.workspace;
-      updateWorkspaceUI();
-      await saveChat(current);
-      toast("Workspace cleared");
-    }
-    return;
-  }
-  try {
-    const r = await jpost("/api/search/choose-folder");
-    if (r && r.path) {
-      if (!current) current = { id: newId(), title: "New chat", messages: [] };
-      current.workspace = r.path;
-      codeWorkspace = r.path;
-      store.set("code_workspace", r.path);
-      updateWorkspaceUI();
-      await saveChat(current);
-      if (view === "code") loadCodeView();
-      toast(`Workspace: ${r.path}`);
-    }
-  } catch (err) {
-    toast(err.message || "Could not choose folder");
-  }
-};
-async function saveChat(chat = current) {
-  if (!chat) return;
-  const msgs = chat.messages.map(({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources, agent_run, computerSetup, tool_steps, web_sources, plan, rounds, checkpoint }) => ({ role, content, reasoning, stats, thoughtSecs, error, attachments, finish, sources, agent_run, computerSetup, tool_steps, web_sources, plan, rounds, checkpoint }));
-  await jpost(`/api/chats/${chat.id}`, { title: chat.title, messages: msgs, ...(chat.workspace ? { workspace: chat.workspace } : {}) }, "PUT");
-  loadChats();
-}
-
-const CODE_STARTERS = [["i-book", "Explain this codebase", "Explain how this codebase is organized: the main modules, how they fit together, and where to start reading."], ["i-redo", "Fix failing tests", "Run the tests, find the first failure, and fix its root cause."], ["i-code", "Write tests for…", "Write tests for "], ["i-spark", "Add a feature…", "Add a feature that "]];
-const STARTERS = [["i-code", "Write code", "Write a Python script that finds duplicate photos in a folder"], ["i-book", "Explain", "Explain how speculative decoding keeps output identical"], ["i-pencil2", "Draft", "Draft a polite follow-up email after a job interview"], ["i-spark", "Brainstorm", "Brainstorm names for a privacy-first note-taking app"]];
-function renderThread() {
-  updateWorkspaceUI();
-  if (view === "code") codeUpdateStatus();
-  const host = chatHost();
-  const scroll = $("chatScroll"), wrap = $("composerWrap");
-  let w = document.querySelector(".welcome");
-  if (!current || !current.messages.length) {
-    scroll.style.display = "none";
-    if (!w) { w = document.createElement("div"); w.className = "welcome"; }
-    if (w.parentElement !== host) host.prepend(w);
-    const noModel = lib && !lib.chat.some((m) => m.installed);
-    if (noModel) { renderOnboarding(w); return; }
-    w.onclick = null; wrap.style.display = "";
-    const hr = new Date().getHours(), code = view === "code";
-    const heading = code ? "What should we build?" : hr < 5 ? "Working late?" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
-    if (wrap.parentElement === w && w.querySelector(".starters") && w.querySelector("h1")?.textContent === heading) { $("input").placeholder = view === "code" ? "Describe a change, or type /" : `Ask ${activeChat()?.name || "anything"}`; renderHistory(); return; }
-    const hadFocus = document.activeElement === $("input");
-    w.innerHTML = `<h1>${code ? "" : `<span class="wmark">${icon("i-logo")}</span>`}${heading}</h1>`;
-    if (code) w.insertAdjacentHTML("beforeend", `<p class="lead">Works in <b>${esc((activeCodeWs() || "").split("/").filter(Boolean).pop() || "your workspace")}</b>. Edits and commands ask before they run.</p>`);
-    w.appendChild(wrap);
-    if (hadFocus) $("input").focus();
-    const st = document.createElement("div"); st.className = "starters";
-    st.innerHTML = (code ? CODE_STARTERS : STARTERS).map(([ic, label, q]) => `<button data-q="${esc(q)}">${icon(ic)}${label}</button>`).join("");
-    w.appendChild(st);
-    st.onclick = (e) => {                                                                // code starters that end mid-sentence are filled in for the user to finish
-      const b = e.target.closest("button"); if (!b) return;
-      $("input").value = b.dataset.q; autosize();
-      if (b.dataset.q.endsWith(" ")) { $("input").focus(); $("input").selectionStart = $("input").value.length; } else send();
-    };
-    $("input").placeholder = view === "code" ? "Describe a change, or type /" : `Ask ${activeChat()?.name || "anything"}`;
-    showPerf(null); drawSpark();
-  } else {
-    if (w) { host.appendChild(wrap); w.remove(); }
-    else if (wrap.parentElement !== host) host.appendChild(wrap);
-    wrap.style.display = "";
-    scroll.style.display = "";
-    const keep = chRun && chRun.chat === current ? chRun.el : null;                     // the live card is the same element afterwards: typed answers and open panels stay
-    $("thread").innerHTML = current.messages.map((m, i) => turnHTML(m, i)).join("");
-    if (chRun && chRun.chat === current) {
-      const ph = $("thread").querySelector(".agchat")?.closest(".turn");
-      if (ph && keep) { keep.dataset.i = ph.dataset.i; ph.replaceWith(keep); } else if (ph) chBind(chRun, ph);
-    }
-    if (liveGen && liveGen.chat === current) liveGen.attach();
-    $("input").placeholder = `Message ${activeChat()?.name || ""}`;
-    const last = [...current.messages].reverse().find((m) => m.stats);
-    showPerf(last?.stats); drawSpark();
-  }
-  renderHistory(); updateSend(); updateCtx();
-}
-// First run: no chat model yet — recommend one that fits this Mac's memory.
-let sysRam = 0;
-function renderOnboarding(w) {
-  $("chatScroll").style.display = "none";
-  const wrap = $("composerWrap"); chatHost().appendChild(wrap); wrap.style.display = "none";
-  const gb = sysRam / 2 ** 30;
-  const picks = gb >= 40 ? ["qwen3.8-27b", "gemma-4-12b", "lfm2.5-1.2b"] : gb >= 24 ? ["gemma-4-12b", "qwen3-8b", "lfm2.5-1.2b"]
-    : gb >= 16 ? ["gguf-qwen3.5-9b", "qwen3-8b", "lfm2.5-1.2b"] : ["lfm2.5-1.2b", "gguf-qwen3.5-9b"];
-  const models = picks.map((id) => lib.chat.find((m) => m.id === id)).filter(Boolean);
-  const grid = w.querySelector("#obCards");
-  if (grid) { patchCards(grid, models.map((m, i) => cardHTML({ ...m, blurb: (i === 0 ? "Recommended for this Mac. " : "") + m.blurb })).join(""), models); return; }
-  w.innerHTML = `<div style="max-width:880px;width:100%">
-    <h1 style="margin-bottom:8px">Choose your first model</h1>
-    <p style="text-align:center;color:var(--muted);margin:0 0 26px">Models run entirely on this Mac. Picked for your ${Math.round(gb)} GB of memory — you can add more any time in the Model library.</p>
-    <div class="cards" id="obCards">${models.map((m, i) => cardHTML({ ...m, blurb: (i === 0 ? "Recommended for this Mac. " : "") + m.blurb })).join("")}</div>
-    <p style="text-align:center;margin-top:18px"><button class="btn sm" data-view="library" onclick="showView('library')">Browse all models</button></p></div>`;
-  w.onclick = async (e) => {
-    const b = e.target.closest("button[data-dl],button[data-cancel]"); if (!b) return;
-    try { if (b.dataset.dl) { await jpost("/api/models/download", { id: b.dataset.dl }); toast("Downloading — chat unlocks when it finishes"); } else { await jpost("/api/models/cancel", { id: b.dataset.cancel }); } } catch (err) { toast(err.message); }
-    loadLibrary();
-  };
-
-}
-function perfLine(x) {
-  if (!x) return "";
-  const up = x.ceiling_tokens_per_sec ? ` · <b>${(x.decode_tokens_per_sec / x.ceiling_tokens_per_sec).toFixed(1)}×</b> vs plain` : "";
-  const eng = x.mode === "vision" ? " · vision engine" : x.mode === "gguf" ? " · llama.cpp" : "";
-  return `<button class="perf" data-perf title="Show details"><span><b>${x.decode_tokens_per_sec}</b> tok/s${up} · ${x.completion_tokens ?? "–"} tokens · ${x.ttft_seconds}s to first token${eng}</span></button>`;
-}
-function perfGrid(x) {
-  if (!x) return "";
-  const cells = [["Engine", x.mode === "vision" ? "Vision (mlx-vlm)" : x.mode === "gguf" ? "llama.cpp" : `MLX (${x.mode || "dspark"})`], ["Model", x.model || activeChat()?.name || "–"], ["Decode", `${x.decode_tokens_per_sec} tok/s`], ["End-to-end", `${x.tokens_per_sec} tok/s`], ["Speed-up vs plain", x.ceiling_tokens_per_sec ? `${(x.decode_tokens_per_sec / x.ceiling_tokens_per_sec).toFixed(2)}×` : "–"],
-    ["Accept length", x.accept_len ?? "–"], ["First token", `${x.ttft_seconds}s`], ["Prefill", x.prefill_tokens_per_sec ? `${x.prefill_tokens_per_sec} tok/s` : "–"],
-    ["Prompt tokens", x.prompt_tokens ?? "–"], ["Cached tokens", x.cached_tokens ?? "–"], ["Output tokens", x.completion_tokens ?? "–"], ["Decode time", x.decode_seconds != null ? `${x.decode_seconds}s` : "–"], ["Target passes", x.target_forwards ?? "–"], ["Draft cap", x.cap ?? "–"]];
-  return `<div class="perfgrid">${cells.map(([l, v]) => `<div><div class="l">${l}</div><div class="v">${esc(v)}</div></div>`).join("")}</div>`;
-}
-function thoughtHTML(m, live) {
-  if (!m.reasoning) return "";
-  const thinkingNow = live && !m.content;
-  const words = m.reasoning.trim().split(/\s+/).length;
-  const label = thinkingNow ? `<span class="shimmer">Thinking…</span>` : `${m.thoughtSecs ? `Thought for ${fmtSecs(m.thoughtSecs)}` : "Thought process"} <span class="tw">· ${words.toLocaleString()} words</span>`;
-  return `<details class="thought"${thinkingNow || m.thoughtOpen ? " open" : ""}><summary>${label}${icon("i-right")}</summary><div class="tb">${esc(m.reasoning)}</div></details>`;
-}
-function sourcesHTML(m) {
-  if (!m.sources?.length) return "";
-  const seen = new Set();                                    // one chip per file, however many passages it gave
-  return `<div class="sources">${m.sources.filter((s) => !seen.has(s.path) && seen.add(s.path)).map((s) => `<button class="chip" data-open="${s.file_id}" data-path="${esc(s.path)}" title="${esc(srHome(s.path))}">${icon("i-file", "width:14px;height:14px")}${esc(s.name)}</button>`).join("")}</div>`;
-}
-const TOOL_LABELS = { read_file: "Read", write_file: "Write", edit_file: "Update", multi_edit_file: "Update", run_shell: "Bash", run_python: "Python",
-  list_directory: "List", find_files: "Find", grep_files: "Search", code_outline: "Outline", git_status: "Git", git_diff: "Git diff", search_files: "My files",
-  web_search: "Web search", read_webpage: "Fetch", todo_write: "Update todos", memory_store: "Remember", memory_recall: "Recall", delegate_task: "Task",
-  manage_process: "Process", ask_user: "Ask", use_computer: "Computer", get_current_datetime: "Clock", reply: "Reply" };
-const EDIT_TOOLS = ["write_file", "edit_file", "multi_edit_file"];
-function toolLabel(name) {
-  if (String(name || "").startsWith("mcp__")) { const [, srv, t] = name.split("__"); return `${srv} · ${t || "tool"}`; }
-  return TOOL_LABELS[name] || name || "";
-}
-function diffLinesHTML(text, colored) {                                                  // one block line per text line; +/- coloured only for real diffs
-  return String(text || "").split("\n").map((l) => {
-    const c = !colored ? "" : l.startsWith("@@") ? " h" : l.startsWith("+") && !l.startsWith("+++") ? " a" : l.startsWith("-") && !l.startsWith("---") ? " d" : "";
-    return `<span class="l${c}">${esc(l)}</span>`;
-  }).join("");
-}
-function toolResultHTML(step) {
-  if (step.status === "running") return `<span class="shimmer">Running…</span>`;
-  if (step.error) return `<span class="tbad">${esc(String(step.error).split("\n")[0].slice(0, 180))}</span>`;
-  const d = String(step.detail || ""), lines = d ? d.split("\n") : [];
-  if (EDIT_TOOLS.includes(step.name)) {
-    const add = lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length, del = lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length;
-    const checked = /\.(py|json|js|mjs|cjs|swift)\b/i.test(String(step.summary || ""));   // other types report "OK" without any checker
-    const syn = step.syntax_ok === false ? `<span class="tbad">syntax error</span>` : step.syntax_check === "OK" && checked ? "syntax OK" : "";
-    return [add || del ? `<span class="tadd">+${add}</span> <span class="tdel">−${del}</span>` : "no changes", syn].filter(Boolean).join(" · ");
-  }
-  if (step.name === "run_shell" || step.name === "run_python") {
-    const rc = d.match(/\(exit code (-?\d+)\)\s*$/)?.[1];
-    const out = lines.filter((l) => l.trim() && !/^(--- std(out|err) ---|\$ |\(exit code|\[Background)/.test(l));
-    const last = out[out.length - 1] || (rc === "0" ? "Done" : "");
-    return (rc && rc !== "0" ? `<span class="tbad">exit ${esc(rc)}</span>${last ? " · " : ""}` : "") + esc(last.slice(0, 160));
-  }
-  if (!lines.length) return "";
-  if (step.name === "read_file") return `${lines.length} lines shown`;
-  return esc(lines[0].slice(0, 160)) + (lines.length > 1 ? ` <span class="tmore">+${lines.length - 1} lines</span>` : "");
-}
-function chToolStepsInner(steps, openIds) {
-  return (steps || []).map((step) => {
-    const label = toolLabel(step.name), summary = String(step.summary || "Checking a tool");
-    const ci = summary.indexOf(": "), arg = label ? (ci > 0 && ci < 40 ? summary.slice(ci + 2) : summary) : "";
-    const st = step.status === "running" ? "running" : step.status === "error" || step.error ? "error" : "done";
-    const undo = step.undone ? `<span class="undo-done">Restored</span>` : step.backup_id ? `<button class="undo-btn" data-undo="${esc(step.backup_id)}" title="Revert this change">Undo</button>` : "";
-    const head = `<div class="th" title="${esc(step.error || summary)}"><span class="tdot"></span><span class="tname">${esc(label || summary)}</span>${arg ? `<span class="targ">${esc(arg)}</span>` : ""}${undo}${step.detail ? icon("i-right", "").replace('class="i"', 'class="i tchev"') : ""}</div><div class="tres">${toolResultHTML(step)}</div>`;
-    if (!step.detail) return `<div class="chattoolstep st-${st}">${head}</div>`;
-    const colored = EDIT_TOOLS.includes(step.name) || step.name === "git_diff";
-    return `<details class="chattoolstep st-${st}" data-step-id="${esc(step.id || "")}"${openIds?.has(step.id) ? " open" : ""}><summary>${head}</summary><div class="chtdetail">${diffLinesHTML(step.detail, colored)}</div></details>`;
-  }).join("");
-}
-function chToolsHTML(message) {
-  const steps = Array.isArray(message.tool_steps) ? message.tool_steps : [];
-  return steps.length ? `<div class="chattoolsteps">${chToolStepsInner(steps)}</div>` : "";
-}
-function chRoundItemHTML(r) {
-  const th = thoughtHTML(r, false);
-  const note = r.note ? `<div class="chround-note">${md(r.note)}</div>` : "";
-  const tools = Array.isArray(r.tools) && r.tools.length ? `<div class="chattoolsteps">${chToolStepsInner(r.tools)}</div>` : "";
-  return th || note || tools ? `<div class="chround">${th}${note}${tools}</div>` : "";
-}
-function chRoundsHTML(message) {
-  return Array.isArray(message.rounds) && message.rounds.length ? `<div class="chroundswrap">${message.rounds.map(chRoundItemHTML).join("")}</div>` : "";
-}
-function chPlanHTML(message) {
-  const plan = Array.isArray(message.plan) ? message.plan : [];
-  if (!plan.length) return "";
-  const done = plan.filter((t) => t.status === "completed").length;
-  return `<div class="chplan${done === plan.length ? " st-done" : " st-running"}"><div class="chplan-hdr"><span class="tdot"></span><b>Todos</b><span class="sub">${done} of ${plan.length} done</span></div><ul class="chplan-list">${plan.map((t) => {
-    const st = t.status || "pending";
-    return `<li class="chplan-item ${esc(st)}"><span class="chplan-ico">${st === "completed" ? "✓" : ""}</span><span class="chplan-txt">${esc(t.content || t.task || "")}</span></li>`;
-  }).join("")}</ul></div>`;
-}
-const PERM_WORDS = { edit: "file edits", exec: "commands", mcp: "this tool" };
-function chHarnessCardHTML(message) {
-  if (message.pendingApproval) {
-    const a = message.pendingApproval, sid = esc(a.session_id);
-    const tag = a.kind === "diff" ? "Edit" : a.kind === "shell" ? "Command" : a.kind === "code" ? "Run code" : "Tool";
-    const scope = PERM_WORDS[a.perm_scope];
-    return `<div class="chhcard approval" data-sid="${sid}">
-      <div class="chhcard-hdr"><span class="chhcard-tag">${tag}</span><span class="chhcard-title">${esc(a.title || a.name || "Approval required")}</span></div>
-      ${a.reason ? `<div class="chhcard-reason">${esc(a.reason)}</div>` : ""}
-      ${a.preview ? `<div class="chhcard-preview">${diffLinesHTML(a.preview, a.kind === "diff")}</div>` : ""}
-      <div class="chhcard-q">${a.kind === "diff" ? "Make this edit?" : "Do you want to proceed?"}</div>
-      <div class="chhopts">
-        <button class="chhopt on" data-hdecide="allow" data-sid="${sid}"><kbd>1</kbd>Yes</button>
-        ${scope ? `<button class="chhopt" data-hdecide="allow_session" data-sid="${sid}"><kbd>2</kbd>Yes, and don’t ask again for ${scope} in this chat</button>` : ""}
-        <button class="chhopt" data-hdeny-fb data-sid="${sid}"><kbd>${scope ? 3 : 2}</kbd>No, and tell the agent what to do instead</button>
-      </div>
-      <div class="chhcard-input-row" hidden><input type="text" class="chhcard-inp" data-fb placeholder="What should it do instead? (Enter sends, empty just declines)"><button class="btn sm" data-hdecide="deny" data-sid="${sid}">Decline</button></div>
-      <div class="chhcard-hint">Press a number to choose · Esc declines</div>
-    </div>`;
-  }
-  if (message.pendingQuestion) {
-    const q = message.pendingQuestion, sid = esc(q.session_id);
-    const opts = Array.isArray(q.options) ? q.options : [];
-    return `<div class="chhcard question" data-sid="${sid}">
-      <div class="chhcard-hdr"><span class="chhcard-tag">Question</span><span class="chhcard-title">${esc(q.question || "")}</span></div>
-      ${opts.length ? `<div class="chhopts">${opts.map((opt, i) => `<button class="chhopt${i ? "" : " on"}" data-hopt="${esc(opt)}" data-sid="${sid}"><kbd>${i + 1}</kbd>${esc(opt)}</button>`).join("")}</div>` : ""}
-      <div class="chhcard-input-row">
-        <input type="text" class="chhcard-inp" placeholder="${opts.length ? "Or type another answer…" : "Type an answer…"}" data-sid="${sid}">
-        <button class="btn sm primary" data-hqsend data-sid="${sid}">Send</button>
-        <button class="btn sm" data-hqskip data-sid="${sid}">Skip</button>
-      </div>
-    </div>`;
-  }
-  return "";
-}
-function chWebSourcesHTML(message) {
-  const seen = new Set();
-  const sources = (Array.isArray(message.web_sources) ? message.web_sources : []).filter((source) => agWeb(source.url) && !seen.has(source.url) && seen.add(source.url));
-  return sources.length ? `<div class="sources">${sources.map((source) => `<a class="chip" href="${esc(source.url)}" target="_blank" rel="noopener noreferrer">${esc(source.title || source.url)}</a>`).join("")}</div>` : "";
-}
-
-function turnHTML(m, i, live = false) {
-  if (m.role === "user") {
-    const atts = m.attachments || [];
-    const imgs = atts.filter((a) => a.kind === "image" && !a.scanned).map((a) => `<img src="${attThumb(a)}" alt="${esc(a.name)}" data-full="${attThumb(a)}">`).join("");
-    const docs = atts.filter((a) => a.kind !== "image" || a.scanned).map((a) => `<div class="att"><div class="ic">${a.scanned ? `<img src="${attThumb(a)}" alt="">` : icon(DOC_ICON(a.name))}</div><div style="min-width:0"><div class="nm">${esc(a.name)}</div><div class="mt">${esc(attMeta(a))}</div></div></div>`).join("");
-    return `<div class="turn user">${imgs || docs ? `<div class="uatts">${imgs}${docs}</div>` : ""}${m.content ? `<div class="bubble">${esc(m.content)}</div>` : ""}</div>`;
-  }
-  if (chRun && chRun.msg === m) return chCardHTML(i);
-  if (liveGen && liveGen.bot === m) return liveSkeletonHTML(i);
-  const hasRounds = Array.isArray(m.rounds) && m.rounds.length > 0;
-  const waiting = live && !m.content && !m.reasoning && !hasRounds && !(m.tool_steps?.length);
-  const agentRid = typeof m.agent_run === "string" && AG_RID.test(m.agent_run) ? m.agent_run : "";
-  const idle = m.agent_run && !m.content && !m.error;                                  // saved while the task was still running
-  const body = idle ? `<span class="agidle">This task has no saved result yet.</span>` : m.switching ? `<span class="shimmer">${m.switching === "vision" ? `Loading ${esc(m.switchModel || "the vision engine")} with vision… (about 10 s)` : `Loading ${esc(m.switchModel || "the model")}… (first load takes 10–30 s)`}</span>` : waiting ? `<span class="shimmer">${(current?.messages || []).some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"}</span>` : md(m.agent_run ? agNoImages(m.content) : m.content);
-  const tail = live && m.content ? '<span class="caret"></span>' : "";
-  const ckptHTML = !live && m.checkpoint?.turn_id
-    ? (m.checkpoint.undone
-        ? `<span class="undo-done">Turn reverted</span>`
-        : `<button class="linkbtn undo-btn" data-undo-turn="${esc(m.checkpoint.turn_id)}" title="Revert all ${m.checkpoint.files?.length || 1} file edit(s) from this turn">Revert turn (${m.checkpoint.count || m.checkpoint.files?.length || 1})</button>`)
-    : "";
-  const actions = live ? "" : `<div class="actions"><button class="iconbtn" data-act="copy" title="Copy">${icon("i-copy")}</button>${m.agent_run ? "" : `<button class="iconbtn" data-act="regen" title="Regenerate">${icon("i-redo")}</button>`}${ckptHTML}${perfLine(m.stats)}</div>${perfGrid(m.stats)}`;
-  const agentTail = (agentRid ? `<div class="agtask"><button class="linkbtn" data-agview="${esc(agentRid)}">Task · view steps</button></div>` : "")
-    + (m.computerSetup ? `<div class="agtask"><button class="btn sm" data-computer-setup="${m.computerSetup === "enable" ? "enable" : "settings"}">${m.computerSetup === "enable" ? "Enable computer access and continue" : "Computer access settings"}</button></div>` : "");
-  const cut = !live && m.finish === "length" ? `<div class="cutoff">${icon("i-x", "width:14px;height:14px")}The reply hit the length limit. <button class="btn sm" data-act="continue">Continue</button></div>` : "";
-  const stepsBlock = hasRounds
-    ? `${chPlanHTML(m)}${chRoundsHTML(m)}${thoughtHTML(m, live)}`
-    : `${thoughtHTML(m, live)}${chPlanHTML(m)}${chToolsHTML(m)}`;
-  return `<div class="turn bot" data-i="${i}">${stepsBlock}${chHarnessCardHTML(m)}<div class="content">${body}${tail}</div>${agentTail}${live ? "" : sourcesHTML(m) + chWebSourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
-}
-$("thread").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && e.target.classList?.contains("chhcard-inp")) {
-    e.preventDefault();
-    e.target.closest(".chhcard")?.querySelector("[data-hqsend], [data-hdecide='deny']")?.click();
-  } else if (e.key === "Escape" && e.target.matches?.("[data-fb]")) {
-    e.preventDefault();
-    e.target.closest(".chhcard")?.querySelector("[data-hdecide='deny']")?.click();
-  } else {
-    agLogKey(e);
-  }
-});
-$("thread").onclick = async (e) => {
-  const full = e.target.closest(".uatts img[data-full]");
-  if (full) { window.open(full.dataset.full, "_blank"); return; }
-  const src = e.target.closest(".sources [data-open]");
-  if (src) { srOpen(src); return; }
-  const task = e.target.closest("[data-agview]");
-  if (task) { const rid = task.dataset.agview; if (AG_RID.test(rid)) chShowSteps(task, rid); return; }
-  const setup = e.target.closest("[data-computer-setup]");
-  if (setup) {
-    if (setup.dataset.computerSetup !== "enable") { showView("manage"); $("agSet").scrollIntoView({ block: "center" }); return; }
-    const chat = current, i = +setup.closest(".turn.bot").dataset.i, message = chat?.messages[i];
-    setup.disabled = true;
-    jpost("/api/agent/enable", { on: true }).then(() => {
-      if (current === chat && chat.messages[i] === message && message?.computerSetup && !streaming && !chLive()) {
-        chat.messages.splice(i, 1); renderThread(); generate();
-      }
-      loadAgent();
-    }).catch((err) => { setup.disabled = false; toast(err.message); });
-    return;
-  }
-  const undoTurnBtn = e.target.closest("[data-undo-turn]");
-  if (undoTurnBtn) {
-    e.preventDefault();
-    e.stopPropagation();
-    const tid = undoTurnBtn.dataset.undoTurn;
-    const turnEl = undoTurnBtn.closest(".turn.bot");
-    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
-    undoTurnBtn.disabled = true;
-    const oldTxt = undoTurnBtn.textContent;
-    undoTurnBtn.textContent = "Reverting turn…";
-    try {
-      const res = await jpost("/api/agent/undo-turn", { turn_id: tid });
-      toast(`Reverted ${res.restored_count ?? res.count ?? 0} edit(s)`);
-      if (turnMsg?.checkpoint) turnMsg.checkpoint.undone = true;
-      for (const s of turnMsg?.tool_steps || []) if (s.backup_id) { s.undone = true; delete s.backup_id; }
-      for (const r of turnMsg?.rounds || []) for (const s of r.tools || []) if (s.backup_id) { s.undone = true; delete s.backup_id; }
-      if (turnEl) {
-        turnEl.querySelectorAll("[data-undo]").forEach((b) => {
-          const sp = document.createElement("span"); sp.className = "undo-done"; sp.textContent = "Restored"; b.replaceWith(sp);
-        });
-      }
-      const doneSpan = document.createElement("span");
-      doneSpan.className = "undo-done";
-      doneSpan.textContent = "Turn reverted";
-      undoTurnBtn.replaceWith(doneSpan);
-      if (current && !streaming) saveChat(current);
-      if (view === "code") loadCodeView(true);
-    } catch (err) {
-      toast(err.message || "Failed to revert turn");
-      undoTurnBtn.disabled = false;
-      undoTurnBtn.textContent = oldTxt;
-    }
-    return;
-  }
-  const undoBtn = e.target.closest("[data-undo]");
-  if (undoBtn) {
-    e.preventDefault();
-    e.stopPropagation();
-    const bid = undoBtn.dataset.undo;
-    const turnEl = undoBtn.closest(".turn.bot");
-    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
-    undoBtn.disabled = true;
-    const oldTxt = undoBtn.textContent;
-    undoBtn.textContent = "Reverting…";
-    try {
-      const res = await jpost("/api/agent/undo", { backup_id: bid });
-      toast(`Restored ${res.name || "file"}`);
-      const step = (turnMsg?.tool_steps || []).find((s) => s.backup_id === bid);
-      if (step) { step.undone = true; delete step.backup_id; }
-      for (const r of turnMsg?.rounds || []) {
-        const rs = (r.tools || []).find((s) => s.backup_id === bid);
-        if (rs) { rs.undone = true; delete rs.backup_id; }
-      }
-      const doneSpan = document.createElement("span");
-      doneSpan.className = "undo-done";
-      doneSpan.textContent = "Restored";
-      undoBtn.replaceWith(doneSpan);
-      if (current && !streaming) saveChat(current);
-      if (view === "code") loadCodeView(true);
-    } catch (err) {
-      toast(err.message || "Failed to restore");
-      undoBtn.disabled = false;
-      undoBtn.textContent = oldTxt;
-    }
-    return;
-  }
-  const fbBtn = e.target.closest("[data-hdeny-fb]");
-  if (fbBtn) {
-    const card = fbBtn.closest(".chhcard"), row = card?.querySelector(".chhcard-input-row");
-    card?.querySelectorAll(".chhopt").forEach((b) => b.classList.toggle("on", b === fbBtn));
-    if (row) { row.hidden = false; row.querySelector("input")?.focus(); }
-    return;
-  }
-  const decideBtn = e.target.closest("[data-hdecide]");
-  if (decideBtn) {
-    const sid = decideBtn.dataset.sid, decision = decideBtn.dataset.hdecide;
-    const card = decideBtn.closest(".chhcard"), turnEl = decideBtn.closest(".turn.bot");
-    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
-    const feedback = decision === "deny" ? (card?.querySelector("[data-fb]")?.value || "").trim() : "";
-    if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = true);
-    try {
-      await jpost(`/api/chat/sessions/${sid}/reply`, { decision, ...(feedback ? { feedback } : {}) });
-      if (turnMsg) delete turnMsg.pendingApproval;
-      if (card) card.remove();
-    } catch (err) {
-      toast(err.message || "Approval reply failed");
-      if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = false);
-    }
-    return;
-  }
-  const optBtn = e.target.closest("[data-hopt]");
-  if (optBtn) {
-    const sid = optBtn.dataset.sid, answer = optBtn.dataset.hopt;
-    const card = optBtn.closest(".chhcard"), turnEl = optBtn.closest(".turn.bot");
-    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
-    if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = true);
-    try {
-      await jpost(`/api/chat/sessions/${sid}/reply`, { answer });
-      if (turnMsg) delete turnMsg.pendingQuestion;
-      if (card) card.remove();
-    } catch (err) {
-      toast(err.message || "Reply failed");
-      if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = false);
-    }
-    return;
-  }
-  const qSendBtn = e.target.closest("[data-hqsend]");
-  if (qSendBtn) {
-    const card = qSendBtn.closest(".chhcard"), turnEl = qSendBtn.closest(".turn.bot");
-    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
-    const inp = card?.querySelector(".chhcard-inp");
-    const sid = qSendBtn.dataset.sid, answer = inp?.value?.trim() || "";
-    if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = true);
-    try {
-      await jpost(`/api/chat/sessions/${sid}/reply`, { answer });
-      if (turnMsg) delete turnMsg.pendingQuestion;
-      if (card) card.remove();
-    } catch (err) {
-      toast(err.message || "Reply failed");
-      if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = false);
-    }
-    return;
-  }
-  const qSkipBtn = e.target.closest("[data-hqskip]");
-  if (qSkipBtn) {
-    const card = qSkipBtn.closest(".chhcard"), turnEl = qSkipBtn.closest(".turn.bot");
-    const turnMsg = turnEl ? current?.messages?.[+turnEl.dataset.i] : null;
-    const sid = qSkipBtn.dataset.sid;
-    if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = true);
-    try {
-      await jpost(`/api/chat/sessions/${sid}/reply`, { answer: "" });
-      if (turnMsg) delete turnMsg.pendingQuestion;
-      if (card) card.remove();
-    } catch (err) {
-      toast(err.message || "Reply failed");
-      if (card) card.querySelectorAll("button, input").forEach((b) => b.disabled = false);
-    }
-    return;
-  }
-  const card = e.target.closest(".agchat");
-  if (card) { if (chRun?.el?.contains(card)) chCardClick(chRun, e); return; }
-  const turn = e.target.closest(".turn.bot"); if (!turn) return;
-  if (e.target.closest("[data-perf]")) { turn.querySelector(".perfgrid")?.classList.toggle("on"); return; }
-  const act = e.target.closest("[data-act]")?.dataset.act, m = current.messages[+turn.dataset.i];
-  if (act === "copy") { navigator.clipboard.writeText(m.content); toast("Copied to clipboard"); }
-  if (act === "continue" && !streaming) {
-    noFilesOnce = true;                                    // "continue" is not a question to look up in the user's files
-    $("input").value = "Continue exactly where you left off."; autosize(); send(); return;
-  }
-  if (act === "regen" && !streaming && !chLive() && !m.agent_run) {
-    current.messages = current.messages.slice(0, +turn.dataset.i); renderThread(); generate();
-  }
-};
-function showPerf(x) {
-  $("tDec").innerHTML = `${x?.decode_tokens_per_sec ?? "–"}<small>tok/s</small>`;
-  $("tUp").innerHTML = `${x?.ceiling_tokens_per_sec ? (x.decode_tokens_per_sec / x.ceiling_tokens_per_sec).toFixed(2) : "–"}<small>×</small>`;
-  $("tAcc").textContent = x?.accept_len ?? "–"; $("tTtft").innerHTML = `${x?.ttft_seconds ?? "–"}<small>s</small>`;
-  const ctx = x?.context_tokens || 0; $("ctxTxt").textContent = `${ctx.toLocaleString()} tokens`; $("ctxBar").style.width = Math.min(100, ctx / mainState.ctxWindow * 100) + "%";
-}
-function drawSpark() {
-  const pts = (current?.messages || []).filter((m) => m.stats?.decode_tokens_per_sec).slice(-20).map((m) => m.stats.decode_tokens_per_sec);
-  const svg = $("spark"); if (pts.length < 2) { svg.innerHTML = ""; return; }
-  const max = Math.max(...pts) * 1.1, W = 280, H = 44;
-  const d = pts.map((v, i) => `${i ? "L" : "M"}${(i / (pts.length - 1) * W).toFixed(1)} ${(H - v / max * (H - 4) - 2).toFixed(1)}`).join(" ");
-  svg.innerHTML = `<path d="${d} L${W} ${H} L0 ${H}Z" fill="currentColor" opacity=".07"/><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
-}
-// Auto-scroll only while the reader is at the bottom; scrolling up pauses it (a "↓" button returns).
-let stick = true, autoTop = -1;                                                             // autoTop: where scrollBottom last put the view
-const fmtSecs = (x) => { const n = Math.max(1, Math.round(x || 0)); return n === 1 ? "1 second" : n < 90 ? `${n} seconds` : `${Math.round(n / 60)} minutes`; };
-function scrollBottom(force) {
-  const s = $("chatScroll");
-  if (force) stick = true;
-  if (stick) { s.scrollTop = s.scrollHeight; autoTop = s.scrollTop; }
-  $("jumpBtn").classList.toggle("on", !stick && s.scrollHeight - s.scrollTop - s.clientHeight > 80);
-}
-$("chatScroll").addEventListener("scroll", () => {
-  const s = $("chatScroll"), gap = s.scrollHeight - s.scrollTop - s.clientHeight;
-  // Our own scroll lands here too, sometimes after the reply grew or the composer area changed height: only a scroll
-  // that moved the view away from where scrollBottom put it is the user's, and only that may stop following.
-  if (stick && Math.abs(s.scrollTop - autoTop) < 2) return;
-  stick = gap < 40;
-  $("jumpBtn").classList.toggle("on", gap > 80);
-}, { passive: true });
-$("chatScroll").addEventListener("wheel", (e) => { if (e.deltaY < 0) stick = false; }, { passive: true });
-$("jumpBtn").onclick = () => scrollBottom(true);
-function modelThinks() { try { const a = activeChat(); return !a || a.thinking !== false; } catch { return true; } }   // lib may not exist yet at start-up
-
-// attachments
-let pending = [];            // {key, name, busy, meta?, error?, preview?}
-const DOC_ICON = (n) => /\.(xlsx|xlsm|csv|tsv)$/i.test(n) ? "i-sheet" : "i-file";
-function attMeta(m) {
-  if (m.kind === "image") return m.scanned ? `Scanned PDF · ${m.images.length} of ${m.pages} pages` : `Image · ${m.width}×${m.height}`;
-  const bits = [];
-  if (m.pages) bits.push(`${m.pages} page${m.pages > 1 ? "s" : ""}`);
-  if (m.sheets) bits.push(`${m.sheets} sheet${m.sheets > 1 ? "s" : ""}`);
-  const t = m.tokens_est || 0;
-  bits.push(t < 1000 ? `~${Math.max(1, Math.round(t))} tokens` : `~${(t / 1000).toFixed(1)}k tokens`);
-  return bits.join(" · ");
-}
-function attThumb(m) { return m.images?.length ? `/api/attachments/${m.id}/${m.images[0]}` : null; }
-function renderPending() {
-  $("atts").innerHTML = pending.map((p, i) => {
-    const m = p.meta, isImg = (m && m.kind === "image" && !m.scanned) || (!m && p.preview);
-    const thumb = m ? attThumb(m) : p.preview;
-    const ic = thumb ? `<img src="${thumb}" alt="">` : icon(DOC_ICON(p.name));
-    const sub = p.error ? `<div class="mt warn">${esc(p.error)}</div>` : p.busy ? `<div class="mt">Reading…</div>` : `<div class="mt${m.truncated ? " warn" : ""}">${esc(attMeta(m))}${m.truncated ? " · truncated" : ""}</div>`;
-    return `<div class="att${isImg ? " img" : ""}${p.busy ? " busy" : ""}" title="${esc(p.name)}"><div class="ic">${ic}</div>${isImg ? "" : `<div style="min-width:0"><div class="nm">${esc(p.name)}</div>${sub}</div>`}<button class="x" data-rm="${i}" title="Remove">${icon("i-x")}</button></div>`;
-  }).join("");
-  updateSend();
-}
-$("atts").onclick = (e) => { const b = e.target.closest("[data-rm]"); if (b) { pending.splice(+b.dataset.rm, 1); renderPending(); } };
-async function addFiles(files) {
-  for (const f of files) {
-    const p = { key: Math.random(), name: f.name || "pasted-image.png", busy: true, preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : null };
-    pending.push(p); renderPending();
-    const fd = new FormData(); fd.append("file", f, p.name);
-    try { p.meta = await api("/api/attachments", { method: "POST", body: fd }); }
-    catch (err) { p.error = err.message; toast(`${p.name}: ${err.message}`); }
-    p.busy = false; renderPending();
-  }
-}
-$("attachBtn").onclick = () => $("fileInput").click();
-$("fileInput").onchange = (e) => { addFiles([...e.target.files]); e.target.value = ""; };
-let dragDepth = 0;
-const chatView = $("v-chat");
-chatView.addEventListener("dragenter", (e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); dragDepth++; $("dropzone").classList.add("on"); } });
-chatView.addEventListener("dragover", (e) => { if (e.dataTransfer?.types?.includes("Files")) e.preventDefault(); });
-chatView.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("dropzone").classList.remove("on"); } });
-chatView.addEventListener("drop", (e) => { e.preventDefault(); dragDepth = 0; $("dropzone").classList.remove("on"); if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]); });
-$("input").addEventListener("paste", (e) => { const files = [...(e.clipboardData?.files || [])]; if (files.length) { e.preventDefault(); addFiles(files); } });
-
-// composer
-const SLASH_CMDS = [
-  { cmd: "/review", desc: "3-pass code review of uncommitted git changes (Bugs, Security, Compliance)" },
-  { cmd: "/test", desc: "Run the repository's verification / test suite and fix failures" },
-  { cmd: "/commit", desc: "Inspect git status & diff, draft a commit message, and commit" },
-  { cmd: "/simplify", desc: "Refactor recently modified code for clarity and simplicity" },
-  { cmd: "/init", desc: "Scan workspace and generate a tailored CLAUDE.md / AGENTS.md file" },
-  { cmd: "/compact", desc: "Compact older conversation turns into a structured state summary" }
-];
-let acItems = [], acIndex = 0, acMode = null, acStart = 0, acTimer = 0;
-function closeAc() {
-  acItems = []; acIndex = 0; acMode = null;
-  const m = $("acMenu"); if (m) { m.classList.remove("on"); m.innerHTML = ""; }
-}
-function renderAc() {
-  const m = $("acMenu"); if (!m) return;
-  if (!acItems.length) { closeAc(); return; }
-  m.classList.add("on");
-  m.innerHTML = acItems.map((it, i) => `<div class="acitem${i === acIndex ? " on" : ""}" data-aci="${i}"><span class="acmain">${esc(it.label)}</span><span class="acsub">${esc(it.sub || "")}</span></div>`).join("");
-}
-function applyAc(idx) {
-  const it = acItems[idx]; if (!it) return;
-  const inp = $("input"), val = inp.value || "", pos = inp.selectionStart ?? val.length;
-  if (acMode === "slash") {
-    inp.value = it.insert + " ";
-    inp.selectionStart = inp.selectionEnd = inp.value.length;
-  } else if (acMode === "mention") {
-    const before = val.slice(0, acStart), after = val.slice(pos);
-    const next = before + "@" + it.insert + (after.startsWith(" ") ? "" : " ") + after;
-    inp.value = next;
-    const newPos = (before + "@" + it.insert + " ").length;
-    inp.selectionStart = inp.selectionEnd = newPos;
-  }
-  closeAc(); autosize(); inp.focus();
-}
-$("acMenu").onmousedown = (e) => {
-  const row = e.target.closest("[data-aci]");
-  if (row) { e.preventDefault(); applyAc(+row.dataset.aci); }
-};
-function updateAc() {
-  const inp = $("input"), val = inp.value || "", pos = inp.selectionStart ?? val.length;
-  const before = val.slice(0, pos);
-  const slashM = before.match(/^\/([a-zA-Z]*)$/);
-  if (slashM) {
-    const q = slashM[1].toLowerCase();
-    acMode = "slash"; acStart = 0; acIndex = 0;
-    acItems = SLASH_CMDS.filter((c) => c.cmd.slice(1).startsWith(q)).map((c) => ({ label: c.cmd, sub: c.desc, insert: c.cmd }));
-    renderAc();
-    return;
-  }
-  const mentM = before.match(/(?:^|\s)@([A-Za-z0-9_./-]*)$/);
-  if (mentM) {
-    const q = mentM[1];
-    acMode = "mention"; acStart = pos - q.length - 1;
-    clearTimeout(acTimer);
-    acTimer = setTimeout(async () => {
-      try {
-        const ws = current?.workspace ? `&workspace=${encodeURIComponent(current.workspace)}` : "";
-        const r = await api(`/api/workspace/files?q=${encodeURIComponent(q)}&limit=12${ws}`);
-        acIndex = 0;
-        acItems = (r.items || []).map((f) => ({ label: "@" + f.path + (f.type === "dir" ? "/" : ""), sub: f.type === "dir" ? "folder" : "file", insert: f.path }));
-        renderAc();
-      } catch { closeAc(); }
-    }, 60);
-    return;
-  }
-  closeAc();
-}
-function autosize() { const t = $("input"); t.style.height = "auto"; t.style.height = Math.min(240, t.scrollHeight) + "px"; updateSend(); }
-$("input").addEventListener("input", () => { autosize(); updateAc(); });
-$("input").addEventListener("blur", () => setTimeout(closeAc, 150));
-$("input").addEventListener("keydown", (e) => {
-  if (e.key === "Tab" && e.shiftKey && !e.isComposing && (current?.workspace || view === "code")) { e.preventDefault(); toggleMode(); return; }
-  if (acItems.length && $("acMenu")?.classList.contains("on")) {
-    if (e.key === "ArrowDown") { e.preventDefault(); acIndex = (acIndex + 1) % acItems.length; renderAc(); return; }
-    if (e.key === "ArrowUp") { e.preventDefault(); acIndex = (acIndex - 1 + acItems.length) % acItems.length; renderAc(); return; }
-    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.isComposing)) { e.preventDefault(); applyAc(acIndex); return; }
-    if (e.key === "Escape") { e.preventDefault(); closeAc(); return; }
-  }
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
-});
-// How full the model's context is: the last reply's measured prompt + output tokens, plus an estimate (chars / 3.2, as
-// app.py clamps) for anything added since. The agent's system note and tools cost about 2k tokens on a first turn.
-function ctxUsage(chat = current) {
-  const msgs = chat?.messages || [];
-  if (!msgs.length) return null;
-  let i = msgs.length - 1;
-  while (i >= 0 && !msgs[i].stats?.prompt_tokens) i--;
-  let used = i >= 0 ? (msgs[i].stats.prompt_tokens || 0) + (msgs[i].stats.completion_tokens || 0) : 2000;
-  for (const m of msgs.slice(i + 1)) used += Math.ceil((m.content || "").length / 3.2) + (m.attachments || []).reduce((a, x) => a + (x.tokens_est || (x.kind === "image" ? 1200 : 0)), 0);
-  return { used, total: mainState.ctxWindow, measured: i === msgs.length - 1 };
-}
-const fmtTok = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
-function updateCtx() {
-  const u = ctxUsage(), f = $("ctxFoot");
-  if (!u) { f.hidden = true; return; }
-  const pct = Math.min(100, Math.round(u.used / u.total * 100)), free = Math.max(0, u.total - u.used);
-  const level = pct >= 90 ? "bad" : pct >= 70 ? "warn" : "";
-  const canCompact = (current?.messages?.length || 0) > 4;
-  f.hidden = false;
-  f.className = `ctxfoot${level ? " " + level : ""}${canCompact && pct >= 50 ? " click" : ""}`;
-  f.style.setProperty("--ctxp", pct);
-  f.innerHTML = `<span class="ctxring"></span>${u.measured ? "" : "~"}${pct}% context used · ${fmtTok(free)} of ${Math.round(u.total / 1024)}k free${level && canCompact ? " · compact" : ""}`;
-  f.title = `${u.used.toLocaleString()} of ${u.total.toLocaleString()} tokens in this conversation${u.measured ? "" : " (estimated)"}.${canCompact ? " Click to compact older turns into a summary." : ""}`;
-  if (view === "code") codeUpdateStatus();
-}
-let permMode = "ask", workTimer = 0, workStart = 0;                                    // "accept edits" lasts until the page reloads, never across launches
-function syncMode() {
-  const on = permMode === "accept_edits";
-  $("modeFoot").classList.toggle("on", on);
-  $("modeFoot").textContent = `${on ? "⏵⏵ Accept edits on" : "✎ Ask before edits"} · shift+tab to switch`;
-  const cm = $("codeModeBtn");
-  if (cm) { cm.classList.toggle("on", on); cm.textContent = on ? "⏵⏵ Accept edits" : "✎ Ask before edits"; }
-}
-function toggleMode() {
-  permMode = permMode === "accept_edits" ? "ask" : "accept_edits";
-  syncMode();
-  toast(permMode === "accept_edits" ? "File edits run without asking (commands still ask)" : "Every file edit asks first");
-}
-$("modeFoot").onclick = toggleMode;
-$("ctxFoot").onclick = () => { if ($("ctxFoot").classList.contains("click")) compactCurrentChat().then(updateCtx); };
-$("workLine").onclick = (e) => { if (e.target.closest("[data-workopen]") && liveGen) openChat(liveGen.chat.id); };
-function tickWork() {
-  const secs = Math.round((Date.now() - workStart) / 1000), elsewhere = liveGen && liveGen.chat !== current;
-  const waiting = liveGen ? !!(liveGen.bot.pendingApproval || liveGen.bot.pendingQuestion) : !!document.querySelector("#thread .chhcard");
-  $("workTxt").textContent = elsewhere ? `${waiting ? "Waiting for you" : "Working"} in “${liveGen.chat.title}”` : waiting ? "Waiting for you…" : "Working…";
-  $("workHint").innerHTML = elsewhere ? `· <button class="workopen" data-workopen>Open</button>` : `· <kbd>esc</kbd> to interrupt`;
-  $("workTime").textContent = secs >= 1 ? `${secs < 60 ? secs + "s" : Math.floor(secs / 60) + "m " + (secs % 60) + "s"}` : "";
-}
-function updateSend() {
-  const here = !liveGen || liveGen.chat === current;
-  const b = $("send"), working = (!!streaming && here) || chLive();
-  const wl = $("workLine"), anyWork = !!streaming || chLive();
-  if (anyWork && wl.hidden) { wl.hidden = false; workStart = Date.now(); clearInterval(workTimer); workTimer = setInterval(tickWork, 1000); }
-  else if (!anyWork && !wl.hidden) { wl.hidden = true; clearInterval(workTimer); }
-  if (anyWork) tickWork();
-  $("sendIcon").setAttribute("href", working ? "#i-stop" : "#i-up");
-  b.title = working ? "Stop" : "Send";
-  const ready = pending.filter((p) => p.meta).length, busy = pending.some((p) => p.busy);
-  b.disabled = !working && (busy || (!$("input").value.trim() && !ready));
-}
-$("send").onclick = () => streaming && (!liveGen || liveGen.chat === current) ? streaming.abort() : chLive() ? chStop() : send();
-syncMode();
-document.addEventListener("keydown", (e) => {                                            // permission prompts answer to 1/2/3 and Esc, like Claude Code; Esc otherwise stops the reply
-  if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.defaultPrevented) return;
-  if (document.querySelector("dialog[open]")) return;
-  const t = e.target, editable = t.closest?.("input, textarea, select, [contenteditable]");
-  const card = [...document.querySelectorAll("#thread .chhcard")].pop();
-  if (card && !card.querySelector(".chhopt:disabled") && (!editable || (t.id === "input" && !t.value))) {
-    const opts = [...card.querySelectorAll(".chhopt")];
-    if (/^[1-9]$/.test(e.key) && opts[+e.key - 1]) { e.preventDefault(); opts[+e.key - 1].click(); return; }
-    if (e.key === "Escape" && card.classList.contains("approval")) { e.preventDefault(); card.querySelector("[data-hdecide='deny']")?.click(); return; }
-  }
-  const stoppable = (streaming && (!liveGen || liveGen.chat === current)) || chLive();
-  if (e.key === "Escape" && stoppable && (!editable || t.id === "input") && !$("acMenu").classList.contains("on")) { e.preventDefault(); $("send").click(); }
-});
-function syncThink() {
-  const can = modelThinks();
-  $("thinkPill").classList.toggle("on", thinking && can);
-  $("thinkPill").disabled = !can; $("effortSel").disabled = !can;
-  $("thinkPill").title = can ? "Reason step by step before answering" : `${activeChat()?.name || "This model"} doesn't have a thinking mode`;
-  $("thinkSw").checked = thinking; store.set("think", thinking);
-}
-$("thinkPill").onclick = () => { thinking = !thinking; syncThink(); };
-$("thinkSw").onchange = () => { thinking = $("thinkSw").checked; syncThink(); };
-function syncEffort() { $("effortSel").value = effort; $("effortSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.v === effort)); store.set("effort", effort); }
-$("effortSel").onchange = () => { effort = $("effortSel").value; syncEffort(); };
-$("effortSeg").onclick = (e) => { const b = e.target.closest("button"); if (b) { effort = b.dataset.v; syncEffort(); } };
-syncThink(); syncEffort();
-
-async function compactCurrentChat() {
-  if (!current || (current.messages || []).length <= 4) { toast("Conversation is already compact"); return; }
-  try {
-    const r = await jpost("/api/chat/compact", { chat_id: current.id, messages: current.messages, keep_recent: 4 });
-    if (r.compacted && Array.isArray(r.messages)) {
-      current.messages = r.messages;
-      renderThread();
-      await saveChat(current);
-      toast(`Compacted ${(r.before_count || 0) - (r.after_count || 0) + 1} earlier messages`);
-    } else {
-      toast("Conversation is already compact");
-    }
-  } catch (err) { toast(err.message || "Compaction failed"); }
-}
-$("compactBtn").onclick = compactCurrentChat;
-
-async function send() {
-  const text = $("input").value.trim();
-  const atts = pending.filter((p) => p.meta).map((p) => p.meta);
-  if ((text || atts.length) && streaming && liveGen && liveGen.chat !== current) return toast(`Still answering in “${liveGen.chat.title}”. Wait for it, or open it and stop it.`);
-  if ((!text && !atts.length) || streaming || chLive() || pending.some((p) => p.busy)) return;
-  closeAc();
-  if (text === "/compact" || text.startsWith("/compact ")) {
-    $("input").value = ""; autosize();
-    await compactCurrentChat();
-    return;
-  }
-  $("input").value = ""; pending = []; renderPending(); autosize();
-  const title = (text || atts.map((a) => a.name).join(", ")).replace(/\s+/g, " ").slice(0, 48);
-  if (!current) current = { id: newId(), title, messages: [] };
-  else if (!current.messages.length) current.title = title;                            // a placeholder ("New coding task", "New chat") until the first message
-  current.messages.push({ role: "user", content: text, attachments: atts.length ? atts : undefined });
-  saveChat(current);                                                                    // in the sidebar now, so the user can leave and come back mid-reply
-  renderThread(); scrollBottom(true);
-  generate();
-}
-// The reply being generated. It outlives the view: the user may open other chats or views meanwhile, and whenever its
-// chat is drawn again (renderThread) turnHTML puts an empty live skeleton in its place and the stream re-attaches to it.
-let liveGen = null;                                      // { chat, bot, attach() }
-const liveSkeletonHTML = (i, waitingText = "Thinking…") => `<div class="turn bot" data-i="${i}" data-live="1">
-    <div class="chplanwrap"></div>
-    <div class="chroundswrap"></div>
-    <details class="thought" hidden><summary><span class="tl shimmer">Thinking…</span>${icon("i-right")}</summary><div class="tb"></div></details>
-    <div class="chround-note" hidden></div>
-    <div class="chattoolsteps"></div>
-    <div class="chhcardwrap"></div>
-    <div class="content"><span class="shimmer">${waitingText}</span></div>
-    <div class="err" hidden></div></div>`;
-async function generate() {
-  const chat = current;
-  const bot = { role: "assistant", content: "", reasoning: "" };
-  current.messages.push(bot);
-  const idx = current.messages.length - 1;
-  // Stable DOM for the live reply: the thinking panel and answer are updated in place, so the
-  // panel keeps its open/closed state and its own scroll position while tokens stream in.
-  $("thread").insertAdjacentHTML("beforeend", liveSkeletonHTML(idx, current.messages.some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"));
-  let el, planWrap, roundsWrap, th, tl, tb, noteEl, liveToolsEl, cardWrap, contentEl, errEl;
-  let userToggled = false;                               // a click on the header means "leave it as I set it"
-  const setOpen = (v) => { th.open = v; };
-  let thinkStart = 0, thinkEnd = 0, raf = 0, pendingThought = "", actionRun = null, lastCardKey = "|";
-  let curTools = [], curNote = "", curRoundNo = null, renderedRounds = 0;
-  const thinkingNow = () => thinkStart && !thinkEnd;
-  const bind = (node) => {                               // point the stream at a (new) live element and draw what it has so far
-    el = node;
-    planWrap = el.querySelector(".chplanwrap"); roundsWrap = el.querySelector(".chroundswrap");
-    th = el.querySelector(":scope > .thought"); tl = th.querySelector(".tl"); tb = th.querySelector(".tb");
-    noteEl = el.querySelector(":scope > .chround-note"); liveToolsEl = el.querySelector(":scope > .chattoolsteps");
-    cardWrap = el.querySelector(".chhcardwrap"); contentEl = el.querySelector(".content"); errEl = el.querySelector(".err");
-    th.querySelector("summary").addEventListener("click", () => { userToggled = true; });
-    renderedRounds = 0; lastCardKey = "|"; pendingThought = "";
-    if (bot.reasoning) {
-      th.hidden = false; tb.textContent = bot.reasoning;
-      if (thinkingNow()) { tl.className = "tl shimmer"; tl.textContent = "Thinking…"; th.open = !userToggled || th.open; }
-      else { tl.className = "tl"; tl.innerHTML = thoughtLabel(); }
-    }
-  };
-  bind($("thread").lastElementChild);
-  const attach = () => {                                 // called by renderThread after it redrew this chat
-    const node = current === chat && $("thread").querySelector(`.turn.bot[data-live="1"][data-i="${chat.messages.indexOf(bot)}"]`);
-    if (node && node !== el) { bind(node); if (raf) { raf < 0 ? clearTimeout(-raf) : cancelAnimationFrame(raf); } paint(); }
-  };
-  liveGen = { chat, bot, attach };
-  stick = true; scrollBottom(true);
-
-  const s = store.get("settings", {});
-  const messages = [];
-  if (s.sys) messages.push({ role: "system", content: s.sys });
-  current.messages.slice(0, -1).filter((m) => !(m.agent_run && !m.content)).forEach((m) => messages.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map((a) => a.id) } : {}) }));
-  const body = { messages, chat_id: chat.id, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
-  if (effort && modelThinks()) body.reasoning_effort = effort;
-  if (s.temp) body.temperature = +s.temp;
-  if (useFiles && sr?.running && !sr.error && !noFilesOnce) body.use_files = true;
-  if (current?.workspace) body.workspace = current.workspace;
-  if (current?.workspace && permMode === "accept_edits") body.permission_mode = "accept_edits";
-  noFilesOnce = false;
-  streaming = new AbortController(); updateSend(); renderHistory();
-
-  const thoughtLabel = () => {
-    const words = (bot.reasoning || "").trim().split(/\s+/).filter(Boolean).length;
-    return `${bot.thoughtSecs ? `Thought for ${fmtSecs(bot.thoughtSecs)}` : "Thought process"}${words ? ` <span class="tw">· ${words.toLocaleString()} words</span>` : ""}`;
-  };
-  const finishRoundThinking = () => {
-    if (thinkStart && !thinkEnd) {
-      thinkEnd = performance.now();
-      bot.thoughtSecs = (thinkEnd - thinkStart) / 1000;
-      tl.className = "tl";
-      tl.innerHTML = thoughtLabel();
-      if (!userToggled) setOpen(false);                  // collapse once the round's action/answer starts, unless the user opened it
-    }
-  };
-  const advanceRound = () => {
-    if (!curTools.length) return;
-    if (pendingThought) { tb.append(pendingThought); pendingThought = ""; }
-    finishRoundThinking();
-    const noteTxt = curNote || (bot.content || "").trim();
-    bot.rounds ||= [];
-    bot.rounds.push({
-      reasoning: bot.reasoning || "",
-      thoughtSecs: bot.thoughtSecs || 0,
-      thoughtOpen: th.open,
-      note: noteTxt,
-      tools: curTools
-    });
-    curTools = [];
-    curNote = "";
-    curRoundNo = null;
-    bot.reasoning = "";
-    bot.thoughtSecs = 0;
-    bot.content = "";
-    thinkStart = 0;
-    thinkEnd = 0;
-    userToggled = false;
-    tb.textContent = "";
-    th.hidden = true;
-    th.open = false;
-    tl.className = "tl shimmer";
-    tl.textContent = "Thinking…";
-    if (noteEl) { noteEl.hidden = true; noteEl.innerHTML = ""; }
-  };
-
-  const paint = () => {
-    raf = 0;
-    if (!el.isConnected) return;                        // the user is looking at another chat or view; the reply keeps arriving in `bot`
-    if (pendingThought) {
-      const atEnd = tb.scrollHeight - tb.scrollTop - tb.clientHeight < 24;
-      tb.append(pendingThought); pendingThought = "";
-      if (atEnd) tb.scrollTop = tb.scrollHeight;        // follow the thinking unless the user scrolled up in it
-    }
-    if (planWrap) planWrap.innerHTML = chPlanHTML(bot);
-    while (roundsWrap && renderedRounds < (bot.rounds?.length || 0)) {
-      roundsWrap.insertAdjacentHTML("beforeend", chRoundItemHTML(bot.rounds[renderedRounds++]));
-    }
-    if (noteEl) {
-      noteEl.hidden = !curNote;
-      if (curNote) noteEl.innerHTML = md(curNote);
-    }
-    if (liveToolsEl) {
-      const openSteps = new Set([...liveToolsEl.querySelectorAll("details.chattoolstep[open]")].map((d) => d.dataset.stepId));
-      liveToolsEl.innerHTML = chToolStepsInner(curTools, openSteps);
-    }
-    if (cardWrap) {
-      const cardKey = `${bot.pendingApproval?.id || ""}|${bot.pendingQuestion?.id || ""}`;
-      if (cardKey !== lastCardKey) {
-        lastCardKey = cardKey;
-        cardWrap.innerHTML = chHarnessCardHTML(bot);
-      }
-    }
-    if (bot.switching) contentEl.innerHTML = `<span class="shimmer">${bot.switching === "vision" ? `Loading ${esc(bot.switchModel || "the model")} with vision… (about 10 s)` : `Loading ${esc(bot.switchModel || "the model")}… (first load takes 10–30 s)`}</span>`;
-    else if (bot.content) contentEl.innerHTML = md(bot.content) + '<span class="caret"></span>';
-    else if (bot.reasoning || curTools.length || bot.rounds?.length) contentEl.innerHTML = "";
-    if (view === "chat" || view === "code") scrollBottom();
-  };
-  // rAF pauses while the window is hidden or covered; fall back to a timer so the reply keeps
-  // rendering (and is complete when the user comes back).
-  const repaint = () => { if (!raf) raf = document.hidden ? -setTimeout(paint, 150) : requestAnimationFrame(paint); };
-  try {
-    const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: streaming.signal });
-    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
-    for (;;) {
-      const { value, done } = await reader.read(); if (done) break;
-      buf += dec.decode(value, { stream: true }); let i;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        const evt = buf.slice(0, i); buf = buf.slice(i + 2);
-        for (const line of evt.split("\n")) {
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim(); if (data === "[DONE]") continue;
-          let j; try { j = JSON.parse(data); } catch { continue; }
-          if (j.error) { bot.error = typeof j.error === "string" ? j.error : (j.error.message || JSON.stringify(j.error)); continue; }
-          if (j.x_engine) { bot.switching = j.x_engine.status === "switching" ? j.x_engine.mode : null; bot.switchModel = j.x_engine.model; if (bot.switching) poll(); repaint(); continue; }
-          if (j.x_sources) { bot.sources = [...(bot.sources || []), ...j.x_sources]; continue; }
-          if (j.x_web_sources) { bot.web_sources = [...(bot.web_sources || []), ...j.x_web_sources]; continue; }
-          if (j.x_plan) {
-            bot.plan = j.x_plan;
-            repaint();
-            continue;
-          }
-          if (j.x_approval) {
-            bot.pendingApproval = j.x_approval;
-            repaint(); updateSend();
-            scrollBottom(true);
-            continue;
-          }
-          if (j.x_question) {
-            bot.pendingQuestion = j.x_question;
-            repaint(); updateSend();
-            scrollBottom(true);
-            continue;
-          }
-          if (j.x_tool_output) {
-            const tid = j.x_tool_output.id, chunk = j.x_tool_output.chunk || "";
-            const step = curTools.find((s) => s.id === tid) || (bot.tool_steps || []).find((s) => s.id === tid);
-            if (step && chunk) {
-              step.detail = (step.detail ? step.detail + "\n" : "") + chunk;
-              repaint();
-            }
-            continue;
-          }
-          if (j.x_checkpoint) {
-            bot.checkpoint = j.x_checkpoint;
-            continue;
-          }
-          if (j.x_tool) {
-            const rNo = String(j.x_tool.id || "").split("-")[0];
-            if (curTools.length && curRoundNo !== null && rNo !== curRoundNo) advanceRound();
-            curRoundNo = rNo;
-            finishRoundThinking();
-            if (!curTools.length && bot.content.trim()) {
-              curNote = bot.content.trim();
-              bot.content = "";
-            }
-            const ci = curTools.findIndex((step) => step.id === j.x_tool.id);
-            if (ci < 0) curTools.push(j.x_tool); else curTools[ci] = j.x_tool;
-            bot.tool_steps ||= [];
-            const i = bot.tool_steps.findIndex((step) => step.id === j.x_tool.id);
-            if (i < 0) bot.tool_steps.push(j.x_tool); else bot.tool_steps[i] = j.x_tool;
-            if (bot.pendingApproval && bot.pendingApproval.id === j.x_tool.id) delete bot.pendingApproval;
-            if (bot.pendingQuestion && bot.pendingQuestion.id === j.x_tool.id) delete bot.pendingQuestion;
-            if (view === "code" && j.x_tool.status === "done" && (CODE_MUTATING.includes(j.x_tool.name) || String(j.x_tool.name).startsWith("mcp__"))) onAgentCodeMutation();
-            delete bot.finish; repaint(); continue;
-          }
-          if (j.x_agent && AG_RID.test(j.x_agent.run_id || "")) { actionRun = j.x_agent.run_id; continue; }
-          if (j.x_computer_setup) {
-            bot.content = j.x_computer_setup.message; bot.computerSetup = j.x_computer_setup.enable ? "enable" : "settings";
-            continue;
-          }
-          const ch = j.choices?.[0], d = ch?.delta;
-          if (ch?.finish_reason) bot.finish = ch.finish_reason;
-          const rc = d?.reasoning_content ?? d?.reasoning;
-          if (rc) {
-            if (curTools.length) advanceRound();
-            if (!thinkStart) { thinkStart = performance.now(); th.hidden = false; tl.className = "tl shimmer"; tl.textContent = "Thinking…"; if (!userToggled) setOpen(true); }
-            bot.reasoning += rc; pendingThought += rc;
-          }
-          if (d?.content) {
-            if (curTools.length) advanceRound();
-            finishRoundThinking();
-            bot.content += d.content;
-          }
-          if (j.x_mlx_dspark) bot.stats = j.x_mlx_dspark;
-          repaint();
-        }
-      }
-    }
-  } catch (e) {
-    if (e.name === "AbortError" && actionRun) {
-      try { await jpost(`/api/agent/runs/${actionRun}/stop`); } catch {}
-    }
-    bot.error = e.name === "AbortError" ? (bot.content ? "" : "Stopped.") : String(e.message || e);
-  }
-  if (raf) { raf < 0 ? clearTimeout(-raf) : cancelAnimationFrame(raf); paint(); }
-  if (thinkStart && !thinkEnd) bot.thoughtSecs = (performance.now() - thinkStart) / 1000;
-  if (curTools.length) advanceRound();
-  if (!bot.error) delete bot.error;
-  delete bot.switching; delete bot.switchModel;
-  delete bot.pendingApproval; delete bot.pendingQuestion;
-  bot.thoughtOpen = th.open;                               // keep the panel as the user left it
-  const openStepIds = new Set([...el.querySelectorAll("details.chattoolstep[open]")].map((d) => d.dataset.stepId));
-  el.querySelectorAll(".chroundswrap .chround").forEach((rEl, rIdx) => {
-    const rTh = rEl.querySelector("details.thought");
-    if (rTh && bot.rounds?.[rIdx]) bot.rounds[rIdx].thoughtOpen = rTh.open;
-  });
-  streaming = null; liveGen = null; updateSend(); renderHistory();
-  if (actionRun) return chAttachAction(chat, bot, el, actionRun);
-  // Swap in the finished turn (actions + stats) without touching the rest of the thread.
-  const tbScroll = tb.scrollTop;
-  const tmp = document.createElement("div"); tmp.innerHTML = turnHTML(bot, idx);
-  const done = tmp.firstElementChild;
-  done.querySelectorAll("details.chattoolstep").forEach((d) => {
-    if (openStepIds.has(d.dataset.stepId)) d.open = true;
-  });
-  if (el.isConnected) {
-    el.replaceWith(done);
-    const ntb = done.querySelector(":scope > .thought .tb"); if (ntb) ntb.scrollTop = tbScroll;
-    showPerf(bot.stats); drawSpark(); scrollBottom();
-  }
-  if (current === chat) updateCtx();
-  if (!chat.deleted) await saveChat(chat);
-  poll();
-}
-
-// ---------------- computer actions in chat
-async function chShowSteps(button, rid) {
-  const turn = button.closest(".turn.bot");
-  const existing = turn.querySelector(".chsavedsteps");
-  if (existing) { existing.hidden = !existing.hidden; return; }
-  button.disabled = true;
-  try {
-    const data = await api(`/api/agent/runs/${rid}`);
-    const box = document.createElement("div"); box.className = "aglog chsavedsteps";
-    const state = { ...agFresh(), rid, log: box, replay: true, events: data.events || [] };
-    for (const event of state.events) if (event.type !== "answer") agRender(state, event);
-    agDerive(state);
-    box.addEventListener("click", (event) => agLogClick(state, event));
-    turn.append(box);
-  } catch (error) { toast(error.message); }
-  finally { button.disabled = false; }
-}
-// The Agent switch: a message becomes a task for the Agent. Its card lives in the thread (same building blocks as the Agent view, see agFresh);
-// when the run ends the card is replaced by the run's answer as an ordinary reply that links back to the steps.
-const AG_RID = /^[a-f0-9]{12}$/, CH_STATUS = { done: "Done", stopped: "Stopped", failed: "Failed", interrupted: "Interrupted" };
-// The last few turns of the chat as plain text for the Agent, newest last, at most ~6000 characters.
-function chContextText(msgs) {
-  const lines = [];
-  for (const m of msgs) {
-    if (!m || (m.role !== "user" && m.role !== "assistant")) continue;
-    const t = String(m.content || "").trim(); if (!t) continue;
-    lines.push(`${m.role === "user" ? "User" : "Assistant"}: ${t.length > 2000 ? t.slice(0, 2000) + "…" : t}`);
-  }
-  let out = "";
-  for (const line of lines.slice(-6).reverse()) {
-    const next = out ? line + "\n" + out : line;
-    if (next.length > 6000) break;
-    out = next;
-  }
-  return out;
-}
-const chCardHTML = (i) => `<div class="turn bot agturn" data-i="${i}"><div class="agchat">
-  <div class="agchst"><span class="dot ok"></span><span class="agchtx">Starting…</span></div>
-  <div class="agchshot" hidden></div>
-  <details class="thought agchsteps" hidden><summary>Steps <span class="tw"></span>${icon("i-right")}</summary><div class="tb"><div class="aglog"></div></div></details>
-  <div class="agchcards"></div>
-  <div class="agchctl"><button class="btn sm" data-chtake>Take over</button><button class="btn sm danger" data-chstop>Stop</button></div>
-</div></div>`;
-function chNewRun(chat, msg) {
-  const c = { chat, msg, starting: false, el: null, ui: null, shotShown: undefined, s: null };
-  c.s = { ...agFresh(), es: null, timer: 0, replay: false, log: null, cardBox: null, answerCard: false,
-    scroller: () => stick ? $("chatScroll") : null,
-    hooks: { sync: () => chSync(c), ended: () => chEnded(c), retry: () => chRetry(c) } };
-  return c;
-}
-// Point the run at a (new) card element. What it has received so far is drawn again into it.
-function chBind(c, el) {
-  const s = c.s, root = el.querySelector(".agchat");
-  c.el = el; c.shotShown = undefined;
-  c.ui = { dot: root.querySelector(".dot"), tx: root.querySelector(".agchtx"), shot: root.querySelector(".agchshot"), steps: root.querySelector(".agchsteps"), count: root.querySelector(".tw"),
-    ctl: root.querySelector(".agchctl"), take: root.querySelector("[data-chtake]"), stop: root.querySelector("[data-chstop]") };
-  s.log = root.querySelector(".aglog"); s.cardBox = root.querySelector(".agchcards");
-  Object.assign(s, { cards: {}, urls: [], shot: null, where: "", answer: "", engine: "" });
-  const was = s.replay; s.replay = true;
-  for (const e of s.events) agRender(s, e);
-  s.replay = was;
-  chSync(c);
-}
-function chSync(c) {
-  const s = c.s, ui = c.ui; if (!ui) return;
-  agDerive(s);
-  let [txt, dot] = agStateText(s, "Running…", "Starting…");
-  if (!s.live && s.status) txt = CH_STATUS[s.status] || txt;
-  if (s.lost) [txt, dot] = ["Lost connection. Reconnecting…", "warn"];
-  ui.tx.textContent = txt; ui.dot.className = "dot " + dot;
-  const url = s.shot && s.rid ? agShotUrl(s, s.shot) : "";
-  if (url !== c.shotShown) {
-    c.shotShown = url; ui.shot.hidden = !url;
-    ui.shot.innerHTML = url ? `<img src="${esc(url)}" alt="Latest screenshot" data-full="${esc(url)}" title="Open full size">` : "";
-  }
-  const steps = s.log.querySelectorAll(".agstep").length;
-  ui.steps.hidden = !s.log.childElementCount; ui.count.textContent = steps ? `· ${steps}` : "";
-  ui.ctl.hidden = !s.live;
-  ui.take.disabled = !s.live || s.pausing || s.stopping; ui.take.textContent = s.paused ? "Resume" : s.pausing ? "Pausing…" : "Take over";
-  ui.stop.disabled = !s.live || s.stopping; ui.stop.textContent = s.stopping ? "Stopping…" : "Stop";
-  agAttnNow(); updateSend();
-}
-function chCardClick(c, e) {
-  if (e.target.closest("[data-chstop]")) return agStopRun(c.s);
-  if (e.target.closest("[data-chtake]")) return agTakeoverRun(c.s);
-  const img = e.target.closest(".agchshot img[data-full]");
-  if (img) { window.open(img.dataset.full, "_blank"); return; }
-  agLogClick(c.s, e);
-}
-function chStop() { if (!chRun?.s.rid) return toast("The Agent is still starting"); agStopRun(chRun.s); }
-// Leave the card behind (another chat opens): the task keeps running, and opening this chat again reattaches to it.
-function chDetach() { if (chRun) { agClose(chRun.s); chRun = null; agAttnNow(); updateSend(); } }
-async function chAttachAction(chat, bot, el, rid) {
-  bot.content = ""; bot.agent_run = rid;
-  delete bot.computerSetup; delete bot.error; delete bot.finish;
-  await saveChat(chat);                                      // a reload can recover the run even before its first event
-  if (current !== chat) return;
-  const c = chRun = chNewRun(chat, bot);
-  Object.assign(c.s, { rid, live: true, task: chat.messages.at(-2)?.content || "" });
-  const card = chSwapTurn(chat, bot, el);
-  if (card) chBind(c, card);
-  agConnect(c.s); chSync(c); loadAgentRuns(); scrollBottom(true);
-}
-// Redraw one assistant turn where it stands. Never re-renders the thread: a normal reply may be streaming into it in this same chat.
-function chSwapTurn(chat, m, prefer) {
-  if (current !== chat) return null;
-  const i = chat.messages.indexOf(m); if (i < 0) return null;
-  const old = (prefer && prefer.isConnected ? prefer : null) || $("thread").querySelector(`.turn.bot[data-i="${i}"]`);
-  const tmp = document.createElement("div"); tmp.innerHTML = turnHTML(m, i);
-  const el = tmp.firstElementChild;
-  if (old) { old.replaceWith(el); return el; }
-  if (streaming) return null;
-  renderThread();
-  return $("thread").querySelector(`.turn.bot[data-i="${i}"]`);                // the element now in the page
-}
-async function chEnded(c) {
-  if (chRun !== c) return;
-  chRun = null;
-  loadAgentRuns(); loadAgent();
-  const m = c.msg;
-  m.content = agAnswerMd(agFinalText(agOutcome(c.s.events))); m.agent_run = c.s.rid;
-  chSwapTurn(c.chat, m, c.el); scrollBottom();
-  updateSend(); agAttnNow();
-  await saveChat(c.chat);
-}
-async function chRetry(c) {                                  // lost the stream: look at the task, then follow it again or show how it ended
-  const s = c.s; if (!s.lost) return;
-  let d; try { d = await api(`/api/agent/runs/${s.rid}`); } catch { return; }
-  if (!s.lost || chRun !== c) return;
-  const evs = Array.isArray(d.events) ? d.events : [];
-  s.lost = false;
-  evs.forEach((e) => agEvent(s, e));
-  if (!evs.some((e) => e?.type === "end")) {
-    if (["done", "stopped", "failed", "interrupted"].includes(d.status)) agEvent(s, { i: evs.length, type: "end", status: d.status });
-    else { s.live = true; s.status = ""; agConnect(s); chSync(c); }
-  }
-}
-// A saved chat whose last Agent task had no result yet: follow it if it is still running, else fill in how it ended.
-async function chResume() {
-  const chat = current, ms = chat?.messages || [];
-  let i = -1; for (let k = ms.length - 1; k >= 0; k--) if (ms[k].role === "assistant" && typeof ms[k].agent_run === "string" && !ms[k].content && !ms[k].error) { i = k; break; }
-  if (i < 0) return;
-  const m = ms[i], rid = m.agent_run; if (!AG_RID.test(rid)) return;
-  let d; try { d = await api(`/api/agent/runs/${rid}`); } catch { return; }
-  const evs = Array.isArray(d.events) ? d.events : [];
-  let live = false;
-  if (!evs.some((e) => e?.type === "end")) { const st = await agFetchStatus(); if (!st) return; live = st.running === rid; }   // can't tell: leave it for the next open
-  if (current !== chat || m.content || chRun) return;
-  if (live) {
-    const c = chRun = chNewRun(chat, m);
-    Object.assign(c.s, { rid, live: true, task: d.task || "" });
-    const el = chSwapTurn(chat, m, null);                    // draws the card for chRun in place
-    if (el && chRun === c && el.querySelector(".agchat")) chBind(c, el);
-    agConnect(c.s); updateSend(); scrollBottom(true);
-    return;
-  }
-  const final = ["done", "stopped", "failed", "interrupted"].includes(d.status) ? d.status : "interrupted";   // not live and not over: it was cut off
-  m.content = agAnswerMd(agFinalText(agOutcome(evs, final)));
-  chSwapTurn(chat, m, null); await saveChat(chat);
-}
 
 // ---------------- images
 $("advBtn").onclick = () => { $("adv").classList.toggle("on"); $("advBtn").classList.toggle("on"); };
@@ -1339,7 +82,7 @@ $("lbReuse").onclick = () => {
 
 // ---------------- code (workspace view: explorer · editor + terminal · agent chat)
 let codeExTab = "files", codeOpenPath = "", codeOriginalContent = "", codeFileDiff = "", codeFullDiff = "", codeEdViewMode = "code", codeGitInfo = null, codeInstFiles = [], codeExSeq = 0;
-const activeCodeWs = () => current?.workspace || codeWorkspace || "";
+const activeCodeWs = () => listState.current?.workspace || listState.codeWorkspace || "";
 const codeWsQ = (sep = "&") => activeCodeWs() ? `${sep}workspace=${encodeURIComponent(activeCodeWs())}` : "";
 const codeDirty = () => !!codeOpenPath && $("codeEditor").value !== codeOriginalContent;
 const CODE_CHECKED = /\.(py|json|js|mjs|cjs|swift)$/i;                                   // the file types _post_edit_diagnostics really checks
@@ -1511,8 +254,8 @@ async function loadCodeView(keepCurrentFile = false) {
   try { info = await api(`/api/workspace/info${codeWsQ("?")}`); }
   catch (err) { $("codeWsPath").textContent = err.message || "Could not load the workspace"; }
   if (info) {
-    if (info.workspace && !codeWorkspace) codeWorkspace = info.workspace;
-    if (current && info.workspace && !current.workspace) { current.workspace = info.workspace; updateWorkspaceUI(); }
+    if (info.workspace && !listState.codeWorkspace) listState.codeWorkspace = info.workspace;
+    if (listState.current && info.workspace && !listState.current.workspace) { listState.current.workspace = info.workspace; updateWorkspaceUI(); }
     const ws = info.workspace || "", name = ws.split("/").filter(Boolean).pop() || "Workspace";
     $("codeWsBadge").textContent = name;
     $("codeWsPick").title = `${ws} · choose another folder`;
@@ -1705,8 +448,8 @@ $("codeWsPick").onclick = async () => {
   try {
     const r = await jpost("/api/search/choose-folder");
     if (!r?.path) return;
-    codeWorkspace = r.path; store.set("code_workspace", r.path);
-    if (current) { current.workspace = r.path; updateWorkspaceUI(); if (current.messages.length) await saveChat(current); }
+    listState.codeWorkspace = r.path; store.set("code_workspace", r.path);
+    if (listState.current) { listState.current.workspace = r.path; updateWorkspaceUI(); if (listState.current.messages.length) await saveChat(listState.current); }
     codeCloseFile(); $("codeFileQ").value = "";
     toast(`Workspace: ${r.path}`);
     loadCodeView(); codeTermStart(true);
@@ -1758,12 +501,12 @@ $("codeModeBtn").onclick = toggleMode;
 $("v-code").addEventListener("click", async (e) => {
   const cmdBtn = e.target.closest("[data-code-cmd]");
   if (cmdBtn) {
-    if (streaming || chLive()) return toast("Wait for the reply to finish");
+    if (listState.streaming || chLive()) return toast("Wait for the reply to finish");
     const cmd = cmdBtn.dataset.codeCmd;
     if (cmd === "/compact") return compactCurrentChat();
     const ws = activeCodeWs();
-    if (!current) current = { id: newId(), title: cmd, messages: [] };
-    if (ws) current.workspace = ws;
+    if (!listState.current) listState.current = { id: newId(), title: cmd, messages: [] };
+    if (ws) listState.current.workspace = ws;
     $("input").value = cmd; autosize(); send();
     return;
   }
@@ -1786,7 +529,7 @@ $("v-code").addEventListener("click", async (e) => {
 window.onbeforeunload = (e) => { if (codeDirty()) { e.preventDefault(); e.returnValue = ""; } };
 
 // ---------------- library
-let lib = null, libTab = "chat"; mainState.runningName = null; mainState.runningMode = null;
+let lib = null, libTab = "chat"; const mainState = { runningName: null, runningMode: null };
 const activeChat = () => lib?.chat.find((m) => m.active);
 const activeImage = () => lib?.image.find((m) => m.active);
 function updateHeader() {
@@ -1806,7 +549,7 @@ async function loadLibrary() {
   renderMenu(); renderImgModels(); updateHeader(); syncThink(); agRenderModels();
   if (view === "library") renderLibrary();
   const noModel = !lib.chat.some((m) => m.installed);
-  if (!current?.messages?.length && view === "chat" && (noModel || loadLibrary._noModel)) renderThread();   // onboarding only
+  if (!listState.current?.messages?.length && view === "chat" && (noModel || loadLibrary._noModel)) renderThread();   // onboarding only
   loadLibrary._noModel = noModel;
   clearTimeout(loadLibrary._t);
   if ([...lib.chat, ...lib.image].some((m) => m.downloading)) loadLibrary._t = setTimeout(loadLibrary, 3000);
@@ -1892,7 +635,7 @@ function renderMenu() {
   const inst = lib.chat.filter((m) => m.installed);
   $("mmList").innerHTML = inst.map((m) => `<div class="mmrow${m.active ? " on" : ""}" data-mm="${m.id}">${icon("i-check", "").replace('class="i"', 'class="i ck"')}<div class="nm">${esc(m.name)}<div class="d">${esc(m.accel || "")}${m.vision ? " · Vision" : ""} · ~${m.ram_gb || m.size_gb} GB</div></div></div>`).join("") || `<div class="mmrow"><div class="nm d">No chat models downloaded yet</div></div>`;
 }
-$("mmList").onclick = async (e) => { const r = e.target.closest("[data-mm]"); if (!r) return; closeMenus(); if (streaming) return toast("Wait for the reply to finish"); try { await setActive(r.dataset.mm); } catch (err) { toast(err.message); } };
+$("mmList").onclick = async (e) => { const r = e.target.closest("[data-mm]"); if (!r) return; closeMenus(); if (listState.streaming) return toast("Wait for the reply to finish"); try { await setActive(r.dataset.mm); } catch (err) { toast(err.message); } };
 function renderImgModels() {
   const sel = $("imgModel"), cur = sel.value;
   const inst = lib.image.filter((m) => m.installed);
@@ -2019,7 +762,7 @@ async function loadStorage() {
     const [, t] = STORAGE.find(([k]) => k === b.dataset.clear);
     if (!(await confirmBox(`Clear ${t.toLowerCase()}?`, "This permanently deletes the files and can't be undone.", "Clear"))) return;
     try { await jpost("/api/storage/clear", { what: b.dataset.clear }); toast(`${t} cleared`); } catch (err) { toast(err.message); }
-    if (b.dataset.clear === "chats") { chDetach(); current = null; loadChats(); }
+    if (b.dataset.clear === "chats") { chDetach(); listState.current = null; loadChats(); }
     loadStorage();
   };
 }
@@ -2032,7 +775,7 @@ $("unBtn").onclick = async () => {
 };
 
 // ---------------- search
-let sr = null, srTimer = 0, srSeq = 0, useFiles = store.get("useFiles", false), noFilesOnce = false;
+let sr = null, srTimer = 0, srSeq = 0, useFiles = store.get("useFiles", false); mainState.noFilesOnce = false;
 function syncFiles() {
   const can = !!(sr && sr.enabled && sr.running && !sr.error);
   $("filesPill").classList.toggle("on", useFiles && can);
@@ -2351,7 +1094,7 @@ function agOpen() {
 setInterval(() => { if (view === "agent" || view === "manage") loadAgent(); }, 5000);
 function agAttn(on) { document.title = on ? "⏸ A task needs your OK" : AG_TITLE; $("navAgent").classList.toggle("attn", on); }
 // Needs the user: the Agent view's task, another task waiting in the background, or the task started from chat.
-function agAttnNow() { const w = (s) => !!s && s.live && !!s.pending && !s.paused; agAttn(w(ag) || ag.bgWait || w(chRun?.s)); }
+function agAttnNow() { const w = (s) => !!s && s.live && !!s.pending && !s.paused; agAttn(w(ag) || ag.bgWait || w(listState.chRun?.s)); }
 // Shared by both places that show a run: which step waits for the user, whether the user holds the controls, and which cards still take an answer.
 function agDerive(s) {
   s.pending = s.live ? agPendingOf(s.events) : null;
@@ -2612,7 +1355,7 @@ async function agReply(s, n, body) {
   }
 }
 async function agContinue() {
-  if (streaming) return toast("Wait for the reply to finish");
+  if (listState.streaming) return toast("Wait for the reply to finish");
   if (!ag.answer) return;
   const task = ag.task || $("agTask").value.trim();
   if (ag.chatId) {                                            // a task that began in a chat: go back to that chat, which already has the answer
@@ -2620,7 +1363,7 @@ async function agContinue() {
     if (ok) return openChat(ag.chatId);
   }
   chDetach();
-  current = { id: newId(), title: task.replace(/\s+/g, " ").slice(0, 48) || "Agent task", messages: [{ role: "user", content: task }, { role: "assistant", content: agAnswerMd(ag.answer) }] };
+  listState.current = { id: newId(), title: task.replace(/\s+/g, " ").slice(0, 48) || "Agent task", messages: [{ role: "user", content: task }, { role: "assistant", content: agAnswerMd(ag.answer) }] };
   await saveChat(); showView("chat"); renderThread(); scrollBottom(true);
 }
 async function agStopRun(s) {
@@ -2761,7 +1504,7 @@ $("agReset").onclick = async () => {
 
 // ---------------- boot
 (async () => {
-  await api("/api/system").then((s) => { $("verBadge").textContent = s.version; sysRam = s.total_bytes; }).catch(() => {});
+  await api("/api/system").then((s) => { $("verBadge").textContent = s.version; threadState.sysRam = s.total_bytes; }).catch(() => {});
   await loadLibrary();
   loadSearch();
   loadAgent();
@@ -2772,33 +1515,23 @@ $("agReset").onclick = async () => {
 })();
 
 export {
-  acIndex, acItems, acMode, acStart, acTimer, activeChat, activeCodeWs, activeImage, activeJob, addFiles, ag,
-  AG_CUA_MIN, AG_CUA_URL, AG_DROP, AG_EXAMPLES, AG_RID, AG_STATUS, AG_TAGS, AG_TIER, AG_TIER_ORDER, AG_TITLE,
-  agAnswerCard, agApprovalCard, agAttach, agAttn, agAttnNow, agBgCheck, agBoxOf, agCardEl, agClean, agClear, agClose,
-  agConnect, agContinue, agDecision, agDerive, agDetail, agEvent, agFetchStatus, agFinalText, agFresh, agGrant,
-  agLimit, agLogClick, agLogKey, agLost, agMd, agNoteEl, agOpen, agOpenSaved, agOutcome, agPausedOf, agPendingOf,
-  agPermMissing, agQuestionCard, agRender, agRenderModels, agRenderRuns, agRenderSettings, agRenderSetup,
-  agRenderTiers, agReply, agResolve, agSave, agSetErr, agSetTier, agShotUrl, agSize, agStart, agStateText, agStepRow,
-  agStopRun, agSync, agTakeoverRun, agTierKey, agTierSelect, agTitleHTML, agWeb, agWhen, applyAc, attMeta, attThumb,
-  autosize, autoTop, cardHTML, cardSig, CH_STATUS, chats, chAttachAction, chatView, chBind, chCardClick, chCardHTML,
-  chContextText, chDetach, chEnded, chHarnessCardHTML, chLive, chNewRun, chPlanHTML, chResume, chRetry,
-  chRoundItemHTML, chRoundsHTML, chRun, chShowSteps, chStop, chSwapTurn, chSync, chToolsHTML, chToolStepsInner,
-  chWebSourcesHTML, closeAc, CODE_CHECKED, CODE_MUTATING, CODE_STARTERS, codeCloseFile, codeConfirmDiscard, codeDirty,
-  codeEdViewMode, codeEmpty, codeExSeq, codeExTab, codeFileDiff, codeFullDiff, codeGitInfo, codeInstFiles, codeJump,
-  codeMarkActive, codeOpenPath, codeOriginalContent, codeSelectExTab, codeShowAllChanges, codeShowDiag, codeSyncDirty,
-  codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme, codeUpdateStatus,
-  codeWorkspace, codeWsQ, compactCurrentChat, ctxUsage, current, deleteImage, diffLinesHTML, dlText, DOC_ICON,
-  dragDepth, drawSpark, EDIT_TOOLS, effort, fmtSecs, fmtTok, gallery, generate, groupOf, hfKind, hfSearch, lbItem, lib,
-  libTab, liveGen, liveSkeletonHTML, loadAgent, loadAgentRuns, loadChats, loadCodeProcesses, loadCodeView, loadGallery,
-  loadLibrary, loadManage, loadMcp, loadSearch, loadStorage, loadVersions, loadXterm, mainState, mcpServers,
-  modelThinks, newChat, noFilesOnce, onAgentCodeMutation, openChat, openCodeFile, openLightbox, patchCards, pending,
-  perfGrid, perfLine, PERM_WORDS, permMode, renderAc, renderCodeExplorer, renderDiffLinesHTML, renderHistory,
-  renderImgModels, renderLibrary, renderMenu, renderOnboarding, renderPending, renderThread, runSearch, saveChat,
-  saveCodeFile, scrollBottom, send, setActive, setCodeEditorMode, setStepOptions, showPerf, SLASH_CMDS, sourcesHTML,
-  sr, SR_ICON, SR_OFF, SR_PAUSED, SR_STOP, srAddFolder, srAuto, srClosePreview, srEnable, srHome, srLoc, srMark,
-  srOpen, srPvSeq, srPvState, srRemoveFolder, srRes, srRow, srSave, srSecs, srSel, srSelect, srSeq, srShowPage,
-  srStatusLine, srTimer, STARTERS, stick, STORAGE, streaming, syncEffort, syncFiles, syncMode, syncThink, sysRam,
-  tagsHTML, thinking, thoughtHTML, tickWork, toggleMode, TOOL_LABELS, toolLabel, toolResultHTML, track, turnHTML,
-  updateAc, updateCodeGutter, updateCtx, updateHeader, updateSend, updateWorkspaceUI, useFiles, workStart, workTimer,
-  XTERM_FILES, xtermLoad
+  activeChat, activeCodeWs, activeImage, activeJob, ag, AG_CUA_MIN, AG_CUA_URL, AG_DROP, AG_EXAMPLES, AG_STATUS,
+  AG_TAGS, AG_TIER, AG_TIER_ORDER, AG_TITLE, agAnswerCard, agApprovalCard, agAttach, agAttn, agAttnNow, agBgCheck,
+  agBoxOf, agCardEl, agClean, agClear, agClose, agConnect, agContinue, agDecision, agDerive, agDetail, agEvent,
+  agFetchStatus, agFinalText, agFresh, agGrant, agLimit, agLogClick, agLogKey, agLost, agMd, agNoteEl, agOpen,
+  agOpenSaved, agOutcome, agPausedOf, agPendingOf, agPermMissing, agQuestionCard, agRender, agRenderModels,
+  agRenderRuns, agRenderSettings, agRenderSetup, agRenderTiers, agReply, agResolve, agSave, agSetErr, agSetTier,
+  agShotUrl, agSize, agStart, agStateText, agStepRow, agStopRun, agSync, agTakeoverRun, agTierKey, agTierSelect,
+  agTitleHTML, agWeb, agWhen, cardHTML, cardSig, CODE_CHECKED, CODE_MUTATING, codeCloseFile, codeConfirmDiscard,
+  codeDirty, codeEdViewMode, codeEmpty, codeExSeq, codeExTab, codeFileDiff, codeFullDiff, codeGitInfo, codeInstFiles,
+  codeJump, codeMarkActive, codeOpenPath, codeOriginalContent, codeSelectExTab, codeShowAllChanges, codeShowDiag,
+  codeSyncDirty, codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme,
+  codeUpdateStatus, codeWsQ, deleteImage, dlText, gallery, hfKind, hfSearch, lbItem, lib, libTab, loadAgent,
+  loadAgentRuns, loadCodeProcesses, loadCodeView, loadGallery, loadLibrary, loadManage, loadMcp, loadSearch,
+  loadStorage, loadVersions, loadXterm, mainState, mcpServers, onAgentCodeMutation, openCodeFile, openLightbox,
+  patchCards, renderCodeExplorer, renderDiffLinesHTML, renderImgModels, renderLibrary, renderMenu, runSearch,
+  saveCodeFile, setActive, setCodeEditorMode, setStepOptions, sr, SR_ICON, SR_OFF, SR_PAUSED, SR_STOP, srAddFolder,
+  srAuto, srClosePreview, srEnable, srHome, srLoc, srMark, srOpen, srPvSeq, srPvState, srRemoveFolder, srRes, srRow,
+  srSave, srSecs, srSel, srSelect, srSeq, srShowPage, srStatusLine, srTimer, STORAGE, syncFiles, tagsHTML, track,
+  updateCodeGutter, updateHeader, useFiles, XTERM_FILES, xtermLoad
 };

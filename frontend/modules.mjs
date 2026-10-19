@@ -18,33 +18,47 @@ export {
   engineState, health, metrics, poll, toggleEngine
 } from "./ui/engine.mjs";
 export {
-  acIndex, acItems, acMode, acStart, acTimer, activeChat, activeCodeWs, activeImage, activeJob, addFiles, ag,
-  AG_CUA_MIN, AG_CUA_URL, AG_DROP, AG_EXAMPLES, AG_RID, AG_STATUS, AG_TAGS, AG_TIER, AG_TIER_ORDER, AG_TITLE,
-  agAnswerCard, agApprovalCard, agAttach, agAttn, agAttnNow, agBgCheck, agBoxOf, agCardEl, agClean, agClear, agClose,
-  agConnect, agContinue, agDecision, agDerive, agDetail, agEvent, agFetchStatus, agFinalText, agFresh, agGrant,
-  agLimit, agLogClick, agLogKey, agLost, agMd, agNoteEl, agOpen, agOpenSaved, agOutcome, agPausedOf, agPendingOf,
-  agPermMissing, agQuestionCard, agRender, agRenderModels, agRenderRuns, agRenderSettings, agRenderSetup,
-  agRenderTiers, agReply, agResolve, agSave, agSetErr, agSetTier, agShotUrl, agSize, agStart, agStateText, agStepRow,
-  agStopRun, agSync, agTakeoverRun, agTierKey, agTierSelect, agTitleHTML, agWeb, agWhen, applyAc, attMeta, attThumb,
-  autosize, autoTop, cardHTML, cardSig, CH_STATUS, chats, chAttachAction, chatView, chBind, chCardClick, chCardHTML,
-  chContextText, chDetach, chEnded, chHarnessCardHTML, chLive, chNewRun, chPlanHTML, chResume, chRetry,
-  chRoundItemHTML, chRoundsHTML, chRun, chShowSteps, chStop, chSwapTurn, chSync, chToolsHTML, chToolStepsInner,
-  chWebSourcesHTML, closeAc, CODE_CHECKED, CODE_MUTATING, CODE_STARTERS, codeCloseFile, codeConfirmDiscard, codeDirty,
-  codeEdViewMode, codeEmpty, codeExSeq, codeExTab, codeFileDiff, codeFullDiff, codeGitInfo, codeInstFiles, codeJump,
-  codeMarkActive, codeOpenPath, codeOriginalContent, codeSelectExTab, codeShowAllChanges, codeShowDiag, codeSyncDirty,
-  codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme, codeUpdateStatus,
-  codeWorkspace, codeWsQ, compactCurrentChat, ctxUsage, current, deleteImage, diffLinesHTML, dlText, DOC_ICON,
-  dragDepth, drawSpark, EDIT_TOOLS, effort, fmtSecs, fmtTok, gallery, generate, groupOf, hfKind, hfSearch, lbItem, lib,
-  libTab, liveGen, liveSkeletonHTML, loadAgent, loadAgentRuns, loadChats, loadCodeProcesses, loadCodeView, loadGallery,
-  loadLibrary, loadManage, loadMcp, loadSearch, loadStorage, loadVersions, loadXterm, mainState, mcpServers,
-  modelThinks, newChat, noFilesOnce, onAgentCodeMutation, openChat, openCodeFile, openLightbox, patchCards, pending,
-  perfGrid, perfLine, PERM_WORDS, permMode, renderAc, renderCodeExplorer, renderDiffLinesHTML, renderHistory,
-  renderImgModels, renderLibrary, renderMenu, renderOnboarding, renderPending, renderThread, runSearch, saveChat,
-  saveCodeFile, scrollBottom, send, setActive, setCodeEditorMode, setStepOptions, showPerf, SLASH_CMDS, sourcesHTML,
-  sr, SR_ICON, SR_OFF, SR_PAUSED, SR_STOP, srAddFolder, srAuto, srClosePreview, srEnable, srHome, srLoc, srMark,
-  srOpen, srPvSeq, srPvState, srRemoveFolder, srRes, srRow, srSave, srSecs, srSel, srSelect, srSeq, srShowPage,
-  srStatusLine, srTimer, STARTERS, stick, STORAGE, streaming, syncEffort, syncFiles, syncMode, syncThink, sysRam,
-  tagsHTML, thinking, thoughtHTML, tickWork, toggleMode, TOOL_LABELS, toolLabel, toolResultHTML, track, turnHTML,
-  updateAc, updateCodeGutter, updateCtx, updateHeader, updateSend, updateWorkspaceUI, useFiles, workStart, workTimer,
-  XTERM_FILES, xtermLoad
+  chats, chLive, groupOf, listState, loadChats, newChat, openChat, renderHistory, saveChat, updateWorkspaceUI
+} from "./chat/list.mjs";
+export {
+  autoTop, chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chRoundsHTML, chToolsHTML, chToolStepsInner,
+  chWebSourcesHTML, CODE_STARTERS, diffLinesHTML, drawSpark, EDIT_TOOLS, fmtSecs, modelThinks, perfGrid, perfLine,
+  PERM_WORDS, renderOnboarding, renderThread, scrollBottom, showPerf, sourcesHTML, STARTERS, thoughtHTML, threadState,
+  TOOL_LABELS, toolLabel, toolResultHTML, turnHTML
+} from "./chat/thread.mjs";
+export {
+  addFiles, attachmentsState, attMeta, attThumb, chatView, DOC_ICON, dragDepth, renderPending
+} from "./chat/attachments.mjs";
+export {
+  acIndex, acItems, acMode, acStart, acTimer, applyAc, autosize, closeAc, compactCurrentChat, ctxUsage, effort, fmtTok,
+  permMode, renderAc, SLASH_CMDS, syncEffort, syncMode, syncThink, thinking, tickWork, toggleMode, updateAc, updateCtx,
+  updateSend, workStart, workTimer
+} from "./chat/composer.mjs";
+export {
+  generate, liveGen, liveSkeletonHTML, send
+} from "./chat/live.mjs";
+export {
+  AG_RID, CH_STATUS, chAttachAction, chBind, chCardClick, chCardHTML, chContextText, chDetach, chEnded, chNewRun,
+  chResume, chRetry, chShowSteps, chStop, chSwapTurn, chSync
+} from "./chat/computer.mjs";
+export {
+  activeChat, activeCodeWs, activeImage, activeJob, ag, AG_CUA_MIN, AG_CUA_URL, AG_DROP, AG_EXAMPLES, AG_STATUS,
+  AG_TAGS, AG_TIER, AG_TIER_ORDER, AG_TITLE, agAnswerCard, agApprovalCard, agAttach, agAttn, agAttnNow, agBgCheck,
+  agBoxOf, agCardEl, agClean, agClear, agClose, agConnect, agContinue, agDecision, agDerive, agDetail, agEvent,
+  agFetchStatus, agFinalText, agFresh, agGrant, agLimit, agLogClick, agLogKey, agLost, agMd, agNoteEl, agOpen,
+  agOpenSaved, agOutcome, agPausedOf, agPendingOf, agPermMissing, agQuestionCard, agRender, agRenderModels,
+  agRenderRuns, agRenderSettings, agRenderSetup, agRenderTiers, agReply, agResolve, agSave, agSetErr, agSetTier,
+  agShotUrl, agSize, agStart, agStateText, agStepRow, agStopRun, agSync, agTakeoverRun, agTierKey, agTierSelect,
+  agTitleHTML, agWeb, agWhen, cardHTML, cardSig, CODE_CHECKED, CODE_MUTATING, codeCloseFile, codeConfirmDiscard,
+  codeDirty, codeEdViewMode, codeEmpty, codeExSeq, codeExTab, codeFileDiff, codeFullDiff, codeGitInfo, codeInstFiles,
+  codeJump, codeMarkActive, codeOpenPath, codeOriginalContent, codeSelectExTab, codeShowAllChanges, codeShowDiag,
+  codeSyncDirty, codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme,
+  codeUpdateStatus, codeWsQ, deleteImage, dlText, gallery, hfKind, hfSearch, lbItem, lib, libTab, loadAgent,
+  loadAgentRuns, loadCodeProcesses, loadCodeView, loadGallery, loadLibrary, loadManage, loadMcp, loadSearch,
+  loadStorage, loadVersions, loadXterm, mainState, mcpServers, onAgentCodeMutation, openCodeFile, openLightbox,
+  patchCards, renderCodeExplorer, renderDiffLinesHTML, renderImgModels, renderLibrary, renderMenu, runSearch,
+  saveCodeFile, setActive, setCodeEditorMode, setStepOptions, sr, SR_ICON, SR_OFF, SR_PAUSED, SR_STOP, srAddFolder,
+  srAuto, srClosePreview, srEnable, srHome, srLoc, srMark, srOpen, srPvSeq, srPvState, srRemoveFolder, srRes, srRow,
+  srSave, srSecs, srSel, srSelect, srSeq, srShowPage, srStatusLine, srTimer, STORAGE, syncFiles, tagsHTML, track,
+  updateCodeGutter, updateHeader, useFiles, XTERM_FILES, xtermLoad
 } from "./main.mjs";
