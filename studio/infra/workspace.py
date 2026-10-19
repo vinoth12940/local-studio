@@ -25,7 +25,11 @@ def _harness_root() -> Path:
 
 def _in_workspace(workspace, fn, *args, turn_id=None):
     """Run fn(*args) with the chat's workspace set; meant for asyncio.to_thread so the setting stays in that thread."""
-    _chat_workspace.set(workspace)
-    if turn_id is not None:
-        _chat_turn_id.set(turn_id)
-    return fn(*args)
+    workspace_token = _chat_workspace.set(workspace)
+    turn_token = _chat_turn_id.set(turn_id) if turn_id is not None else None
+    try:
+        return fn(*args)
+    finally:
+        if turn_token is not None:
+            _chat_turn_id.reset(turn_token)
+        _chat_workspace.reset(workspace_token)

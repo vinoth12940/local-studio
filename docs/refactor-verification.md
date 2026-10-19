@@ -87,3 +87,23 @@ chat-save API readback. The first browser test used an invalid synthetic chat ID
 400; rerunning with the application's ID generator passed all cases. No real chat was requested. The dev
 server was stopped after verification. Release audits and real-model evaluation were not rerun for these fixes;
 their earlier results above remain historical evidence.
+
+## Coding harness follow-up (2026-10-18)
+
+- New Code-view chats capture and persist the selected workspace before the first request; they do not
+  append the global My files prompt. Workspace ContextVars are reset after each tool call.
+- `harness.coding_workflow` is opt-in and defaults false. When enabled, `search_files` searches the active
+  workspace directly even without an index, keeps source paths in the model result, and guides repair/retest.
+  Explicit `scope=indexed` retains personal-document lookup. Approval gates are unchanged.
+- Nonzero Python/shell exits produce error tool steps with bounded output retaining the diagnostic tail.
+  The model receives the failure and repair guidance before its next turn; actual repair still depends on
+  the model choosing the appropriate tools within the existing turn limit and permissions.
+- Foreground execution polls per-turn cancellation, drains bounded output without waiting for a newline,
+  closes stdin, and kills its process group on Stop or timeout. Existing line callbacks are preserved.
+- Four added agent checks cover workspace-only search plus path readback, a real failing-script/edit/rerun
+  sequence driven by a fake model, noisy output/timeouts/child cleanup, and Stop for legacy/resumable streams.
+  Full build: **290 successful check outputs**, Swift compilation, development signing and strict verification.
+  Evidence: `build/harness-fixes-verification/build.log`.
+- Isolated browser fixture at port 7861 used `/tmp/ls-harness-ui` and `/tmp/ls-harness-workspace`, stubbed
+  chat requests, and confirmed the new chat request and persisted chat both carried the selected workspace.
+  The visible fixture reported PASS. No real model turn, engine restart or live user-data test was performed.

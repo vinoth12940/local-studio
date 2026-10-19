@@ -4,6 +4,9 @@ Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
 """
 
 import os
+import codecs
+import contextvars
+import selectors
 import signal
 import subprocess
 import threading
@@ -21,52 +24,105 @@ _bg_processes: dict[str, dict] = {}                          # proc_id -> backgr
 _bg_lock = threading.Lock()
 
 
+# Bound to one chat turn in its execution worker; Stop never targets another chat.
+_execution_cancel = contextvars.ContextVar("_execution_cancel", default=None)
+
+
+class ExecutionStopped(ValueError):
+    def __init__(self, message, stdout="", stderr=""):
+        super().__init__(message)
+        self.stdout, self.stderr = stdout, stderr
+
+
 def _run_streamed_subprocess(argv, cwd, env, timeout=30, on_output=None, python=False, network=False):
-    """Run a child process, streaming stdout/stderr lines to on_output(chunk) if provided, up to timeout."""
+    """Drain bounded output while enforcing wall time and per-turn cancellation."""
+    cancel = _execution_cancel.get()
+    if cancel and cancel.is_set():
+        raise ExecutionStopped("Execution stopped by the user.")
     temp = tempfile.TemporaryDirectory(prefix='ls-exec-', dir='/tmp')
+    proc, watchdog = None, None
+    selector = selectors.DefaultSelector()
+    captured, streamed = {"stdout": "", "stderr": ""}, {"stdout": 0, "stderr": 0}
+    line_start = {"stdout": True, "stderr": True}
+    decoders = {name: codecs.getincrementaldecoder("utf-8")("replace") for name in captured}
+
+    def capture(name, chunk):
+        value = captured[name] + chunk
+        # Preserve the start and the most recent diagnostics, including the final traceback.
+        captured[name] = value if len(value) <= 12000 else value[:3000] + "\n... output truncated ...\n" + value[-8900:]
+        if on_output and streamed[name] < 6000:
+            visible = chunk[:6000 - streamed[name]]
+            streamed[name] += len(visible)
+            for part in visible.splitlines(keepends=True):
+                try:
+                    on_output(("[stderr] " if name == "stderr" and line_start[name] else "") + part)
+                except Exception:
+                    pass
+                line_start[name] = part.endswith("\n")
+
+    def kill_group():
+        if proc is None:
+            return
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            if proc.poll() is None:
+                proc.kill()
+
     try:
         argv, env = sandbox_command(argv, cwd, env, python=python, temp=temp.name, network=network)
         limits = resource_limits()
-        proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, env=env, start_new_session=True, bufsize=1,
+        proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=env, start_new_session=True,
                                 **({'preexec_fn': limit_child(limits)} if limits else {}))
-    except BaseException:
-        temp.cleanup()
-        raise
-    watchdog = start_rss_watchdog(proc, limits['rss_bytes']) if limits else None
-    out_chunks, err_chunks = [], []
-
-    def _reader(pipe, target, prefix=""):
-        for line in pipe:
-            target.append(line)
-            if on_output and sum(len(x) for x in target) <= 6000:
+        watchdog = start_rss_watchdog(proc, limits['rss_bytes']) if limits else None
+        for name, pipe in (("stdout", proc.stdout), ("stderr", proc.stderr)):
+            os.set_blocking(pipe.fileno(), False)
+            selector.register(pipe, selectors.EVENT_READ, name)
+        deadline, exited_at, stopped = time.monotonic() + timeout, None, None
+        while selector.get_map() or proc.poll() is None:
+            now = time.monotonic()
+            if stopped is None:
+                if cancel and cancel.is_set():
+                    stopped = "Execution stopped by the user."
+                elif now >= deadline:
+                    stopped = f"Execution timed out after {timeout} seconds"
+                if stopped:
+                    kill_group()
+            if proc.poll() is not None:
+                if exited_at is None:
+                    exited_at = now
+                    # Foreground jobs must not leave children holding pipes open.
+                    kill_group()
+                if now - exited_at >= 1:
+                    break
+            for key, _ in selector.select(.05):
                 try:
-                    on_output(prefix + line)
-                except Exception:
-                    pass
-
-    t_out = threading.Thread(target=_reader, args=(proc.stdout, out_chunks), daemon=True)
-    t_err = threading.Thread(target=_reader, args=(proc.stderr, err_chunks), daemon=True)
-    t_out.start()
-    t_err.start()
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            proc.kill()
+                    chunk = os.read(key.fileobj.fileno(), 4096)
+                except BlockingIOError:
+                    continue
+                capture(key.data, decoders[key.data].decode(chunk, final=not chunk))
+                if not chunk:
+                    selector.unregister(key.fileobj)
         proc.wait(timeout=5)
-        raise ValueError(f"Execution timed out after {timeout} seconds")
+        if stopped:
+            raise ExecutionStopped(stopped, captured["stdout"], captured["stderr"])
+        if watchdog and watchdog[1].is_set():
+            raise ExecutionStopped('Execution exceeded the RSS memory limit; process group stopped.',
+                                   captured["stdout"], captured["stderr"])
+        return proc.returncode, captured["stdout"], captured["stderr"]
     finally:
         if watchdog:
             watchdog[0].set()
+        kill_group()
+        if proc:
+            proc.wait(timeout=5)
+            proc.stdout.close()
+            proc.stderr.close()
+        selector.close()
         temp.cleanup()
-    t_out.join(timeout=1)
-    t_err.join(timeout=1)
-    if watchdog and watchdog[1].is_set():
-        raise ValueError('Execution exceeded the RSS memory limit; process group stopped.')
-    return proc.returncode, "".join(out_chunks), "".join(err_chunks)
 
 
 def _start_bg_shell(cmd: str, cwd: Path, env: dict) -> dict:

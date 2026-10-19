@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+Coding harness corrections: new Code chats bind and persist the selected workspace before sending.
+`harness.coding_workflow` defaults to false; enable it under `harness` in STATE/data/settings.json for
+workspace-first `search_files` and diagnosis/repair/retest guidance. `scope=workspace` searches directly
+without the personal-file index; `scope=indexed` explicitly requests indexed documents.
+Foreground Python/shell tools report nonzero exits as errors, retain bounded diagnostic tails, and terminate
+their process group on timeout or chat Stop. These correctness fixes preserve existing approval gates.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What this is

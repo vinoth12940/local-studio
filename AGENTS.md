@@ -129,3 +129,7 @@ New persistent JSON writes should use `studio/storage/atomic.py::write_text_atom
 
 P4/P6 flags `performance.isolated_io`, `performance.chat_index`, `streams.resume`, and `search.incremental` default to false.
 Search has its own route/auth contract check in `macos/check_search_contract.py`; its payloads are independent of backend SSE.
+
+`harness.coding_workflow` defaults to false and enables workspace-first search plus repair/retest guidance.
+Code chats persist the selected workspace before sending. Foreground execution uses bounded output and a
+per-turn cancellation event; preserve process-group cleanup on Stop/timeout and nonzero-exit error reporting.

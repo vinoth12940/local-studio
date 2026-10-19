@@ -28,7 +28,7 @@ from studio.services import web as services_web
 from studio.config import AGENT_SCRATCH_DIR, DOCUMENT_READER, ENGINES, HOME
 from studio.infra.edits import _match_edit_block, _post_edit_diagnostics
 from studio.infra.harness_args import _normalize_harness_args, _parse_harness_args
-from studio.infra.processes import _manage_bg_process, _run_streamed_subprocess, _start_bg_shell
+from studio.infra.processes import ExecutionStopped, _manage_bg_process, _run_streamed_subprocess, _start_bg_shell
 from studio.infra.system import _chat_datetime
 from studio.infra.workspace import _chat_workspace, _harness_root, _in_workspace
 from studio.security.agent_gate import _host
@@ -42,6 +42,7 @@ from studio.services.web import _WebPageText, _WebSearchResults
 from studio.storage.backups import _backup_file
 from studio.storage.memory import _load_agent_memory, _save_agent_memory
 from studio.storage.settings import load_settings
+from studio.storage.flags import flag
 
 
 # ---------------------------------------------------------------- LLM proxy
@@ -108,8 +109,9 @@ CHAT_READ_TOOLS = [
                  {"query": {"type": "string"}}, ("query",)),
     _chat_schema("read_webpage", "Read a public HTTP(S) page to verify facts and dates.",
                  {"url": {"type": "string"}}, ("url",)),
-    _chat_schema("search_files", "Search local indexed files. Use sort=newest for latest documents.",
-                 {"query": {"type": "string"}, "sort": {"type": "string", "enum": ["relevance", "newest"]}}, ("query",)),
+    _chat_schema("search_files", "Search local files. scope=workspace searches the active workspace without an index; scope=indexed searches indexed personal documents. The coding workflow defaults to workspace scope when a workspace is active. Use find_files/grep_files for targeted code lookup.",
+                 {"query": {"type": "string"}, "sort": {"type": "string", "enum": ["relevance", "newest"]},
+                  "scope": {"type": "string", "enum": ["workspace", "indexed"]}}, ("query",)),
     _chat_schema("read_file", "Read a local file by search_files file_id (with OCR) or by path.",
                  {"file_id": {"type": "integer"}, "path": {"type": "string"},
                   "start_page": {"type": "integer"}, "max_pages": {"type": "integer"},
@@ -236,6 +238,17 @@ class _ChatSession:
         return {"decision": "deny", "error": "Timed out waiting for response."}
 
 
+def _execution_result(rc, out, err, **extra):
+    def compact(text):
+        return text if len(text) <= 6000 else text[:1800] + "\n... output truncated ...\n" + text[-4100:]
+    result = {**extra, "returncode": rc, "stdout": compact(out), "stderr": compact(err),
+              "truncated": len(out) > 6000 or len(err) > 6000}
+    if rc is not None and rc != 0:
+        result.update(error=f"Execution failed with exit code {rc}.", verified=False,
+                      repair_hint="Read stdout/stderr and the affected source. If the user requested a fix, correct the cause and rerun the relevant check; do not repeat this failing command unchanged.")
+    return result
+
+
 def _chat_action_tool(name, args, on_output=None):
     """Execute an approved write_file, edit_file, multi_edit_file, run_python, run_shell, or custom MCP tool call."""
     args = _normalize_harness_args(name, args)
@@ -315,12 +328,11 @@ def _chat_action_tool(name, args, on_output=None):
                    "HOME": str(HOME), "TMPDIR": os.environ.get("TMPDIR", "/tmp"), "WORKSPACE": str(root),
                    "LANG": "en_US.UTF-8", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"}
             rc, out, err = _run_streamed_subprocess(
-                [sys.executable, "-I", "-c", code],
+                [sys.executable, "-I", "-u", "-c", code],
                 cwd=root if root.is_dir() else AGENT_SCRATCH_DIR,
                 env=env, timeout=20, on_output=on_output, python=True
             )
-            return {"returncode": rc, "stdout": out[:6000], "stderr": err[:6000],
-                    "truncated": len(out) > 6000 or len(err) > 6000}
+            return _execution_result(rc, out, err, cwd=str(root))
         if name == "run_shell":
             cmd = str(args.get("command") or "")
             ok, reason = _gate_shell_command(cmd)
@@ -335,9 +347,11 @@ def _chat_action_tool(name, args, on_output=None):
             rc, out, err = _run_streamed_subprocess(
                 ["/bin/zsh", "-c", cmd], cwd=cwd, env=env, timeout=timeout, on_output=on_output
             )
-            return {"command": cmd, "cwd": str(cwd), "returncode": rc,
-                    "stdout": out[:6000], "stderr": err[:6000], "truncated": len(out) > 6000 or len(err) > 6000}
+            return _execution_result(rc, out, err, command=cmd, cwd=str(cwd))
         raise ValueError(f"Unknown action tool: {name}")
+    except ExecutionStopped as err:
+        return {**_execution_result(None, err.stdout, err.stderr), "error": str(err), "verified": False,
+                "repair_hint": "The process group was stopped. Inspect the captured diagnostics; do not repeat an unchanged hanging command. For a requested long-running server, use run_shell with background=true and manage_process."}
     except (ValueError, OSError, subprocess.SubprocessError) as err:
         return {"error": str(err), "verified": False}
 
@@ -685,6 +699,21 @@ def _chat_read_tool(name, args, timezone=None):
         if name == "read_file" and args.get("path") is not None and args.get("file_id") is None:
             return _read_local_path(args.get("path"), args.get("start_line", 1), args.get("max_lines", 160),
                                     args.get("start_page", 1), args.get("max_pages", 2))
+        if name == "search_files" and (args.get("scope") == "workspace" or (flag("harness.coding_workflow") and _chat_workspace.get() and args.get("scope") != "indexed")):
+            if not _chat_workspace.get():
+                raise ValueError("Choose an active workspace before searching scope=workspace")
+            query = args.get("query")
+            if not isinstance(query, str) or not query.strip() or len(query) > 500:
+                raise ValueError("Use a short workspace filename or text to search")
+            files = _chat_read_tool("find_files", {"pattern": query})
+            matches = _chat_read_tool("grep_files", {"query": re.escape(query)})
+            results = {}
+            for item in files.get("matches", []) + matches.get("matches", []):
+                path = item["path"]
+                results.setdefault(path, {"path": path, "name": Path(path).name,
+                                          "snippet": item.get("text", ""), "line": item.get("line")})
+            return {"scope": "workspace", "workspace": str(_harness_root()), "results": list(results.values())[:60],
+                    "note": "Direct workspace filename and literal-text matches; no global index or web search was used. Read relevant paths with read_file. For broader questions, list_directory first, then find_files or grep_files with a focused pattern."}
         if name in ("search_files", "read_file"):
             if not load_settings()["search"]["enabled"]:
                 raise ValueError("Local file search is off. Enable Search in Settings so I can inspect your files; I have not searched them")
@@ -1165,11 +1194,17 @@ def _with_agent_note(messages, timezone=None, use_files=False, workspace=None):
     ws = workspace or _chat_workspace.get()
     if ws:
         note += f"\n\nActive workspace folder: {ws} (file and shell tools operate here by default)."
+        if flag("harness.coding_workflow"):
+            note += ("\nFor questions about this project, inspect this workspace first: list_directory, find_files, grep_files and read_file(path=...). "
+                     "search_files defaults to this workspace even when the personal file index is disabled. Do not search the user's other folders or the web for workspace code. "
+                     "Use search_files(scope=indexed) only if the user explicitly asks for personal documents outside this workspace; use the web when external documentation is needed. "
+                     "When implementing or fixing code, a nonzero exit code, timeout or failed syntax check means verification failed. Read the diagnostics and affected source, fix the cause within the user's requested scope, then rerun the relevant check. "
+                     "Do not repeat an unchanged failing command or report success without a passing check. If blocked by permissions or missing prerequisites, explain the blocker.")
         ws_instructions = _load_workspace_instructions(ws)
         if ws_instructions:
             blocks = [f'<<<WORKSPACE_INSTRUCTIONS name="{item["name"]}"\n{item["content"]}\nWORKSPACE_INSTRUCTIONS>>>' for item in ws_instructions]
             note += "\n\nWorkspace project instructions (follow these repository commands, conventions, and rules):\n" + "\n\n".join(blocks)
-    if use_files: note += "\n\n" + FILES_PROMPT
+    if use_files and not ws: note += "\n\n" + FILES_PROMPT
     first = messages[0] if messages else None
     if first and first.get("role") == "system":
         c = first.get("content")

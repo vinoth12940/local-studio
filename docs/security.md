@@ -79,6 +79,7 @@ re-read when the file changes. All flags below default to the previous behavior:
 | `performance.chat_index` | `false` | `true`: cache chat metadata while validating authoritative JSON signatures on every list request. |
 | `search.incremental` | `false` | `true`: poll configured search roots and debounce changed-file reindexing; full passes return 503/Retry-After. |
 | `streams.resume` | `false` | `true`: retain bounded process-local chat SSE replay buffers and enable reconnect/reload resume. |
+| `harness.coding_workflow` | `false` | `true`: default `search_files` to the active workspace and guide the model through diagnosing, repairing and rerunning failed coding checks. Explicit `scope=indexed` retains personal-document lookup. Existing approval gates still apply. |
 | `logging.json_requests` | `false` | `true`: slow, failing and non-GET request metadata in `logs/requests.jsonl`; no bodies, headers or query strings. |
 | `security.redact` | `false` | `true`: filter the output/log surfaces described above. Restart child processes to replace their log descriptors. |
 | `security.upload_sniff` | `false` | `true`: validate supported upload signatures and reject binary text uploads. |

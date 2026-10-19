@@ -10,6 +10,7 @@ from studio.config import SETTINGS
 
 # flag -> (default, what turning it on does)
 FLAGS = {
+    "harness.coding_workflow": (False, "Prefer direct workspace search and coach diagnosis, repair and verification after coding failures"),
     "performance.isolated_io": (False, "Use a bounded dedicated pool for search media/render routes"),
     "performance.chat_index": (False, "Cache chat titles/timestamps while validating file signatures on every list request"),
     "search.incremental": (False, "Debounce edited-file reindexing and return 503 plus Retry-After during full index passes"),

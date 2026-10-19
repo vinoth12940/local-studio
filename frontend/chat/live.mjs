@@ -4,7 +4,7 @@ import { chatEvents } from "./stream.mjs";
 import { md } from "../core/markdown.mjs";
 import { view } from "../ui/views.mjs";
 import { poll } from "../ui/engine.mjs";
-import { chLive, listState, renderHistory, saveChat } from "./list.mjs";
+import { chLive, listState, renderHistory, saveChat, updateWorkspaceUI } from "./list.mjs";
 import {
   chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chToolStepsInner, drawSpark, fmtSecs, modelThinks, renderThread,
   scrollBottom, showPerf, threadState, turnHTML
@@ -13,13 +13,21 @@ import { attachmentsState, renderPending } from "./attachments.mjs";
 import {
   autosize, closeAc, compactCurrentChat, effort, permMode, thinking, updateCtx, updateSend
 } from "./composer.mjs";
-import { AG_RID, chAttachAction, CODE_MUTATING, onAgentCodeMutation, searchState, sr, useFiles } from "../modules.mjs";
+import { activeCodeWs, AG_RID, chAttachAction, CODE_MUTATING, loadCodeView, onAgentCodeMutation, searchState, sr, useFiles } from "../modules.mjs";
 
 async function send() {
   const text = $("input").value.trim();
   const atts = attachmentsState.pending.filter((p) => p.meta).map((p) => p.meta);
   if ((text || atts.length) && listState.streaming && liveGen && liveGen.chat !== listState.current) return toast(`Still answering in “${liveGen.chat.title}”. Wait for it, or open it and stop it.`);
   if ((!text && !atts.length) || listState.streaming || chLive() || attachmentsState.pending.some((p) => p.busy)) return;
+  if (view === "code" && !activeCodeWs()) await loadCodeView();
+  const workspace = view === "code" ? activeCodeWs() : listState.current?.workspace;
+  if (view === "code" && !workspace) return toast("Choose a workspace folder before sending a coding task.");
+  if (workspace) {
+    if (!listState.current) listState.current = { id: newId(), title: "New coding task", messages: [] };
+    listState.current.workspace = workspace;
+    updateWorkspaceUI();
+  }
   closeAc();
   if (text === "/compact" || text.startsWith("/compact ")) {
     $("input").value = ""; autosize();
@@ -98,7 +106,7 @@ async function generate(resumeBot = null) {
   const body = { messages, chat_id: chat.id, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
   if (effort && modelThinks()) body.reasoning_effort = effort;
   if (s.temp) body.temperature = +s.temp;
-  if (useFiles && sr?.running && !sr.error && !searchState.noFilesOnce) body.use_files = true;
+  if (!chat.workspace && useFiles && sr?.running && !sr.error && !searchState.noFilesOnce) body.use_files = true;
   if (listState.current?.workspace) body.workspace = listState.current.workspace;
   if (listState.current?.workspace && permMode === "accept_edits") body.permission_mode = "accept_edits";
   searchState.noFilesOnce = false;

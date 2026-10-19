@@ -5874,6 +5874,138 @@ def chat_resume_flag_adds_ids_without_changing_payloads_or_reposting():
         assert not e.sessions
     streams._STREAMS.clear()
 
+@check
+def harness_workspace_search_stays_local_without_an_index():
+    from unittest.mock import patch
+    with patch("studio.services.harness.flag", side_effect=lambda name: name == "harness.coding_workflow"):
+        ws = TMP / 'workspace-search'
+        ws.mkdir(exist_ok=True)
+        (ws / 'logic.py').write_text('def workspace_answer():\n    return 42\n')
+        outside = TMP / 'outside-workspace.txt'
+        outside.write_text('workspace_answer private outside match')
+        before = app._chat_workspace.get()
+        with patch('studio.services.search._search_proxy', side_effect=AssertionError('global index contacted')):
+            result = app._in_workspace(str(ws), app._chat_read_tool, 'search_files', {'query': 'workspace_answer'})
+        assert result['scope'] == 'workspace' and [r['path'] for r in result['results']] == [str(ws / 'logic.py')], result
+        assert app._chat_workspace.get() == before
+        assert 'return 42' in app._in_workspace(str(ws), app._chat_read_tool, 'read_file', {'path': 'logic.py'})['text']
+        note = app._with_agent_note([{'role': 'user', 'content': 'Explain this project'}], use_files=True, workspace=str(ws))[0]['content']
+        assert 'inspect this workspace first' in note and app.FILES_PROMPT not in note
+        # Explicit personal-document lookup retains the old index path.
+        with patch('studio.services.harness.load_settings', return_value={'search': {'enabled': True}}), \
+             patch('studio.services.search._search_proxy', return_value=types.SimpleNamespace(json=lambda: {'results': []})) as proxy:
+            app._in_workspace(str(ws), app._chat_read_tool, 'search_files', {'query': 'passport', 'scope': 'indexed'})
+            assert proxy.call_count == 1
+        with Env() as e, ChatEngine(turns=[chat_action_deltas('search_files', '{"query":"workspace_answer"}'),
+                                          chat_action_deltas('read_file', '{"path":"logic.py"}'),
+                                          [chat_delta(content='The workspace returns 42.')]]) as engine:
+            result = e.c.post('/api/chat', json={'model_id': TEXT_MLX, 'workspace': str(ws),
+                             'messages': [{'role': 'user', 'content': 'Explain workspace_answer'}]})
+            assert result.status_code == 200 and 'The workspace returns 42' in result.text, result.text
+            search_result = json.loads(next(m['content'] for m in engine.seen[1]['messages'] if m.get('role') == 'tool'))
+            assert search_result['results'][0]['path'] == str((ws / 'logic.py').resolve()), search_result
+
+@check
+def harness_failed_script_is_an_error_then_can_be_repaired_and_retested():
+    from unittest.mock import patch
+    ws = TMP / 'script-repair'
+    ws.mkdir(exist_ok=True)
+    path = ws / 'broken.py'
+    path.write_text('print(1 / 0)\n')
+    code = "exec(open('broken.py').read())"
+    turns = [chat_action_deltas('run_python', json.dumps({'code': code})),
+             chat_action_deltas('read_file', '{"path":"broken.py"}'),
+             chat_action_deltas('edit_file', '{"path":"broken.py","old_text":"1 / 0","new_text":"1 / 1"}'),
+             chat_action_deltas('run_python', json.dumps({'code': code})),
+             [chat_delta(content='Fixed and verified: 1.0')]]
+    with Env() as e, ChatEngine(turns=turns) as engine, \
+         patch('studio.api.chat.harness_gate', return_value=('safe', None, {})):
+        response = e.c.post('/api/chat', json={'model_id': TEXT_MLX, 'workspace': str(ws),
+                           'messages': [{'role': 'user', 'content': 'Fix broken.py and verify it'}]})
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: {')]
+    steps = [ev['x_tool'] for ev in events if ev.get('x_tool', {}).get('name') == 'run_python']
+    assert [s['status'] for s in steps] == ['running', 'error', 'running', 'done'], steps
+    failure = json.loads(next(m['content'] for m in engine.seen[1]['messages'] if m.get('role') == 'tool'))
+    assert failure['returncode'] != 0 and 'ZeroDivisionError' in failure['stderr'] and failure['repair_hint'], failure
+    assert path.read_text() == 'print(1 / 1)\n' and 'Fixed and verified' in response.text
+    shell = app._in_workspace(str(ws), app._chat_action_tool, 'run_shell', {'command': 'echo failure >&2; exit 7'})
+    assert shell['returncode'] == 7 and shell['error'] and 'failure' in shell['stderr'], shell
+
+
+@check
+def harness_execution_deadlines_output_bounds_and_stop():
+    import studio.infra.processes as processes
+    import threading
+    ws = TMP / 'bounded-exec'
+    ws.mkdir(exist_ok=True)
+    # No newline: output still streams promptly and the tail retains the diagnostic.
+    rc, out, err = processes._run_streamed_subprocess(
+        [sys.executable, '-c', "import sys;sys.stdout.write('x'*2000000);sys.stderr.write('y'*2000000+'FINAL ERROR');sys.exit(2)"],
+        ws, dict(os.environ), timeout=5)
+    assert rc == 2 and len(out) <= 12000 and len(err) <= 12000 and err.endswith('FINAL ERROR')
+    started = time.monotonic()
+    try:
+        processes._run_streamed_subprocess([sys.executable, '-u', '-c', "import time; print('before hang'); time.sleep(30)"],
+                                          ws, dict(os.environ), timeout=.3)
+        assert False, 'hanging script did not time out'
+    except processes.ExecutionStopped as exc:
+        assert 'timed out' in str(exc) and 'before hang' in exc.stdout
+    assert time.monotonic() - started < 3
+    # Stop must kill the child as well as the Python process, and not poison another call.
+    marker = ws / 'child-finished'
+    child = "import time,pathlib;time.sleep(1);pathlib.Path(" + repr(str(marker)) + ").write_text('survived')"
+    code = "import subprocess,sys,time;subprocess.Popen([sys.executable,'-c'," + repr(child) + "]);print('ready',flush=True);time.sleep(30)"
+    cancel = threading.Event()
+    token = processes._execution_cancel.set(cancel)
+    try:
+        try:
+            processes._run_streamed_subprocess([sys.executable, '-u', '-c', code], ws, dict(os.environ), timeout=5,
+                                              on_output=lambda chunk: cancel.set())
+            assert False, 'cancelled script returned success'
+        except processes.ExecutionStopped as exc:
+            assert 'stopped by the user' in str(exc)
+    finally:
+        processes._execution_cancel.reset(token)
+    time.sleep(1.2)
+    assert not marker.exists(), 'Stop left the child running'
+    assert processes._run_streamed_subprocess([sys.executable, '-c', "print('unrelated')"], ws, dict(os.environ))[1].strip() == 'unrelated'
+
+
+@check
+def chat_stop_cancels_running_python_for_legacy_and_resumable_streams():
+    import asyncio
+    import studio.api.chat as api_chat
+    import studio.services.chat_streams as streams
+    from unittest.mock import patch
+    for resumable in (False, True):
+        ws = TMP / ('stop-resume' if resumable else 'stop-legacy')
+        ws.mkdir(exist_ok=True)
+        marker = ws / 'should-not-finish'
+        code = "import time,pathlib;print('started',flush=True);time.sleep(1);pathlib.Path('should-not-finish').write_text('bad');time.sleep(30)"
+        class Request:
+            async def json(self):
+                return {'model_id': TEXT_MLX, 'workspace': str(ws), 'messages': [{'role': 'user', 'content': 'Run this script'}]}
+            async def is_disconnected(self): return False
+        async def exercise():
+            response = await api_chat.chat(Request())
+            async for event in response.body_iterator:
+                if 'x_tool_output' in event and 'started' in event:
+                    if resumable:
+                        await api_chat.stop_chat_stream(response.headers['x-chat-stream-id'])
+                        stream = streams.get_stream(response.headers['x-chat-stream-id'])
+                        await asyncio.wait_for(stream.task, 3)
+                    await response.body_iterator.aclose()
+                    break
+            await asyncio.sleep(1.2)
+            assert not marker.exists(), 'Stop did not terminate Python'
+            assert app.active_chats == 0
+        with Env(), ChatEngine(turns=[chat_action_deltas('run_python', json.dumps({'code': code}))]), \
+             patch('studio.api.chat.harness_gate', return_value=('safe', None, {})):
+            s = app.load_settings(); s['streams'] = {'resume': resumable}; app.save_settings(s)
+            asyncio.run(exercise())
+        streams._STREAMS.clear()
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

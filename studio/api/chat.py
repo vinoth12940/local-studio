@@ -23,6 +23,7 @@ from studio.services import models
 from studio.api.agent import agent_run
 from studio.config import AGENT_BUSY_MSG, agent_engine, agent_lock, ENGINES
 from studio.infra.harness_args import _normalize_harness_args, _parse_harness_args
+from studio.infra.processes import _execution_cancel
 from studio.infra.sse import _sse
 from studio.infra.workspace import _chat_turn_id, _in_workspace
 from studio.security.execution import _python_network
@@ -228,6 +229,7 @@ async def chat(request: Request):
         turn_id = uuid.uuid4().hex[:16]
         turn_backups: list[dict] = []
         session = _ChatSession(chat_id=chat_id)
+        execution_cancel = threading.Event()
         _chat_sessions[session.id] = session
         try:
             for round_no in range(CHAT_TOOL_ROUNDS):
@@ -339,13 +341,16 @@ async def chat(request: Request):
                                 sink = _tool_output_sink(out_q)
                                 def _run_act():
                                     network_token = _python_network.set(python_network)
+                                    cancel_token = _execution_cancel.set(execution_cancel)
                                     try:
                                         _chat_turn_id.set(turn_id)
                                         return _in_workspace(workspace, _chat_action_tool, name, args, sink)
                                     finally:
+                                        _execution_cancel.reset(cancel_token)
                                         _python_network.reset(network_token)
                                 fut = asyncio.get_running_loop().run_in_executor(None, _run_act)
                                 while not fut.done():
+                                    if await request.is_disconnected(): return
                                     while not out_q.empty():
                                         yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
                                     await asyncio.sleep(0.04)
@@ -362,13 +367,16 @@ async def chat(request: Request):
                             sink = _tool_output_sink(out_q)
                             def _run_act_safe():
                                 network_token = _python_network.set(python_network)
+                                cancel_token = _execution_cancel.set(execution_cancel)
                                 try:
                                     _chat_turn_id.set(turn_id)
                                     return _in_workspace(workspace, _chat_action_tool, name, args, sink)
                                 finally:
+                                    _execution_cancel.reset(cancel_token)
                                     _python_network.reset(network_token)
                             fut = asyncio.get_running_loop().run_in_executor(None, _run_act_safe)
                             while not fut.done():
+                                if await request.is_disconnected(): return
                                 while not out_q.empty():
                                     yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
                                 await asyncio.sleep(0.04)
@@ -411,7 +419,7 @@ async def chat(request: Request):
                             if source.get("name") and source.get("path"):
                                 yield _sse({"x_sources": [{k: source.get(k) for k in ("file_id", "name", "path", "locator")}]})
                     model_result = result
-                    if name == "search_files" and result.get("results"):
+                    if name == "search_files" and result.get("results") and result.get("scope") != "workspace":
                         # Search offers candidates, not full document evidence. Avoid repeatedly
                         # prefilling long paths and passages before the model reads the actual files.
                         model_result = {**result, "results": [{**{k: v for k, v in item.items() if k not in ("path", "snippet")},
@@ -426,6 +434,7 @@ async def chat(request: Request):
                 yield "data: [DONE]\n\n"
                 return
         finally:
+            execution_cancel.set()
             _chat_sessions.pop(session.id, None)
         first, n_out, last_timings, usage = state["first"], state["n_out"], state["timings"], state["usage"]
         if mode == "text":
