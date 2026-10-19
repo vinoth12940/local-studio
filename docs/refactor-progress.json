@@ -565,7 +565,8 @@
   "verify": [
    "numbers in docs/perf-baseline.md"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: Generated 2000 chats x 25 messages = 50000 messages, 32.6 MB in temporary STATE. Before: list p95 73.56ms, load 0.82ms. P4 opt-in cache: list 20.87ms, load 0.71ms. Full benchmark output and decision in docs/perf-baseline.md; retain authoritative JSON."
  },
  {
   "id": "P5.sqlite",
@@ -575,7 +576,8 @@
    "check_app.py storage checks",
    "EXPLAIN QUERY PLAN no full scans"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: Conditional item not activated: P5.decide shows cached JSON list/load meet targets. No SQLite store, storage.sqlite flag, migration, data deletion, or new SQL queries are needed; SQL query-plan verification is not applicable. JSON and the cache-off rollback path remain. This records the explicit conditional decision, not an implemented SQLite migration."
  },
  {
   "id": "P6.search-package",

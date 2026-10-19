@@ -423,3 +423,17 @@ The bounded render pool deliberately queues excess rendering rather than growing
  }
 }
 ```
+
+
+## P5 storage decision (2026-10-18)
+
+The required corpus is 2,000 chats, 25 messages each (50,000 messages, 32.6 MB JSON).
+Without optimization, list p95 is 73.56 ms; a single chat loads in 0.82 ms p95.
+With P4's metadata cache, list p95 is 20.87 ms and load p95 is 0.71 ms.
+The cache detects external writes, atomic replacements, corrupt JSON and deletion in regression tests.
+
+**Decision: retain JSON.** Both measured operations meet the 50 ms target with the simpler opt-in cache.
+SQLite's migrations, dual stores and recovery paths are not justified by these numbers for one user on one Mac.
+P5.sqlite's conditional prerequisite is false, so no database, migration, deletion, storage.sqlite flag or SQL query plan
+is introduced. Existing JSON data remains authoritative; switching the cache off uses the original list path.
+Revisit only if future realistic measurements exceed the target after the cache is enabled.
