@@ -74,6 +74,7 @@ import studio.config  # noqa: E402
 import studio.infra.mcp_client  # noqa: E402
 import studio.services.engines  # noqa: E402
 import studio.services.models  # noqa: E402
+import studio.services.search  # noqa: E402
 
 patch_guard.install(app)                                   # app.X = fake must reach the code that reads X
 
@@ -5092,7 +5093,7 @@ def my_files_reads_each_requested_document_instead_of_using_initial_snippets():
         else:
             value = {"file_id": 9, "name": "Alex passport.pdf", "path": "/fixtures/passport.pdf", "text": "Date of Expiry: 18/10/2030", "read_method": ["on_device_ocr"]}
         return types.SimpleNamespace(json=lambda: value)
-    app._search_proxy = proxy
+    studio.services.search._search_proxy = proxy
     try:
         turns = [chat_action_deltas(name="search_files", args='{"query":"Alex passport","sort":"newest"}'),
                  chat_action_deltas(name="read_file", args='{"file_id":9,"start_page":1,"max_pages":1}'),
@@ -5110,7 +5111,7 @@ def my_files_reads_each_requested_document_instead_of_using_initial_snippets():
             assert len(candidates[0]["snippet"]) <= 300 and candidates[0]["snippet_is_partial"] and "path" not in candidates[0]
             source_events=[event["x_sources"] for event in sse(result.text) if "x_sources" in event]
             assert len(source_events)==1 and source_events[0][0]["path"]=="/fixtures/passport.pdf"
-    finally: app._search_proxy=real
+    finally: studio.services.search._search_proxy=real
 
 
 @check
@@ -5121,7 +5122,7 @@ def chat_file_tools_keep_private_evidence_local():
         calls.append((method, path, kwargs))
         value = {"results": [{"file_id": 2, "name": "I94 2025.pdf", "path": "/docs/I94 2025.pdf", "document_date": "2025-03-15"}]} if path == "/search" else {"file_id": 2, "text": "Most Recent Date of Entry: 03/15/2025"}
         return types.SimpleNamespace(json=lambda: value)
-    app._search_proxy = proxy
+    studio.services.search._search_proxy = proxy
     try:
         turns = [chat_action_deltas(name="search_files", args='{"query":"I-94","sort":"newest"}'),
                  chat_action_deltas(name="read_file", args='{"file_id":2}'), chat_action_deltas(name="reply", args='{"text":"The verified entry date is in 2025."}')]
@@ -5131,7 +5132,7 @@ def chat_file_tools_keep_private_evidence_local():
             assert [path for _, path, _ in calls] == ["/search", "/text/2"] and calls[0][2]["json"]["sort"] == "newest"
             assert "03/15/2025" in engine.seen[-1]["messages"][-1]["content"] and "2025" in result.text
             assert not e.sessions and any("x_sources" in event for event in sse(result.text))
-    finally: app._search_proxy = real
+    finally: studio.services.search._search_proxy = real
 
 
 @check

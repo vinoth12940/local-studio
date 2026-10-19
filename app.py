@@ -52,21 +52,23 @@ from studio.api import attachments as api_attachments
 from studio.api import engines as api_engines
 from studio.api import images as api_images
 from studio.api import models as api_models
+from studio.api import search as api_search
 from studio import config as studio_config
 from studio.infra import mcp_client
 from studio.services import engines as services_engines
 from studio.services import models as services_models
+from studio.services import search as services_search
 from studio.config import (
     AGENT_BACKUPS_DIR, AGENT_BUSY_MSG, AGENT_DIR, AGENT_DOWNLOADS, agent_engine, agent_lock, AGENT_SCRATCH_DIR,
     APP_SUPPORT, BREW, CHATS, CUA_MIN, DOCUMENT_READER, DSPARK_PY, EDIT_MODEL, ENGINES, GALLERY, HOME, LLAMA_SERVER,
-    LOGS, ROOT, SEARCH_DEPS_OK, SEARCH_DIR, SEARCH_PORT, SEARCH_REQS, STATE, UPLOADS, UV,
+    LOGS, ROOT, STATE, UPLOADS, UV,
 )
 from studio.infra.edits import _make_diff_preview, _match_edit_block, _post_edit_diagnostics
 from studio.infra.harness_args import _call_args, _normalize_harness_args, _parse_harness_args
 from studio.infra.mcp_client import AppUnresolved, McpError
 from studio.infra.processes import _manage_bg_process, _run_streamed_subprocess, _start_bg_shell
 from studio.infra.sse import _sse
-from studio.infra.system import _chat_datetime, _pid_alive, _read_pid, dir_size, system_memory
+from studio.infra.system import _chat_datetime, dir_size, system_memory
 from studio.infra.text import _clip, est_tokens
 from studio.infra.workspace import _chat_turn_id, _chat_workspace, _harness_root, _in_workspace
 from studio.security.fences import (
@@ -76,7 +78,7 @@ from studio.security.fences import (
 from studio.security.local_only import LocalOnly
 from studio.services.attachments import _extract, build_messages, TEXT_EXT
 from studio.services.images import jobs
-from studio.services.models import chat_model, chat_models, downloads, search_model, start_download
+from studio.services.models import chat_model, chat_models
 from studio.storage.backups import _backup_file, _restore_backup_snap
 from studio.storage.chats import _chat_path
 from studio.storage.memory import _load_agent_memory, _save_agent_memory
@@ -107,6 +109,8 @@ _MOVED = (
     "studio.api.attachments",
     "studio.services.images",
     "studio.api.images",
+    "studio.services.search",
+    "studio.api.search",
 )                                                               # dependency order: owners first
 for _m in _MOVED:
     importlib.import_module(_m)
@@ -1541,14 +1545,14 @@ def _chat_read_tool(name, args, timezone=None):
                 query, sort = args.get("query"), args.get("sort", "relevance")
                 if not isinstance(query, str) or not query.strip() or len(query) > 500 or sort not in ("relevance", "newest"):
                     raise ValueError("Use a short file name/topic and sort=relevance or newest")
-                result = _search_proxy("POST", "/search", json={"query": query, "sort": sort, "limit": 12}).json()
+                result = services_search._search_proxy("POST", "/search", json={"query": query, "sort": sort, "limit": 12}).json()
                 return {**result, "sort": sort, "note": "These are indexed candidates, not proof of the latest document. Compare document_date evidence and read_file. mtime is only the file's modification time. Missing or unindexed files may be newer."}
             fid = args.get("file_id")
             if type(fid) is not int or fid < 1: raise ValueError("read_file needs a file_id from search_files or a file path")
             start, count = args.get("start_page", 1), args.get("max_pages", 2)
             if type(start) is not int or start < 1 or type(count) is not int or not 1 <= count <= 4:
                 raise ValueError("Use start_page>=1 and max_pages between 1 and 4")
-            return _search_proxy("GET", f"/text/{fid}", params={"start_page": start, "max_pages": count}).json()
+            return services_search._search_proxy("GET", f"/text/{fid}", params={"start_page": start, "max_pages": count}).json()
         if name == "list_directory":
             target = _harness_path_fence(args.get("path"), write=False)
             if not target.is_dir():
@@ -2611,264 +2615,6 @@ def delete_chat(cid: str):
     _chat_path(cid).unlink(missing_ok=True)
     _forget_chat_context(cid)                                # the chat's turns also went to its agent runs as context
     return {"ok": True}
-
-
-# ---------------------------------------------------------------- search
-# search.py is a fourth process (port 8083): it indexes the user's files and answers queries. At
-# ~2 GB it stays loaded next to a chat engine, so ensure_engine never touches it. It is off until
-# the user turns it on; that is also when its dependencies and model are fetched.
-
-search_job: dict = {"status": "idle"}
-
-
-def search_deps_installed():
-    """setup.sh --search records the requirements file it installed; a changed file means reinstall."""
-    try:
-        return SEARCH_DEPS_OK.read_text().strip() == hashlib.sha256(SEARCH_REQS.read_bytes()).hexdigest()
-    except OSError:
-        return False
-
-
-def _search_running():
-    try:
-        return httpx.get(studio_config.SEARCH_URL + "/health", timeout=2).status_code == 200
-    except httpx.HTTPError:
-        return False
-
-
-def _search_process():
-    """True while a search.py process exists, including one that is still loading."""
-    return subprocess.run(["pgrep", "-f", rf"^[^ ]*python[^ ]* search.py --port {SEARCH_PORT}"], capture_output=True).returncode == 0
-
-
-def _start_search():
-    if _search_running() or _search_process():
-        return
-    log = open(LOGS / "search.log", "a")
-    # Relative file names with cwd=ROOT: the bundled path contains a space, which would defeat
-    # stop.sh's pkill patterns.
-    proc = subprocess.Popen([UV, "run", "--no-project", "--python", "3.12", "--with-requirements", SEARCH_REQS.name,
-                             "python", "search.py", "--port", str(SEARCH_PORT)], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                            env={**os.environ, "LOCAL_STUDIO_HOME": str(STATE)}, start_new_session=True)
-    (LOGS / "search.pid").write_text(str(proc.pid))
-
-
-def _stop_search():
-    pid = _read_pid("search")
-    if pid and _pid_alive(pid):
-        try:
-            os.killpg(pid, signal.SIGTERM)            # uv and its python child share the session
-        except OSError:
-            pass
-    subprocess.run(["pkill", "-f", rf"^[^ ]*uv run .*python search.py --port {SEARCH_PORT}"])
-    subprocess.run(["pkill", "-f", rf"^[^ ]*python[^ ]* search.py --port {SEARCH_PORT}"])
-    (LOGS / "search.pid").unlink(missing_ok=True)
-    for _ in range(40):                               # wait for the port to free before any restart
-        if not _search_running():
-            break
-        time.sleep(0.25)
-
-
-def _enable_search():
-    """Background job behind the Search switch: install what's missing, then start the service."""
-    try:
-        if not search_deps_installed():
-            search_job.update(step="Installing search components (about 1 GB, one time)")
-            with open(LOGS / "search-setup.log", "w") as log:
-                rc = subprocess.run(["/bin/zsh", str(ROOT / "setup.sh"), "--search"], stdout=log, stderr=subprocess.STDOUT,
-                                    env={**os.environ, "LOCAL_STUDIO_HOME": str(STATE)}).returncode
-            if rc != 0 or not search_deps_installed():
-                raise RuntimeError("Couldn't install the search components. See logs/search-setup.log.")
-        m = search_model()
-        if not services_models.model_installed(m):
-            search_job.update(step=f"Downloading {m['name']} ({m['size_gb']} GB)")
-            start_download(m)
-            while downloads[m["id"]].get("status") == "running":
-                time.sleep(1)
-            if not services_models.model_installed(m):
-                raise RuntimeError("The model download didn't finish. Check your connection and try again.")
-        search_job.update(step="Starting Search")
-        s = load_settings()
-        s["search"]["enabled"] = True
-        save_settings(s)
-        _start_search()
-        for _ in range(180):                          # the first start imports PyTorch and MLX
-            if _search_running():
-                break
-            time.sleep(1)
-        else:
-            raise RuntimeError("Search didn't start. See logs/search.log.")
-        search_job.update(status="done", step=None)
-    except Exception as e:
-        search_job.update(status="error", error=str(e), step=None)
-
-
-def _search_proxy(method, path, **kw):
-    try:
-        r = httpx.request(method, studio_config.SEARCH_URL + path, timeout=60, **kw)
-    except httpx.HTTPError:
-        raise HTTPException(503, "Search isn't running. Turn it on in Settings.")
-    if r.status_code != 200:
-        detail = r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else None
-        raise HTTPException(r.status_code, detail or "Search error")
-    return r
-
-
-@app.get("/api/search/status")
-def search_status():
-    m = search_model()
-    out = {**load_settings()["search"], "installed": search_deps_installed(), "model_installed": services_models.model_installed(m),
-           "model": {"name": m["name"], "size_gb": m["size_gb"]}, "index_on_disk": SEARCH_DIR.exists(), "running": False,
-           "setup": {k: search_job.get(k) for k in ("status", "step", "error")}}
-    try:
-        r = httpx.get(studio_config.SEARCH_URL + "/status", timeout=3)
-        if r.status_code == 200:
-            out.update(r.json(), running=True)
-    except httpx.HTTPError:
-        pass
-    return out
-
-
-@app.post("/api/search")
-def search_query(body: dict = Body(...)):
-    return _search_proxy("POST", "/search", json=body).json()
-
-
-@app.post("/api/search/enable")
-def search_enable():
-    if search_job.get("status") != "running":
-        search_job.clear()
-        search_job.update(status="running", step="Starting")
-        threading.Thread(target=_enable_search, daemon=True).start()
-    return {k: search_job.get(k) for k in ("status", "step", "error")}
-
-
-@app.post("/api/search/disable")
-def search_disable():
-    s = load_settings()
-    s["search"]["enabled"] = False
-    save_settings(s)
-    _stop_search()
-    return {"ok": True}
-
-
-@app.post("/api/search/start")
-def search_start():
-    """Called by start.sh: bring the service up if the user has Search turned on."""
-    if not load_settings()["search"]["enabled"]:
-        return {"status": "off"}
-    if search_deps_installed() and services_models.model_installed(search_model()):
-        _start_search()
-        return {"status": "starting"}
-    search_enable()                                   # an update changed the components (or the model is gone): set up again
-    return {"status": "setting up"}
-
-
-@app.put("/api/search/settings")
-def search_settings(body: dict = Body(...)):
-    s = load_settings()
-    for key in ("folders", "removed"):
-        if key in body:
-            paths = [str(Path(p.strip()).expanduser()) for p in body[key] if isinstance(p, str) and p.strip()]
-            if key == "folders":
-                bad = next((p for p in paths if not Path(p).is_absolute() or not Path(p).is_dir()), None)
-                if bad:
-                    raise HTTPException(400, f"Not a folder on this Mac: {bad}")
-            s["search"][key] = list(dict.fromkeys(paths))
-    for key in ("paused", "on_battery"):
-        if key in body:
-            s["search"][key] = bool(body[key])
-    save_settings(s)
-    try:
-        httpx.post(studio_config.SEARCH_URL + "/reload", timeout=3)
-    except httpx.HTTPError:
-        pass
-    return s["search"]
-
-
-def _reset_index(restart):
-    _stop_search()
-    shutil.rmtree(SEARCH_DIR, ignore_errors=True)
-    if restart:
-        _start_search()
-    return {"ok": True}
-
-
-@app.post("/api/search/rebuild")
-def search_rebuild():
-    if not load_settings()["search"]["enabled"]:
-        raise HTTPException(409, "Turn Search on first.")
-    return _reset_index(restart=True)
-
-
-@app.delete("/api/search/index")
-def search_delete_index():
-    return _reset_index(restart=load_settings()["search"]["enabled"])
-
-
-@app.get("/api/search/errors")
-def search_errors():
-    return _search_proxy("GET", "/errors").json()
-
-
-@app.get("/api/search/thumb/{file_id}")
-def search_thumb(file_id: int, t: int = 0):
-    r = _search_proxy("GET", f"/thumb/{file_id}", params={"t": t})
-    return Response(r.content, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
-
-
-@app.get("/api/search/preview/{file_id}")
-def search_preview(file_id: int, chunk_id: int | None = None):
-    return _search_proxy("GET", f"/preview/{file_id}", params={"chunk_id": chunk_id} if chunk_id else None).json()
-
-
-@app.get("/api/search/page/{file_id}/{page}")
-def search_page(file_id: int, page: int, chunk_id: int | None = None):
-    r = _search_proxy("GET", f"/page/{file_id}/{page}", params={"chunk_id": chunk_id} if chunk_id else None)
-    return Response(r.content, media_type="image/jpeg", headers={"X-Pages": r.headers.get("x-pages", ""), "Cache-Control": "no-store"})
-
-
-@app.get("/api/search/image/{file_id}")
-def search_image(file_id: int):
-    return Response(_search_proxy("GET", f"/image/{file_id}").content, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
-
-
-@app.get("/api/search/media/{file_id}")
-def search_media(file_id: int):
-    """The audio or video file itself, for the preview player (FileResponse handles the player's
-    range requests). The path comes from the index, never from the request, and nothing else is served."""
-    f = _search_proxy("GET", f"/file/{file_id}").json()
-    if f.get("kind") not in ("audio", "video") or not Path(f["path"]).is_file():
-        raise HTTPException(404, "No player preview for this file.")
-    return FileResponse(f["path"])
-
-
-@app.post("/api/search/open")
-def search_open(file_id: int = Body(...), path: str = Body(...), reveal: bool = Body(False)):
-    """Open or reveal an indexed file. The path comes from the index, never from the request: the
-    request's path only has to match, so an id reused after a rebuild can't open a different file."""
-    try:
-        f = _search_proxy("GET", f"/file/{file_id}").json()
-    except HTTPException as e:
-        if e.status_code == 404:
-            raise HTTPException(404, "This file is no longer in the search index.")
-        raise
-    if f["path"] != path or not Path(f["path"]).exists():
-        raise HTTPException(404, "This file has moved or is no longer in the search index.")
-    subprocess.run(["open", "-R", f["path"]] if reveal else ["open", f["path"]])
-    return {"ok": True}
-
-
-@app.post("/api/search/choose-folder")
-def search_choose_folder():
-    """The standard macOS folder chooser. `tell me to activate` brings it in front of the app window."""
-    try:
-        r = subprocess.run(["osascript", "-e", "tell me to activate", "-e",
-                            'POSIX path of (choose folder with prompt "Choose a folder to index")'],
-                           capture_output=True, text=True, timeout=300)
-    except subprocess.TimeoutExpired:
-        return {"path": None}
-    return {"path": r.stdout.strip().rstrip("/") or None if r.returncode == 0 else None}
 
 
 # ---------------------------------------------------------------- agent
@@ -6027,5 +5773,5 @@ def index():
     return FileResponse(ROOT / "index.html", headers={"Cache-Control": "no-cache"})
 
 
-for _router in (api_models.router, api_engines.router, api_attachments.router, api_images.router):
+for _router in (api_models.router, api_engines.router, api_attachments.router, api_images.router, api_search.router):
     app.include_router(_router)

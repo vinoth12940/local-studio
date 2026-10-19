@@ -671,7 +671,7 @@ def retarget_suite(text, owner):
     for old, new in (("setattr(app, k, v)", "setattr(patch_guard.owner(app, k), k, v)"),
                      ("setattr(app, key, value)", "setattr(patch_guard.owner(app, key), key, value)")):
         out = out.replace(old, new)
-    if owner.get("_search_running", "app") != "app":
+    if owner.get("_search_running", "app") != "app" and "app._search_running = lambda: False" in out:
         old = '"app._search_running = lambda: False; app._stop_search(); app._search_process(); "'
         new = f'"import {owner["_search_running"]}; {owner["_search_running"]}._search_running = lambda: False; app._stop_search(); app._search_process(); "'
         assert old in out, "the search-port subprocess check moved"

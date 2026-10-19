@@ -22,6 +22,7 @@ import patch_guard  # noqa: E402
 import studio.config  # noqa: E402
 import studio.services.engines  # noqa: E402
 import studio.services.models  # noqa: E402
+import studio.services.search  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
 patch_guard.install(app)                                   # app.X = fake must reach the code that reads X
@@ -320,16 +321,16 @@ def search_is_not_started_twice():
     class P:
         pid = 4242
 
-    app._search_running, app.subprocess.Popen = (lambda: False), (lambda *a, **k: started.append(a) or P())
+    studio.services.search._search_running, app.subprocess.Popen = (lambda: False), (lambda *a, **k: started.append(a) or P())
     try:
-        app._search_process = lambda: True
+        studio.services.search._search_process = lambda: True
         app._start_search()
         assert started == [], "a copy is already starting"
-        app._search_process = lambda: False
+        studio.services.search._search_process = lambda: False
         app._start_search()
         assert len(started) == 1 and started[0][0][-4:] == ["python", "search.py", "--port", "8083"]
     finally:
-        app._search_running, app._search_process, app.subprocess.Popen = real
+        studio.services.search._search_running, studio.services.search._search_process, app.subprocess.Popen = real
         (app.LOGS / "search.pid").unlink(missing_ok=True)
 
 
@@ -349,7 +350,7 @@ def search_sets_itself_up_again_after_an_update():
     calls, real = [], (app._start_search, app._enable_search, app.model_installed)
     app.SETTINGS.parent.mkdir(parents=True, exist_ok=True)
     app.SETTINGS.write_text(json.dumps({"search": {"enabled": True}}))
-    app._start_search, app._enable_search, studio.services.models.model_installed = (lambda: calls.append("start")), (lambda: calls.append("setup")), (lambda m: True)
+    studio.services.search._start_search, studio.services.search._enable_search, studio.services.models.model_installed = (lambda: calls.append("start")), (lambda: calls.append("setup")), (lambda m: True)
     try:
         app.SEARCH_DEPS_OK.write_text("the previous version's components")
         app.search_job.clear(); app.search_job.update(status="idle")
@@ -359,7 +360,7 @@ def search_sets_itself_up_again_after_an_update():
         app.SEARCH_DEPS_OK.write_text(hashlib.sha256(app.SEARCH_REQS.read_bytes()).hexdigest())
         assert app.search_start() == {"status": "starting"} and calls == ["setup", "start"]
     finally:
-        app._start_search, app._enable_search, studio.services.models.model_installed = real
+        studio.services.search._start_search, studio.services.search._enable_search, studio.services.models.model_installed = real
         app.SETTINGS.unlink(); app.SEARCH_DEPS_OK.unlink(missing_ok=True)
         app.search_job.clear(); app.search_job.update(status="idle")
 
@@ -411,7 +412,7 @@ def test_runs_use_their_own_search_port():
     code = ("import os, sys; os.environ['LOCAL_STUDIO_SEARCH_PORT'] = '8093'; os.environ['LOCAL_STUDIO_HOME'] = sys.argv[1]; "
             "sys.path.insert(0, '.'); import app; calls = []; "
             "app.subprocess.run = lambda cmd, **k: calls.append(cmd) or type('R', (), {'returncode': 1})(); "
-            "app._search_running = lambda: False; app._stop_search(); app._search_process(); "
+            "import studio.services.search; studio.services.search._search_running = lambda: False; app._stop_search(); app._search_process(); "
             "print(app.SEARCH_URL); print(all('8093' in c[-1] and '8083' not in c[-1] for c in calls), len(calls))")
     out = sp.run([sys.executable, "-c", code, str(TMP / "port-state")], capture_output=True, text=True,
                  cwd=str(Path(__file__).resolve().parent.parent)).stdout.split()
