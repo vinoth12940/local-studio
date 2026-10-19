@@ -63,8 +63,10 @@ class Analysis:
         self.block_functions = []          # (name, scope) of function declarations inside blocks
         self._declare_pass(self.root, self.program)
         self._ref_pass(self.root, self.program)
+        self._refs_by_id = collections.defaultdict(list)
         for r in self.refs:
             r.decl = r.scope.lookup(r.name)
+            self._refs_by_id[r.node.id].append(r)
 
     def text(self, n):
         return self.src[n.start_byte:n.end_byte].decode()
@@ -178,6 +180,8 @@ class Analysis:
             if w.id not in self.bindings:
                 self.refs.append(Ref(w, self.text(w), self.scope_of.get(w.id, scope), True))
                 self.bindings.add(w.id)                            # not counted again as a read
+        if t == "export_statement" and n.child_by_field_name("source") is not None:
+            return                                                     # export { a } from "./x.mjs": names of that module
         if t in ("identifier", "shorthand_property_identifier") and n.id not in self.bindings:
             self.refs.append(Ref(n, self.text(n), scope, False))
         for c in n.children:
@@ -225,7 +229,33 @@ BASE = "fad4da6"                      # index.html before P2 (unchanged since P0
 NOT_NAMES = {"await"}                 # tree-sitter reads `await (x)` inside async functions as a call to an identifier
 # (module, selectors): a selector is "L<a>-<b>" (units starting in BASE index.html lines a..b) or a top-level name; "-name"
 # removes a unit a range picked up. Units not planned stay in main.mjs. Modules are listed in dependency order.
-PLAN = []
+PLAN = [
+    ("core/util", ["L1235-1259"]),
+    ("core/markdown", ["L1260-1309"]),
+    ("ui/theme", ["L1311-1318"]),
+    ("ui/views", ["L1320-1369"]),
+    ("ui/engine", ["L1370-1427"]),
+    ("chat/list", ["L1428-1554", "-thinking"]),
+    ("chat/thread", ["L1555-2009"]),
+    ("chat/attachments", ["L2011-2054"]),
+    ("chat/composer", ["thinking", "L2055-2240"]),
+    ("chat/live", ["L2241-2524"]),
+    ("chat/computer", ["L2525-2685"]),
+    ("images/images", ["L2686-2758"]),
+    ("code/editor", ["L2759-2977"]),
+    ("code/terminal", ["L2978-3206"]),
+    ("library/library", ["L3207-3365"]),
+    ("settings/settings", ["L3366-3452"]),
+    ("search/search", ["L3453-3644"]),
+    ("agent/state", ["L3645-3665"]),
+    ("agent/helpers", ["L3666-3745"]),
+    ("agent/agent", ["L3746-4092"]),
+    ("settings/agent", ["L4093-4180"]),
+]
+# Load-time statements allowed to run later than before, with the reason (the tdz check still covers reads of their names).
+ORDER_OK = {
+    1433: "let thinking/effort = store.get(...): moved to chat/composer, which assigns them; reading localStorage later is harmless",
+}
 BRIDGE = ["showView"]                 # names inline handlers and innerHTML templates call (onclick="showView('library')")
 
 
@@ -307,21 +337,57 @@ def resolve_plan(an, off, units, plan):
     return out
 
 
+LOAD_SAFE = {"arrow_function", "function_expression", "function", "generator_function", "class_body"}
+
+
+def _effectful(an, node):
+    """Does a top-level statement do something when the module loads (beyond declaring a function or a plain value)?"""
+    if node.type in ("function_declaration", "generator_function_declaration", "comment", "empty_statement"):
+        return False
+    def walk(n):
+        if n.type in LOAD_SAFE and not (n.parent is not None and n.parent.type == "parenthesized_expression"
+                                          and n.parent.parent is not None and n.parent.parent.type == "call_expression"):
+            return False
+        if n.type in ("call_expression", "new_expression", "await_expression", "assignment_expression",
+                      "augmented_assignment_expression", "update_expression"):
+            return True
+        return any(walk(c) for c in n.children)
+    return walk(node)
+
+
+def eval_order(modules, imports):
+    """ES module evaluation order from main.mjs: depth first over the import statements in the order they are written."""
+    order, state = [], {}
+    def visit(m):
+        if state.get(m):
+            return
+        state[m] = "visiting"
+        for dep in imports.get(m, []):
+            visit(dep)
+        order.append(m)
+        state[m] = "done"
+    visit("main")
+    return order
+
+
 def rel(frm, to):
     import os
     r = os.path.relpath(to, os.path.dirname(frm))
     return r if r.startswith(".") else "./" + r
 
 
-def generate(n):
+def _store_name(module):
+    return module.split("/")[-1] + "State"
+
+
+def generate(n, report=False):
     html = base_text("index.html", BASE)
     an, off, units = units_of(html)
     plan = resolve_plan(an, off, units, PLAN[:n])
     moved = {id(u) for _, us in plan for u in us}
-    rest = [u for u in units if id(u) not in moved]
-    modules = plan + [("main", rest)]
-    owner = {}
-    info = {}
+    modules = plan + [("main", [u for u in units if id(u) not in moved])]
+    rank = {m: i for i, (m, _) in enumerate(modules)}
+    owner, info = {}, {}
     for module, us in modules:
         decl, refs = set(), []
         for u in us:
@@ -331,60 +397,215 @@ def generate(n):
         info[module] = (decl, refs)
         for name in decl:
             owner[name] = module
+    # A name assigned outside the module that declares it becomes a property of that module's store object (an ES module
+    # cannot assign a binding it imports). Every reference to it, in every module, reads and writes the property.
+    stored = {}
+    for module, (decl, refs) in info.items():
+        for r in refs:
+            if r.write and owner.get(r.name) not in (None, module):
+                stored[r.name] = owner[r.name]
+    for m in set(stored.values()):
+        if _store_name(m) in an.code:
+            raise SystemExit(f"store name {_store_name(m)} is already used in the script")
+    # -- edits on the script, by byte offset; each keeps its line count so units keep their lines
+    a, b, _ = index_script(html)
+    edits = []                                                    # (start, end, text) in script bytes
+    for r in an.refs:
+        if r.decl is an.program and r.name in stored:
+            obj = _store_name(stored[r.name])
+            if r.node.type in ("shorthand_property_identifier", "shorthand_property_identifier_pattern"):
+                edits.append((r.node.start_byte, r.node.end_byte, f"{r.name}: {obj}.{r.name}"))
+            else:
+                edits.append((r.node.start_byte, r.node.end_byte, f"{obj}.{r.name}"))
+    created = set()
+    for node in an.root.children:
+        if node.type != "lexical_declaration":
+            continue
+        decls = [d for d in node.named_children if d.type == "variable_declarator"]
+        names = [an.text(d.child_by_field_name("name")) for d in decls]
+        if not any(nm in stored for nm in names):
+            continue
+        kind = an.text(node.children[0])
+        keep = [an.text(d) for d, nm in zip(decls, names) if nm not in stored]
+        props = [(nm, an.text(d.child_by_field_name("value")) if d.child_by_field_name("value") else "undefined")
+                 for d, nm in zip(decls, names) if nm in stored]
+        obj = _store_name(stored[props[0][0]])
+        out = f"{kind} {', '.join(keep)}; " if keep else ""
+        if obj not in created:
+            created.add(obj)
+            out += "const " + obj + " = { " + ", ".join(f"{k}: {v}" for k, v in props) + " };"
+        else:
+            out += " ".join(f"{obj}.{k} = {v};" for k, v in props)
+        semi = node.end_byte
+        edits.append((node.start_byte, semi, out))
+    script = an.src
+    # drop reference edits that fall inside a rewritten declaration (its initializers are copied as text, already edited below)
+    decl_spans = [(s_, e_) for s_, e_, t in edits if t.startswith(("let ", "const ", "var ")) or t.startswith(tuple(_store_name(m) for m in set(stored.values())))]
+    def inside(e):
+        return any(s_ < e[0] and e[1] <= e_ for s_, e_ in decl_spans if (s_, e_) != (e[0], e[1]))
+    final = sorted([e for e in edits if not inside(e)], key=lambda e: e[0], reverse=True)
+    # initializers of moved declarators must carry their own reference edits: re-run edits on their text
+    out_src = script
+    for s_, e_, t in final:
+        out_src = out_src[:s_] + t.encode() + out_src[e_:]
+    new_html = html[:a] + out_src.decode() + html[b:]
+    assert new_html.count("\n") == html.count("\n"), "an edit changed the line count"
+    html_lines = new_html.split("\n")
+    # -- imports, exports, files
     path = lambda m: f"frontend/{m}.mjs"                                          # noqa: E731
-    html_lines = html.split("\n")
-    exports = collections.defaultdict(set)
     imports = collections.defaultdict(lambda: collections.defaultdict(set))
-    problems = []
     for module, (decl, refs) in info.items():
         for r in refs:
             o = owner.get(r.name)
             if o is None or o == module:
                 continue
-            if r.write:
-                problems.append(f"{module}: assigns {r.name} (owned by {o}) at index.html line {off + r.node.start_point[0] + 1}")
-            imports[module][o].add(r.name)
-            exports[o].add(r.name)
+            imports[module][o].add(_store_name(o) if r.name in stored else r.name)
     for name in BRIDGE:
-        exports[owner[name]].add(name)
-    files = {}
+        if name in stored:
+            raise SystemExit(f"bridge name {name} is in a store")
+    files, dep_order = {}, {"globals": ["modules"], "modules": [m for m, _ in plan]}
+    for m, _ in plan:
+        dep_order[m] = ["modules"]
     for module, us in modules:
         head = [f"// {module}.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json)."]
         if module == "main":
             head = ["// The UI's entry point: index.html loads it as a module. What is not split into frontend/ yet still lives here,",
                     "// in its original order (the refactor's P2 split, docs/refactor-progress.json).", 'import "./globals.mjs";']
-        for o, names in sorted(imports[module].items()):
-            head.append(f"import {{ {', '.join(sorted(names, key=str.lower))} }} from \"{rel(path(module), path(o))}\";")
-        body = []
-        prev = None
+        names = sorted({x for o in imports[module] for x in imports[module][o]}, key=str.lower)
+        if module == "main":
+            dep_order["main"] = ["globals", "modules"]
+        if names:
+            head.append(_import_line(names, rel(path(module), "frontend/modules.mjs")))
+        body, prev = [], None
         for u in us:
             if prev is not None and units.index(prev) + 1 == units.index(u):
-                body.extend(html_lines[k - 1] for k in range(prev.last + 1, u.last + 1))   # neighbours: copy what lies between
+                body.extend(html_lines[k - 1] for k in range(prev.last + 1, u.last + 1))
             else:
                 if prev is not None:
                     body.append("")
                 body.extend(html_lines[k - 1] for k in sorted(set(u.lead) | set(range(u.first, u.last + 1))))
             prev = u
-        tail = ["", "export {", "  " + _wrap(sorted(info[module][0], key=str.lower)), "};"] if info[module][0] else []
+        decl = info[module][0]
+        exported = sorted((decl - set(stored)) | ({_store_name(module)} if module in stored.values() else set()), key=str.lower)
+        tail = ["", "export {", "  " + _wrap(exported), "};"] if exported else []
         files[path(module)] = "\n".join(head + [""] + body + tail) + "\n"
-    # globals bridge and console handle
-    g = ["// The page's globals, set in one place (refactor P2). Inline handlers and innerHTML templates call these by name, and",
-         "// window.LS is a read-only console handle for debugging (CLAUDE.md: render synthetic turns into LS.current).",
-         'import * as main from "./main.mjs";']
     mods = [m for m, _ in plan]
+    hub = ["// Every module imports the names it uses from here, never from another module directly. ES modules run their imports",
+           "// first, so imports between modules would change the order the UI's start-up statements run in. This file lists the",
+           "// modules in the order their code had in index.html, which is the order they run in (refactor P2).",
+           "// Generated by macos/refactor_ui.py."]
     for m in mods:
-        g.append(f'import * as {m.replace("/", "_")} from "{rel("frontend/globals.mjs", path(m))}";')
+        decl = info[m][0]
+        names = sorted((decl - set(stored)) | ({_store_name(m)} if m in stored.values() else set()), key=str.lower)
+        if names:
+            hub.append("export {\n  " + _wrap(names) + f"\n}} from \"{rel('frontend/modules.mjs', path(m))}\";")
+        else:
+            hub.append(f'import "{rel("frontend/modules.mjs", path(m))}";')
+    files["frontend/modules.mjs"] = "\n".join(hub) + "\n"
+    alias = lambda m: m.replace("/", "_")                                            # noqa: E731
+    g = ["// The page's globals, set in one place (refactor P2). Inline handlers and innerHTML templates call these by name, and",
+         "// window.LS is a console handle for debugging (CLAUDE.md: render synthetic turns into LS.current, then LS.renderThread()).",
+         'import * as main from "./main.mjs";']
+    g += [f'import * as {alias(m)} from "{rel("frontend/globals.mjs", path(m))}";' for m in mods]
+    g.insert(3, 'import "./modules.mjs";                                   // the modules run in their original order first')
     g.append("")
     for name in BRIDGE:
-        g.append(f"window.{name} = (...args) => {owner[name].replace('/', '_') if owner[name] != 'main' else 'main'}.{name}(...args);")
-    g.append("window.LS = new Proxy({}, {")
-    g.append("  get: (_, k) => [main" + "".join(f", {m.replace('/', '_')}" for m in mods) + "].map((m) => m[k]).find((v) => v !== undefined),")
-    g.append("});")
+        g.append(f"window.{name} = (...args) => {alias(owner[name])}.{name}(...args);")
+    spaces = ["main"] + [alias(m) for m in mods]
+    stores = sorted({f"{alias(m)}.{_store_name(m)}" for m in set(stored.values())})
+    g += ["const SPACES = [" + ", ".join(spaces) + "];",
+          "const STORES = [" + ", ".join(stores) + "];                  // names more than one module assigns live in these",
+          "window.LS = new Proxy({}, {",
+          "  get: (_, k) => STORES.find((s) => k in s)?.[k] ?? SPACES.map((m) => m[k]).find((v) => v !== undefined),",
+          "  set: (_, k, v) => { const s = STORES.find((x) => k in x); if (!s) return false; s[k] = v; return true; },",
+          "});"]
     files["frontend/globals.mjs"] = "\n".join(g) + "\n"
-    a, b, _ = index_script(html)
-    new_html = html[:a - len("<script>")] + '<script type="module" src="frontend/main.mjs"></script>' + html[b + len("</script>"):]
-    files["index.html"] = new_html
-    return files, problems
+    a2, b2, _ = index_script(new_html)
+    files["index.html"] = html[:a - len("<script>")] + '<script type="module" src="frontend/main.mjs"></script>' + html[b + len("</script>"):]
+    checks = _checks(an, off, units, modules, owner, stored, dep_order, files)
+    return files, checks, stored
+
+
+def _import_line(names, path_):
+    line = f"import {{ {', '.join(names)} }} from \"{path_}\";"
+    if len(line) <= 120:
+        return line
+    return "import {\n  " + _wrap(names) + f"\n}} from \"{path_}\";"
+
+
+def _checks(an, off, units, modules, owner, stored, dep_order, files):
+    """Evaluation order and free names of the generated modules; returns a list of problems."""
+    problems = []
+    unit_module = {id(u): m for m, us in modules for u in us}
+    order = eval_order([m for m, _ in modules], dep_order)
+    pos = {m: i for i, m in enumerate(order)}
+    # side effects at load: same relative order as in the original script
+    eff = [u for u in units if any(_effectful(an, nd) for nd in u.nodes)]
+    seq = sorted(eff, key=lambda u: (pos[unit_module[id(u)]], u.first))
+    moved_early = [(u.first, unit_module[id(u)]) for i, u in enumerate(seq) if any(v.first > u.first for v in seq[:i])]
+    for line_, m in moved_early:
+        if line_ in ORDER_OK:
+            continue
+        problems.append(f"order: the load-time statement at index.html line {line_} ({m}) now runs before statements that preceded it")
+    # load-time reads: a binding that was initialized before the reading statement in index.html must still be (functions are
+    # always initialized; a read that was already in its temporal dead zone before, e.g. inside a try, stays as it was)
+    run_at = {}                                                   # unit id -> (module position, original line)
+    for m, us in modules:
+        for u in us:
+            run_at[id(u)] = (pos[m], u.first)
+    unit_of_line = {}
+    for u in units:
+        for k in range(u.first, u.last + 1):
+            unit_of_line[k] = u
+    for m, us in modules:
+        for u in us:
+            for nd in u.nodes:
+                if not _effectful(an, nd) and nd.type not in ("lexical_declaration", "variable_declaration"):
+                    continue
+                for r in _load_time_refs(an, nd):
+                    d = an.program.names.get(r.name)
+                    if d is None or (d.parent is not None and d.parent.type in ("function_declaration", "generator_function_declaration")):
+                        continue
+                    du = unit_of_line.get(off + d.start_point[0] + 1)
+                    if du is None or du is u:
+                        continue
+                    was_ready = du.first < u.first
+                    is_ready = run_at[id(du)] < run_at[id(u)]
+                    if was_ready and not is_ready:
+                        problems.append(f"tdz: index.html line {u.first} ({m}) reads {r.name} (line {du.first}) before it is initialized now")
+    # free names of each generated module are browser globals the original script already used
+    baseline = {r.name for r in an.refs if r.decl is None} | NOT_NAMES
+    for p, text in files.items():
+        if p.endswith(".mjs"):
+            g = Analysis(text)
+            extra = sorted({r.name for r in g.refs if r.decl is None} - baseline - ({"Proxy"} if p.endswith("globals.mjs") else set()))
+            if extra:
+                problems.append(f"free: {p} uses names nothing declares or imports: {extra}")
+    return problems
+
+
+def _load_time_refs(an, node):
+    """Top-level references a statement makes while the module loads: not inside function bodies, except functions called
+    right there (IIFEs) and top-level functions the statement calls (followed once)."""
+    out = []
+    def walk(n, seen):
+        if n.type in LOAD_SAFE and not (n.parent is not None and n.parent.type == "parenthesized_expression"
+                                          and n.parent.parent is not None and n.parent.parent.type == "call_expression"):
+            return
+        for r in an._refs_by_id.get(n.id, []):
+            out.append(r)
+            if r.name not in seen and n.parent is not None and n.parent.type == "call_expression" and r.decl is an.program:
+                d = an.program.names.get(r.name)
+                fn = d.parent if d is not None else None
+                if fn is not None and fn.type in ("function_declaration",):
+                    seen.add(r.name)
+                    body = fn.child_by_field_name("body")
+                    for c in body.children:
+                        walk(c, seen)
+        for c in n.children:
+            walk(c, seen)
+    walk(node, set())
+    return [r for r in out if r.decl is an.program]
 
 
 def _wrap(names, width=118):
@@ -399,16 +620,16 @@ def _wrap(names, width=118):
 
 
 def apply(n):
-    files, problems = generate(n)
+    files, problems, stored = generate(n)
     if problems:
-        raise SystemExit("cross-module assignments (need a store):\n" + "\n".join(problems))
+        raise SystemExit("not generated:\n" + "\n".join(problems))
     for old in (REPO / "frontend").glob("**/*.mjs") if (REPO / "frontend").exists() else []:
         if old.relative_to(REPO).as_posix() not in files:        # every module under frontend/ is generated during P2
             old.unlink()
     for p, text in files.items():
         (REPO / p).parent.mkdir(parents=True, exist_ok=True)
         (REPO / p).write_text(text)
-    print(f"wrote {len(files)} files")
+    print(f"wrote {len(files)} files; stores: {dict(sorted(stored.items()))}")
 
 
 if __name__ == "__main__":
@@ -417,3 +638,7 @@ if __name__ == "__main__":
         hazards((REPO / "index.html").read_text())
     elif cmd == "apply":
         apply(int(sys.argv[2]))
+    elif cmd == "check":
+        files, problems, stored = generate(int(sys.argv[2]) if len(sys.argv) > 2 else len(PLAN))
+        print("stores:", dict(sorted(stored.items())))
+        print("\n".join(problems) or "no problems")
