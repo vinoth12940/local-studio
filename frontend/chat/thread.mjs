@@ -2,8 +2,8 @@
 import {
   $, activeChat, activeCodeWs, AG_RID, agLogKey, agNoImages, agWeb, attMeta, attThumb, autosize, cardHTML, chatHost,
   chBind, chCardClick, chCardHTML, chLive, chShowSteps, codeUpdateStatus, DOC_ICON, esc, generate, icon, jpost, lib,
-  listState, liveGen, liveSkeletonHTML, loadAgent, loadCodeView, loadLibrary, mainState, md, patchCards, renderHistory,
-  saveChat, send, showView, srHome, srOpen, toast, updateCtx, updateSend, updateWorkspaceUI, view
+  listState, liveGen, liveSkeletonHTML, loadAgent, loadCodeView, loadLibrary, md, patchCards, renderHistory, saveChat,
+  searchState, send, showView, srHome, srOpen, toast, updateCtx, updateSend, updateWorkspaceUI, view
 } from "../modules.mjs";
 
 const CODE_STARTERS = [["i-book", "Explain this codebase", "Explain how this codebase is organized: the main modules, how they fit together, and where to start reading."], ["i-redo", "Fix failing tests", "Run the tests, find the first failure, and fix its root cause."], ["i-code", "Write tests for…", "Write tests for "], ["i-spark", "Add a feature…", "Add a feature that "]];
@@ -421,7 +421,7 @@ $("thread").onclick = async (e) => {
   const act = e.target.closest("[data-act]")?.dataset.act, m = listState.current.messages[+turn.dataset.i];
   if (act === "copy") { navigator.clipboard.writeText(m.content); toast("Copied to clipboard"); }
   if (act === "continue" && !listState.streaming) {
-    mainState.noFilesOnce = true;                                    // "continue" is not a question to look up in the user's files
+    searchState.noFilesOnce = true;                                    // "continue" is not a question to look up in the user's files
     $("input").value = "Continue exactly where you left off."; autosize(); send(); return;
   }
   if (act === "regen" && !listState.streaming && !chLive() && !m.agent_run) {

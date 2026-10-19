@@ -2,8 +2,8 @@
 import {
   $, AG_RID, attachmentsState, autosize, chAttachAction, chHarnessCardHTML, chLive, chPlanHTML, chRoundItemHTML,
   chToolStepsInner, closeAc, CODE_MUTATING, compactCurrentChat, DEFAULT_MAX_TOKENS, drawSpark, effort, esc, fmtSecs,
-  icon, jpost, listState, mainState, md, modelThinks, newId, onAgentCodeMutation, permMode, poll, renderHistory,
-  renderPending, renderThread, saveChat, scrollBottom, showPerf, sr, store, thinking, threadState, toast, turnHTML,
+  icon, jpost, listState, md, modelThinks, newId, onAgentCodeMutation, permMode, poll, renderHistory, renderPending,
+  renderThread, saveChat, scrollBottom, searchState, showPerf, sr, store, thinking, threadState, toast, turnHTML,
   updateCtx, updateSend, useFiles, view
 } from "../modules.mjs";
 
@@ -82,10 +82,10 @@ async function generate() {
   const body = { messages, chat_id: chat.id, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
   if (effort && modelThinks()) body.reasoning_effort = effort;
   if (s.temp) body.temperature = +s.temp;
-  if (useFiles && sr?.running && !sr.error && !mainState.noFilesOnce) body.use_files = true;
+  if (useFiles && sr?.running && !sr.error && !searchState.noFilesOnce) body.use_files = true;
   if (listState.current?.workspace) body.workspace = listState.current.workspace;
   if (listState.current?.workspace && permMode === "accept_edits") body.permission_mode = "accept_edits";
-  mainState.noFilesOnce = false;
+  searchState.noFilesOnce = false;
   listState.streaming = new AbortController(); updateSend(); renderHistory();
 
   const thoughtLabel = () => {
