@@ -215,8 +215,8 @@
    "all suites",
    "dev-server terminal reattach"
   ],
-  "passes": false,
-  "note": "Moved in c30a9cd; suites green. The dev-server terminal reattach check is still to run."
+  "passes": true,
+  "note": "Moved in c30a9cd. Dev server 7861 (scratch ws-demo): typed `echo reattach_$((6*7))`, reloaded the page, reopened Code: the terminal reattached and replayed reattach_42; no server errors."
  },
  {
   "id": "P1.security-harness",
@@ -302,7 +302,8 @@
    "all suites",
    "logs/ui.log still written"
   ],
-  "passes": false
+  "passes": true,
+  "note": "Flag logging.json_requests (default off): logs/requests.jsonl, slow/failing/non-GET requests only, no query/body/headers, 5 MB rotation. ui.log and the other logs are unchanged (start.sh still redirects uvicorn to logs/ui.log). check_app.py request_log_is_off_by_default_and_minimal_when_on."
  },
  {
   "id": "P1.docs",

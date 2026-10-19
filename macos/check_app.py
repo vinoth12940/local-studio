@@ -337,6 +337,31 @@ def health_reports_readiness_without_locks():
 
 
 @check
+def request_log_is_off_by_default_and_minimal_when_on():
+    """Flag logging.json_requests: off, nothing is written; on, slow/failing/non-GET requests get one JSON line with no
+    query string, body or headers."""
+    from fastapi.testclient import TestClient
+    log = app.LOGS / "requests.jsonl"
+    log.unlink(missing_ok=True)
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    c.put("/api/chats/0123456789abcdef", json={"title": "t", "messages": []})
+    assert not log.exists(), "off by default: the old behavior"
+    app.SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    app.SETTINGS.write_text(json.dumps({"logging": {"json_requests": True}}))
+    try:
+        c.get("/api/chats")                                                  # fast GET: not logged
+        c.put("/api/chats/0123456789abcdef?secret=x", json={"title": "secret title", "messages": []})
+        lines = [json.loads(x) for x in log.read_text().splitlines()]
+        assert [(e["method"], e["path"], e["status"]) for e in lines] == [("PUT", "/api/chats/0123456789abcdef", 200)], lines
+        assert set(lines[0]) == {"ts", "request_id", "method", "path", "status", "ms", "engine"}
+        assert "secret" not in log.read_text()
+    finally:
+        app.SETTINGS.unlink(missing_ok=True)
+        log.unlink(missing_ok=True)
+        c.delete("/api/chats/0123456789abcdef")
+
+
+@check
 def search_is_not_started_twice():
     """While the service is still loading (process up, /health not yet answering), a second
     "turn on" must not launch another copy."""
