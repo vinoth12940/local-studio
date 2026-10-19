@@ -42,6 +42,9 @@ os.environ["LOCAL_STUDIO_SEARCH_ROOTS"] = str(TMP / "no-search-roots")
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 import app  # noqa: E402
+import studio.services.engines  # noqa: E402
+import studio.services.models  # noqa: E402
+import studio.services.search  # noqa: E402
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
@@ -219,8 +222,8 @@ def threadpool_saturation(base, loop, blockers=60, block_s=1.0):
 
     class Slow:
         content, headers, status_code = b"\xff\xd8", {"x-pages": "1"}, 200
-    real = app._search_proxy
-    app._search_proxy = lambda *a, **k: (time.sleep(block_s), Slow())[1]
+    real = studio.services.search._search_proxy
+    studio.services.search._search_proxy = lambda *a, **k: (time.sleep(block_s), Slow())[1]
 
     async def run():
         async with httpx.AsyncClient(timeout=60) as c:
@@ -237,7 +240,7 @@ def threadpool_saturation(base, loop, blockers=60, block_s=1.0):
     try:
         idle, busy = asyncio.run(run())
     finally:
-        app._search_proxy = real
+        studio.services.search._search_proxy = real
     return {"anyio_thread_limit": limit, "blocking_requests": blockers, "block_s": block_s,
             "fast_sync_route_idle": summary_ms(idle), "fast_sync_route_while_saturated": summary_ms(busy)}
 
@@ -273,10 +276,10 @@ def main():
     _, _, engine = serve(fake)
     m = app.chat_model()
     app.ENGINES["text"]["url"] = engine                           # in this process only: the fake engine, never port 8080
-    app.model_installed = lambda model: True
-    app.engine_state = lambda: {"mode": "text", "model_id": m["id"]}
-    app._engine_ready = lambda mode: True
-    app.ensure_engine = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bench never starts an engine"))
+    studio.services.models.model_installed = lambda model: True       # patched where the code reads them (studio/)
+    studio.services.engines.engine_state = lambda: {"mode": "text", "model_id": m["id"]}
+    studio.services.engines._engine_ready = lambda mode: True
+    studio.services.engines.ensure_engine = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bench never starts an engine"))
     server, loop, base = serve(app.app, probe=True)
 
     ids = seed_chats(args.chats)
