@@ -393,6 +393,24 @@ def the_page_is_never_served_from_a_stale_cache():
 
 
 @check
+def ui_modules_are_served_fresh_as_javascript():
+    """frontend/ holds the UI's ES modules: index.html loads frontend/main.mjs. Like the page, every module revalidates (an
+    updated index.html never runs old modules), is served as JavaScript, and is the app's own (LocalOnly)."""
+    from fastapi.testclient import TestClient
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    assert 'type="module" src="frontend/main.mjs"' in c.get("/").text
+    for p in sorted((REPO / "frontend").glob("**/*.mjs")):
+        url = "/" + p.relative_to(REPO).as_posix()
+        r = c.get(url)
+        assert r.status_code == 200 and r.content == p.read_bytes(), url
+        assert r.headers["content-type"].startswith("text/javascript"), (url, r.headers["content-type"])
+        assert r.headers.get("cache-control") == "no-cache", (url, r.headers.get("cache-control"))
+        assert c.get(url, headers={"host": "evil.example:7860"}).status_code == 403, url
+        assert c.get(url, headers={"sec-fetch-site": "cross-site"}).status_code == 403, url
+    assert c.get("/frontend/../app.py").status_code == 404, "nothing outside frontend/"
+
+
+@check
 def search_sets_itself_up_again_after_an_update():
     """A new version can change the search components. With Search already on, the app installs
     them at launch by itself; the user should not have to turn Search off and on."""
@@ -664,7 +682,7 @@ def sse_contract_is_unchanged():
     """Every SSE event key and its fields, as the backend writes them, and the UI still reads each one."""
     contract = _sse_contract()
     _contract("sse_contract.json", contract)
-    ui = (REPO / "index.html").read_text()
+    ui = "\n".join(p.read_text() for p in [REPO / "index.html"] + sorted((REPO / "frontend").glob("**/*.mjs")))
     for key in contract["chat_x_events"]:
         assert f"j.{key}" in ui, f"index.html no longer handles the chat event {key}"
     for kind in contract["agent_run_events"]:

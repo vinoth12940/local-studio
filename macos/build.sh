@@ -34,6 +34,7 @@ for f in app.py index.html catalog.json requirements-app.txt search.py search-re
   cp "$ROOT/$f" "$APP/Contents/Resources/app/"
 done
 rsync -a --exclude __pycache__ --exclude '*.pyc' "$ROOT/studio" "$APP/Contents/Resources/app/"   # the backend package
+rsync -a --include '*/' --include '*.mjs' --exclude '*' "$ROOT/frontend" "$APP/Contents/Resources/app/"   # the UI's ES modules
 chmod +x "$APP/Contents/Resources/app/"*.sh
 
 echo "==> Icon"

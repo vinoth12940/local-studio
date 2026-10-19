@@ -37,6 +37,11 @@
   "name": "gallery"
  },
  {
+  "kind": "Mount",
+  "path": "/frontend",
+  "name": "frontend"
+ },
+ {
   "methods": [
    "GET"
   ],

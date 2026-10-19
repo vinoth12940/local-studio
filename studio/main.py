@@ -25,8 +25,9 @@ from studio.api import terminal as api_terminal
 from studio.api import undo as api_undo
 from studio.api import updates as api_updates
 from studio.api import workspace as api_workspace
-from studio.config import GALLERY
+from studio.config import GALLERY, ROOT
 from studio.infra.request_log import RequestLog
+from studio.infra.static import FreshStaticFiles
 from studio.security.local_only import LocalOnly
 
 # Every studio module, in dependency order: a module only imports from modules listed before it.
@@ -47,6 +48,7 @@ MODULES = (
     "studio.storage.chats",
     "studio.storage.flags",
     "studio.infra.request_log",
+    "studio.infra.static",
     "studio.security.local_only",
     "studio.services.models",
     "studio.services.engines",
@@ -86,6 +88,7 @@ for _m in MODULES:
 
 app = FastAPI()
 app.mount("/gallery", StaticFiles(directory=GALLERY), name="gallery")
+app.mount("/frontend", FreshStaticFiles(directory=ROOT / "frontend"), name="frontend")   # the UI's ES modules (read-only code)
 app.add_middleware(RequestLog)                               # inside LocalOnly; does nothing unless logging.json_requests
 app.add_middleware(LocalOnly)                                # outermost: every route and static file
 # In the order the routes had in app.py. No two routes can match the same request (macos/check_app.py checks that their

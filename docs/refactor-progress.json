@@ -323,7 +323,8 @@
    "node macos/check_ui.js index.html",
    "a scratch TDZ error in a module -> check fails"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: check_ui.js loads index.html's module script graph (and any inline classic script) against the same stub; negative checks: TDZ in the entry module, TDZ in an imported module, a missing named export, TDZ in an inline script all exit 1."
  },
  {
   "id": "P2.serve-frontend",
@@ -333,7 +334,8 @@
    "check_app.py",
    "build bundle contains frontend/"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: /frontend mount (FreshStaticFiles: no-cache, text/javascript) behind LocalOnly; build.sh rsyncs frontend/*.mjs; bundle serves /frontend/main.mjs; check_app ui_modules_are_served_fresh_as_javascript."
  },
  {
   "id": "P2.globals-bridge",
@@ -343,7 +345,8 @@
    "check_ui.js",
    "dev server: Browse all models button works"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: frontend/globals.mjs sets window.showView (the only name an inline handler calls) and window.LS (read-only console handle). Dev server: a button with onclick=\"showView('library')\" switched the view to library."
  },
  {
   "id": "P2.core",
