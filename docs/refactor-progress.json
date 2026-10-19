@@ -418,7 +418,8 @@
   "verify": [
    "node test runs in build.sh"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: macos/check_sanitizer.mjs (plain node, run by build.sh): javascript:/data:/vbscript:/file:/protocol-relative and tab-split schemes, entity-encoded schemes in markdown, on* (any case), style/srcset/formaction/xlink:href, svg/math/template/noscript and the other dropped elements, foreign/data images. Fails when svg is allowed or on* kept. No sanitizer change was needed."
  },
  {
   "id": "P3.untrusted-framing",

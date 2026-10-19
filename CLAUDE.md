@@ -42,6 +42,7 @@ suites (`check_search.py`, `check_app.py`, `check_agent.py`, `check_document.py`
 
 ```sh
 node macos/check_ui.js index.html
+node macos/check_sanitizer.mjs     # the chat markdown sanitizer, under plain node
 python3 -c "import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]" app.py studio/**/*.py
 uv run -q --no-project --python 3.12 --with numpy python macos/check_search.py
 uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_app.py
