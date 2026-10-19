@@ -42,23 +42,25 @@ export {
   chResume, chRetry, chShowSteps, chStop, chSwapTurn, chSync
 } from "./chat/computer.mjs";
 export {
-  activeChat, activeCodeWs, activeImage, activeJob, ag, AG_CUA_MIN, AG_CUA_URL, AG_DROP, AG_EXAMPLES, AG_STATUS,
-  AG_TAGS, AG_TIER, AG_TIER_ORDER, AG_TITLE, agAnswerCard, agApprovalCard, agAttach, agAttn, agAttnNow, agBgCheck,
-  agBoxOf, agCardEl, agClean, agClear, agClose, agConnect, agContinue, agDecision, agDerive, agDetail, agEvent,
-  agFetchStatus, agFinalText, agFresh, agGrant, agLimit, agLogClick, agLogKey, agLost, agMd, agNoteEl, agOpen,
-  agOpenSaved, agOutcome, agPausedOf, agPendingOf, agPermMissing, agQuestionCard, agRender, agRenderModels,
-  agRenderRuns, agRenderSettings, agRenderSetup, agRenderTiers, agReply, agResolve, agSave, agSetErr, agSetTier,
-  agShotUrl, agSize, agStart, agStateText, agStepRow, agStopRun, agSync, agTakeoverRun, agTierKey, agTierSelect,
-  agTitleHTML, agWeb, agWhen, cardHTML, cardSig, CODE_CHECKED, CODE_MUTATING, codeCloseFile, codeConfirmDiscard,
-  codeDirty, codeEdViewMode, codeEmpty, codeExSeq, codeExTab, codeFileDiff, codeFullDiff, codeGitInfo, codeInstFiles,
-  codeJump, codeMarkActive, codeOpenPath, codeOriginalContent, codeSelectExTab, codeShowAllChanges, codeShowDiag,
-  codeSyncDirty, codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme,
-  codeUpdateStatus, codeWsQ, deleteImage, dlText, gallery, hfKind, hfSearch, lbItem, lib, libTab, loadAgent,
-  loadAgentRuns, loadCodeProcesses, loadCodeView, loadGallery, loadLibrary, loadManage, loadMcp, loadSearch,
-  loadStorage, loadVersions, loadXterm, mainState, mcpServers, onAgentCodeMutation, openCodeFile, openLightbox,
-  patchCards, renderCodeExplorer, renderDiffLinesHTML, renderImgModels, renderLibrary, renderMenu, runSearch,
-  saveCodeFile, setActive, setCodeEditorMode, setStepOptions, sr, SR_ICON, SR_OFF, SR_PAUSED, SR_STOP, srAddFolder,
-  srAuto, srClosePreview, srEnable, srHome, srLoc, srMark, srOpen, srPvSeq, srPvState, srRemoveFolder, srRes, srRow,
-  srSave, srSecs, srSel, srSelect, srSeq, srShowPage, srStatusLine, srTimer, STORAGE, syncFiles, tagsHTML, track,
-  updateCodeGutter, updateHeader, useFiles, XTERM_FILES, xtermLoad
+  activeJob, deleteImage, gallery, lbItem, loadGallery, openLightbox, track
+} from "./images/images.mjs";
+export {
+  activeChat, activeCodeWs, activeImage, ag, AG_CUA_MIN, AG_CUA_URL, AG_DROP, AG_EXAMPLES, AG_STATUS, AG_TAGS, AG_TIER,
+  AG_TIER_ORDER, AG_TITLE, agAnswerCard, agApprovalCard, agAttach, agAttn, agAttnNow, agBgCheck, agBoxOf, agCardEl,
+  agClean, agClear, agClose, agConnect, agContinue, agDecision, agDerive, agDetail, agEvent, agFetchStatus,
+  agFinalText, agFresh, agGrant, agLimit, agLogClick, agLogKey, agLost, agMd, agNoteEl, agOpen, agOpenSaved, agOutcome,
+  agPausedOf, agPendingOf, agPermMissing, agQuestionCard, agRender, agRenderModels, agRenderRuns, agRenderSettings,
+  agRenderSetup, agRenderTiers, agReply, agResolve, agSave, agSetErr, agSetTier, agShotUrl, agSize, agStart,
+  agStateText, agStepRow, agStopRun, agSync, agTakeoverRun, agTierKey, agTierSelect, agTitleHTML, agWeb, agWhen,
+  cardHTML, cardSig, CODE_CHECKED, CODE_MUTATING, codeCloseFile, codeConfirmDiscard, codeDirty, codeEdViewMode,
+  codeEmpty, codeExSeq, codeExTab, codeFileDiff, codeFullDiff, codeGitInfo, codeInstFiles, codeJump, codeMarkActive,
+  codeOpenPath, codeOriginalContent, codeSelectExTab, codeShowAllChanges, codeShowDiag, codeSyncDirty, codeTermFit,
+  codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme, codeUpdateStatus, codeWsQ,
+  dlText, hfKind, hfSearch, lib, libTab, loadAgent, loadAgentRuns, loadCodeProcesses, loadCodeView, loadLibrary,
+  loadManage, loadMcp, loadSearch, loadStorage, loadVersions, loadXterm, mainState, mcpServers, onAgentCodeMutation,
+  openCodeFile, patchCards, renderCodeExplorer, renderDiffLinesHTML, renderImgModels, renderLibrary, renderMenu,
+  runSearch, saveCodeFile, setActive, setCodeEditorMode, setStepOptions, sr, SR_ICON, SR_OFF, SR_PAUSED, SR_STOP,
+  srAddFolder, srAuto, srClosePreview, srEnable, srHome, srLoc, srMark, srOpen, srPvSeq, srPvState, srRemoveFolder,
+  srRes, srRow, srSave, srSecs, srSel, srSelect, srSeq, srShowPage, srStatusLine, srTimer, STORAGE, syncFiles,
+  tagsHTML, updateCodeGutter, updateHeader, useFiles, XTERM_FILES, xtermLoad
 } from "./main.mjs";
