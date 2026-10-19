@@ -77,6 +77,7 @@ import studio.services.agent.cua  # noqa: E402
 import studio.services.agent.loop  # noqa: E402
 import studio.services.agent.views  # noqa: E402
 import studio.services.engines  # noqa: E402
+import studio.services.harness  # noqa: E402
 import studio.services.models  # noqa: E402
 import studio.services.search  # noqa: E402
 import studio.services.web  # noqa: E402
@@ -5055,14 +5056,14 @@ def chat_verifies_web_results_before_answering():
     def evidence(name, args, timezone=None):
         if name == "web_search": return {"results": [{"title": "Official Mac lineup", "url": "https://www.apple.com/mac/", "snippet": "Read the official lineup."}]}
         return {"url": args["url"], "title": "Official Mac lineup", "text": "Fixture: the current product list contains M5. It does not list M6.", "untrusted_source_text": True}
-    app._chat_read_tool = evidence
+    studio.services.harness._chat_read_tool = evidence
     try:
         with Env(enabled=False) as e, ChatEngine(turns=turns) as engine:
             result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Is a Mac M6 available?"}]})
             assert len(engine.seen) == 3 and "does not list M6" in engine.seen[2]["messages"][-1]["content"]
             assert any("x_web_sources" in event for event in sse(result.text)) and not e.sessions
             assert "cannot confirm availability" in result.text
-    finally: app._chat_read_tool = real
+    finally: studio.services.harness._chat_read_tool = real
 
 
 @check
@@ -5072,7 +5073,7 @@ def chat_reads_found_sources_before_repeating_searches():
     def evidence(name, args, timezone=None):
         seen.append(name)
         return {"results": [{"url": "https://example.com/", "title": "Primary source"}]} if name == "web_search" else {"url": "https://example.com/", "text": "Verified source text"}
-    app._chat_read_tool = evidence
+    studio.services.harness._chat_read_tool = evidence
     try:
         turns = [chat_action_deltas(name="web_search", args='{"query":"current release"}'),
                  chat_action_deltas(name="web_search", args='{"query":"current release reworded"}'),
@@ -5084,7 +5085,7 @@ def chat_reads_found_sources_before_repeating_searches():
             assert all(t["function"]["name"] != "web_search" for t in engine.seen[1]["tools"])
             assert "Call read_webpage" in engine.seen[2]["messages"][-1]["content"]
             assert engine.seen[3]["tools"] == app.CHAT_TOOLS and "Verified." in result.text
-    finally: app._chat_read_tool = real
+    finally: studio.services.harness._chat_read_tool = real
 
 
 @check
@@ -5143,7 +5144,7 @@ def chat_file_tools_keep_private_evidence_local():
 @check
 def failed_tools_return_evidence_and_repeats_are_bounded():
     real = app._chat_read_tool
-    app._chat_read_tool = lambda *args: {"error": "Source could not be reached", "verified": False}
+    studio.services.harness._chat_read_tool = lambda *args: {"error": "Source could not be reached", "verified": False}
     try:
         turns = [chat_action_deltas(name="web_search", args='{"query":"latest product"}'), chat_action_deltas(name="reply", args='{"text":"I could not verify that source."}')]
         with Env() as e, ChatEngine(turns=turns) as engine:
@@ -5153,7 +5154,7 @@ def failed_tools_return_evidence_and_repeats_are_bounded():
         with Env() as e, ChatEngine(*chat_action_deltas(name="get_current_datetime")) as engine:
             result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Today?"}]})
             assert len(engine.seen) <= app.CHAT_TOOL_ROUNDS and "tool-call limit" in result.text and not e.sessions
-    finally: app._chat_read_tool = real
+    finally: studio.services.harness._chat_read_tool = real
 
 
 @check
