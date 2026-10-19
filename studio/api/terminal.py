@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from studio.infra.workspace import _harness_root
 from studio.security.fences import _harness_path_fence
-from studio.services.terminal import _TERM_MAX_SESSIONS, _terminal, _Terminal, _terminals, _terminals_lock
+from studio.services.terminal import _TERM_MAX_SESSIONS, _Terminal, _terminal, _terminals, _terminals_lock
 
 router = APIRouter()
 
