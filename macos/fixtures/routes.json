@@ -47,6 +47,27 @@
   "methods": [
    "GET"
   ],
+  "path": "/api/health",
+  "name": "api_health"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/busy",
+  "name": "api_busy"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/",
+  "name": "index"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
   "path": "/api/models",
   "name": "models"
  },
@@ -122,17 +143,31 @@
  },
  {
   "methods": [
-   "GET"
+   "POST"
   ],
-  "path": "/api/busy",
-  "name": "api_busy"
+  "path": "/api/chat/sessions/{sid}/reply",
+  "name": "chat_session_reply"
  },
  {
   "methods": [
    "POST"
   ],
-  "path": "/api/chat/sessions/{sid}/reply",
-  "name": "chat_session_reply"
+  "path": "/api/chat/compact",
+  "name": "api_compact_chat"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/chat/commands",
+  "name": "api_get_slash_commands"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/chat",
+  "name": "chat"
  },
  {
   "methods": [
@@ -255,20 +290,6 @@
  },
  {
   "methods": [
-   "POST"
-  ],
-  "path": "/api/chat/compact",
-  "name": "api_compact_chat"
- },
- {
-  "methods": [
-   "GET"
-  ],
-  "path": "/api/chat/commands",
-  "name": "api_get_slash_commands"
- },
- {
-  "methods": [
    "GET"
   ],
   "path": "/api/workspace/files",
@@ -315,13 +336,6 @@
   ],
   "path": "/api/workspace/exec",
   "name": "api_workspace_exec"
- },
- {
-  "methods": [
-   "POST"
-  ],
-  "path": "/api/chat",
-  "name": "chat"
  },
  {
   "methods": [
@@ -658,12 +672,5 @@
   ],
   "path": "/api/uninstall",
   "name": "uninstall"
- },
- {
-  "methods": [
-   "GET"
-  ],
-  "path": "/",
-  "name": "index"
  }
 ]

@@ -118,7 +118,8 @@
   "verify": [
    "AST lint in check_app.py passes"
   ],
-  "passes": false
+  "passes": true,
+  "note": "check_app.py rebound_names_are_read_through_their_owner (macos/inventory_patches.import_rule_violations) passes on the finished split."
  },
  {
   "id": "P1.health",
@@ -128,7 +129,7 @@
    "check_app.py health check",
    "routes.json diff is exactly one added route"
   ],
-  "passes": false
+  "passes": true
  },
  {
   "id": "P1.config",

@@ -313,6 +313,30 @@ def local_only_characterization():
 
 
 @check
+def health_reports_readiness_without_locks():
+    """GET /api/health: {ok, version, engine: {mode, model_id}, search: up|down}, answered while every lock is held."""
+    import threading
+    from fastapi.testclient import TestClient
+    import studio.services.engines as engines
+    real = engines.engine_state
+    engines.engine_state = lambda: {"mode": "text", "model_id": "m1"}
+    held = [lk for lk in (app.engine_lock, app.agent_lock, app.image_lock) if lk.acquire(timeout=1)]
+    try:
+        c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+        out = {}
+        t = threading.Thread(target=lambda: out.update(r=c.get("/api/health")), daemon=True)
+        t.start(); t.join(10)
+        assert "r" in out, "health waited on a lock"
+        assert out["r"].status_code == 200 and out["r"].json() == {
+            "ok": True, "version": app.APP_VERSION, "engine": {"mode": "text", "model_id": "m1"}, "search": "down"}, out["r"].text
+        assert c.get("/api/health", headers={"origin": "https://evil.example"}).status_code == 403, "LocalOnly applies"
+    finally:
+        for lk in held:
+            lk.release()
+        engines.engine_state = real
+
+
+@check
 def search_is_not_started_twice():
     """While the service is still loading (process up, /health not yet answering), a second
     "turn on" must not launch another copy."""
