@@ -14,9 +14,8 @@ mkdir -p "$STATE/logs"
 cd "$CODE"
 if ! curl -sf http://127.0.0.1:7860/api/system >/dev/null; then
   UV=$(command -v uv || echo ~/.local/bin/uv)
-  nohup $UV run --no-project --python 3.12 --with fastapi --with uvicorn --with httpx \
-    --with python-multipart --with pillow --with pypdf --with pypdfium2 \
-    --with python-docx --with openpyxl uvicorn app:app --app-dir "$CODE" \
+  nohup $UV run --no-project --python 3.12 --with-requirements "$CODE/requirements-app.txt" \
+    uvicorn app:app --app-dir "$CODE" \
     --host 127.0.0.1 --port 7860 > "$STATE/logs/ui.log" 2>&1 &
   echo $! > "$STATE/logs/ui.pid"
   echo "UI starting at http://127.0.0.1:7860"

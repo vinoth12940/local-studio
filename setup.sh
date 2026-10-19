@@ -17,8 +17,7 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/us
 export UV_NO_MODIFY_PATH=1              # never touch the user's shell profile
 UV="$HOME/.local/bin/uv"
 [[ -x "$UV" ]] || UV=$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")
-APP_DEPS=(--with fastapi --with uvicorn --with httpx --with python-multipart --with pillow
-          --with pypdf --with pypdfium2 --with python-docx --with openpyxl)
+APP_DEPS=(--with-requirements "$CODE/requirements-app.txt")      # the same pinned file start.sh runs the UI with
 
 say() { print -r -- "$*"; }
 log_lines() { while IFS= read -r line; do say "@log ${line//$'\r'/}"; done; }

@@ -12,7 +12,7 @@ moved, on `main` at 1bc4640 plus the P0 safety-net commit, which made no product
 Backend numbers come from `macos/bench_app.py`. Run it by hand; it is not part of `build.sh`:
 
 ```sh
-uv run -q --no-project --python 3.12 --with fastapi --with uvicorn --with httpx --with python-multipart python macos/bench_app.py [--chats 200] [--json out.json]
+uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/bench_app.py [--chats 200] [--json out.json]
 ```
 
 The bench uses a temporary `LOCAL_STUDIO_HOME` and free ports. It runs uvicorn in-process with a fake OpenAI-style streaming

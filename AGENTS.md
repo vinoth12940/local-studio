@@ -34,8 +34,8 @@ Always run verification checks before completing changes. `macos/build.sh` runs 
 node macos/check_ui.js index.html
 python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" app.py
 uv run -q --no-project --python 3.12 --with numpy python macos/check_search.py
-uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_app.py
-TMPDIR=/tmp uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_agent.py [check_name ...]
+uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_app.py
+TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py [check_name ...]
 uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py build/DocumentReader
 
 # Full build (runs all checks above + compiles Swift binaries + signs bundle):
@@ -59,7 +59,7 @@ uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py
   - `gallery/`, `uploads/`, `logs/`
 - **Rule**: Always resolve mutable paths from `STATE`, never `ROOT`.
 - **Bytecode**: `start.sh` sets `PYTHONDONTWRITEBYTECODE=1` so Python never writes `__pycache__` into the signed `.app` bundle (which would break macOS code-signing seals).
-- **Dependencies**: If you add a Python package dependency to `app.py`, add it to **both** `start.sh` and `APP_DEPS` in `setup.sh`. If you add a new runtime file, add it to the copy list in `macos/build.sh`.
+- **Dependencies**: If you add a Python package dependency to `app.py`, add an exact pin to `requirements-app.txt`, which `start.sh`, `APP_DEPS` in `setup.sh` and the checks all read. If you add a new runtime file, add it to the copy list in `macos/build.sh`.
 
 ### 2. Single Active Chat Engine
 Only one heavy LLM engine process runs at a time (`ensure_engine(mode, model)` under `engine_lock`):

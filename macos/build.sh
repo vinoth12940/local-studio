@@ -17,8 +17,8 @@ if command -v node >/dev/null 2>&1; then node "$HERE/check_ui.js" "$ROOT/index.h
 python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$ROOT/app.py" && echo "   app.py OK"
 UV=$(command -v uv || echo ~/.local/bin/uv)
 $UV run -q --no-project --python 3.12 --with numpy python "$HERE/check_search.py"
-$UV run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python "$HERE/check_app.py"
-$UV run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python "$HERE/check_agent.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_app.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_agent.py"
 
 echo "==> Compiling"
 xcrun swiftc -O -target arm64-apple-macos14.0 -framework Cocoa -framework WebKit \
@@ -29,7 +29,7 @@ cp "$APP/Contents/MacOS/DocumentReader" "$ROOT/build/DocumentReader"
 $UV run -q --no-project --python 3.12 --with reportlab --with pillow python "$HERE/check_document.py" "$APP/Contents/MacOS/DocumentReader"
 
 echo "==> Bundling code"
-for f in app.py index.html catalog.json search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh; do
+for f in app.py index.html catalog.json requirements-app.txt search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh; do
   cp "$ROOT/$f" "$APP/Contents/Resources/app/"
 done
 chmod +x "$APP/Contents/Resources/app/"*.sh

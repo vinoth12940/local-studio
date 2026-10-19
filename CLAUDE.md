@@ -40,8 +40,8 @@ suites (`check_search.py`, `check_app.py`, `check_agent.py`, `check_document.py`
 node macos/check_ui.js index.html
 python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" app.py
 uv run -q --no-project --python 3.12 --with numpy python macos/check_search.py
-uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_app.py
-TMPDIR=/tmp uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_agent.py [check_name ...]
+uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_app.py
+TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py [check_name ...]
 uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py build/DocumentReader
 uv run -q --no-project --python 3.12 --with-requirements search-requirements.txt python search.py --eval build/search_samples
 ```
@@ -79,8 +79,9 @@ welcome greeting only (`#v-chat .turn.bot .content`), never in the Code view.
 update it there too.
 
 The backend has no project/venv: `start.sh` runs it with
-`uv run --no-project --python 3.12 --with fastapi --with uvicorn ... uvicorn app:app`. If you add a
-Python dependency, add it to **both** `start.sh` and `APP_DEPS` in `setup.sh`. After editing
+`uv run --no-project --python 3.12 --with-requirements requirements-app.txt uvicorn app:app`. `requirements-app.txt`
+holds exact pins and is shared by `start.sh`, `APP_DEPS` in `setup.sh` and the check suites; add a Python dependency
+there, never as a bare `--with`. `search-requirements.txt` is pinned the same way (its hash change re-runs Search setup). After editing
 `app.py`, restart the UI server (`./stop.sh && ./start.sh --ui`); there is no auto-reload. Logs and
 pid files go to `logs/` (`ui.log`, `llm.log`, `vlm.log`, `gguf.log`, `download-<id>.log`).
 
@@ -298,7 +299,7 @@ runs `setup.sh --migrate` (copies data from `~/local-studio`), then `start.sh`, 
 `http://127.0.0.1:7860` in a WKWebView. On quit it runs `stop.sh` unless "Keep Running After Quit"
 is on. `setup.sh` talks to the app through a line protocol on stdout (`@check`, `@step`, `@log`,
 `@done`, `@error`), so keep that format intact when editing it. `macos/build.sh` copies a fixed list
-of files into the bundle (`app.py index.html catalog.json search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh`).
+of files into the bundle (`app.py index.html catalog.json requirements-app.txt search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh`).
 Any new runtime file must be added to that list.
 
 ## Versioning and releases
@@ -314,8 +315,8 @@ Run all checks before reporting any task complete, and include the verification 
 - UI check: `node macos/check_ui.js index.html` (must exit 0)
 - Syntax check: `python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" app.py` (must exit 0)
 - Search check: `uv run -q --no-project --python 3.12 --with numpy python macos/check_search.py`
-- App check: `uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_app.py`
-- Agent Harness check: `TMPDIR=/tmp uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_agent.py`
+- App check: `uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_app.py`
+- Agent Harness check: `TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py`
 - Document OCR check: `uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py build/DocumentReader`
 - Full app build: `./macos/build.sh`
 
@@ -326,7 +327,7 @@ If a test fails, fix the implementation code — never skip, weaken, or delete a
 - Never resolve mutable data paths (`gallery/`, `uploads/`, `logs/`, `data/`) from `ROOT`; always resolve from `STATE` (`$LOCAL_STUDIO_HOME`), because `ROOT` is read-only inside the signed `Local Studio.app` bundle.
 - Never run `stop.sh` or start/stop an engine against the user's live `LOCAL_STUDIO_HOME` during tests; always isolate test runs with a temporary `LOCAL_STUDIO_HOME` and a short `TMPDIR=/tmp` (macOS limits `cua.sock` paths to 104 bytes).
 - Never mutate process-wide `os.getcwd()` in `app.py`; always use the `_chat_workspace` `ContextVar` (`_in_workspace(path)`).
-- When adding a Python dependency, add it to **both** `start.sh` and `APP_DEPS` in `setup.sh`. When adding a runtime file, add it to the copy list in `macos/build.sh`.
+- When adding a Python dependency, add an exact pin to `requirements-app.txt` (read by `start.sh`, `APP_DEPS` in `setup.sh` and the checks). When adding a runtime file, add it to the copy list in `macos/build.sh`.
 
 ## Agent Harness roadmap
 

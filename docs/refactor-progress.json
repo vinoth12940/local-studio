@@ -97,7 +97,8 @@
    "UI started on 7861 from the pinned file answers /api/system",
    "./macos/build.sh"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: setup.sh --check exit 0; pinned UI on 7861 answered /api/system; ./macos/build.sh exit 0 with --with-requirements. .claude/launch.json (gitignored) still uses bare --with: the sandbox blocks writing it."
  },
  {
   "id": "P1.skeleton",

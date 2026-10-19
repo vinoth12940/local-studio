@@ -1,6 +1,6 @@
 """Build guard for the Local Agent logic in app.py. Run by macos/build.sh, or by hand:
 
-    uv run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python macos/check_agent.py [check_name ...]
+    uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py [check_name ...]
 """
 import copy
 import json

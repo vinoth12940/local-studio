@@ -1,6 +1,6 @@
 """Offline benchmark of the backend (refactor P0/P4, docs/perf-baseline.md). Run by hand, never by build.sh:
 
-    uv run -q --no-project --python 3.12 --with fastapi --with uvicorn --with httpx --with python-multipart \
+    uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt \
         python macos/bench_app.py [--chats 200] [--json out.json]
 
 Everything runs against a temporary LOCAL_STUDIO_HOME and free ports. The chat engine is a fake OpenAI-style streaming
