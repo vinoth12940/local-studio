@@ -1,8 +1,9 @@
 // ui/views.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { $, DEFAULT_MAX_TOKENS, store, toast } from "../core/util.mjs";
+import { setCollapsed } from "./theme.mjs";
 import {
-  $, agFetchStatus, agOpen, codeTermS, codeTermStart, codeTermTheme, DEFAULT_MAX_TOKENS, loadCodeView, loadGallery,
-  loadLibrary, loadManage, loadSearch, renderHistory, renderThread, scrollBottom, setCollapsed, store, toast,
-  updateHeader
+  agFetchStatus, agOpen, codeTermS, codeTermStart, codeTermTheme, loadCodeView, loadGallery, loadLibrary, loadManage,
+  loadSearch, renderHistory, renderThread, scrollBottom, updateHeader
 } from "../modules.mjs";
 
 // ---------------- views

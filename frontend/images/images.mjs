@@ -1,5 +1,5 @@
 // images/images.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import { $, api, confirmBox, esc, gib, icon, jpost, toast } from "../modules.mjs";
+import { $, api, confirmBox, esc, gib, icon, jpost, toast } from "../core/util.mjs";
 
 // ---------------- images
 $("advBtn").onclick = () => { $("adv").classList.toggle("on"); $("advBtn").classList.toggle("on"); };

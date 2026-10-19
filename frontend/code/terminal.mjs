@@ -1,11 +1,14 @@
 // code/terminal.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { $, api, esc, jpost, newId, store, toast } from "../core/util.mjs";
+import { showView } from "../ui/views.mjs";
+import { chLive, listState, newChat, saveChat, updateWorkspaceUI } from "../chat/list.mjs";
+import { autosize, compactCurrentChat, ctxUsage, fmtTok, toggleMode } from "../chat/composer.mjs";
+import { send } from "../chat/live.mjs";
 import {
-  $, activeCodeWs, api, autosize, chLive, codeCloseFile, codeConfirmDiscard, codeDirty, codeEdViewMode, codeEmpty,
-  codeGitInfo, codeInstFiles, codeJump, codeOpenPath, codeSelectExTab, codeShowAllChanges, codeSyncDirty,
-  compactCurrentChat, ctxUsage, esc, fmtTok, jpost, listState, loadCodeProcesses, loadCodeView, newChat, newId,
-  openCodeFile, renderCodeExplorer, saveChat, saveCodeFile, send, setCodeEditorMode, showView, store, toast,
-  toggleMode, updateCodeGutter, updateWorkspaceUI
-} from "../modules.mjs";
+  activeCodeWs, codeCloseFile, codeConfirmDiscard, codeDirty, codeEdViewMode, codeEmpty, codeGitInfo, codeInstFiles,
+  codeJump, codeOpenPath, codeSelectExTab, codeShowAllChanges, codeSyncDirty, loadCodeProcesses, loadCodeView,
+  openCodeFile, renderCodeExplorer, saveCodeFile, setCodeEditorMode, updateCodeGutter
+} from "./editor.mjs";
 
 // terminal: a real login shell on a pty (app.py "terminal"), drawn by xterm.js which loads on first use
 const XTERM_FILES = [

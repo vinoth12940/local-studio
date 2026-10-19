@@ -1,8 +1,11 @@
 // library/library.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import {
-  $, agRenderModels, api, closeMenus, confirmBox, engineState, esc, human, icon, jpost, listState, poll, renderThread,
-  showView, syncThink, toast, view
-} from "../modules.mjs";
+import { $, api, confirmBox, esc, human, icon, jpost, toast } from "../core/util.mjs";
+import { closeMenus, showView, view } from "../ui/views.mjs";
+import { engineState, poll } from "../ui/engine.mjs";
+import { listState } from "../chat/list.mjs";
+import { renderThread } from "../chat/thread.mjs";
+import { syncThink } from "../chat/composer.mjs";
+import { agRenderModels } from "../modules.mjs";
 
 // ---------------- library
 let lib = null, libTab = "chat"; const libraryState = { runningName: null, runningMode: null };

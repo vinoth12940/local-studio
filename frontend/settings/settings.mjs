@@ -1,8 +1,9 @@
 // settings/settings.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import {
-  $, api, chDetach, confirmBox, esc, human, jpost, lib, listState, loadAgent, loadChats, loadLibrary, loadSearch,
-  toast
-} from "../modules.mjs";
+import { $, api, confirmBox, esc, human, jpost, toast } from "../core/util.mjs";
+import { listState, loadChats } from "../chat/list.mjs";
+import { chDetach } from "../chat/computer.mjs";
+import { lib, loadLibrary } from "../library/library.mjs";
+import { loadAgent, loadSearch } from "../modules.mjs";
 
 // ---------------- settings
 async function loadManage() { loadStorage(); loadVersions(); loadSearch(); loadAgent(); loadMcp(); loadLibrary().then(() => {

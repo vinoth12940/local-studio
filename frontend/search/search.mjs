@@ -1,5 +1,6 @@
 // search/search.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import { $, api, confirmBox, esc, human, icon, jpost, store, toast, view } from "../modules.mjs";
+import { $, api, confirmBox, esc, human, icon, jpost, store, toast } from "../core/util.mjs";
+import { view } from "../ui/views.mjs";
 
 // ---------------- search
 let sr = null, srTimer = 0, srSeq = 0, useFiles = store.get("useFiles", false); const searchState = { noFilesOnce: false };

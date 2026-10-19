@@ -19,9 +19,13 @@ import * as code_terminal from "./code/terminal.mjs";
 import * as library_library from "./library/library.mjs";
 import * as settings_settings from "./settings/settings.mjs";
 import * as search_search from "./search/search.mjs";
+import * as agent_helpers from "./agent/helpers.mjs";
+import * as agent_state from "./agent/state.mjs";
+import * as agent_agent from "./agent/agent.mjs";
+import * as settings_agent from "./settings/agent.mjs";
 
 window.showView = (...args) => ui_views.showView(...args);
-const SPACES = [main, core_util, core_markdown, ui_theme, ui_views, ui_engine, chat_list, chat_thread, chat_attachments, chat_composer, chat_live, chat_computer, images_images, code_editor, code_terminal, library_library, settings_settings, search_search];
+const SPACES = [main, core_util, core_markdown, ui_theme, ui_views, ui_engine, chat_list, chat_thread, chat_attachments, chat_composer, chat_live, chat_computer, images_images, code_editor, code_terminal, library_library, settings_settings, search_search, agent_helpers, agent_state, agent_agent, settings_agent];
 const STORES = () => [chat_attachments.attachmentsState, chat_list.listState, chat_thread.threadState, library_library.libraryState, search_search.searchState];            // names more than one module assigns live in these
 window.LS = new Proxy({}, {
   get: (_, k) => STORES().find((s) => k in s)?.[k] ?? SPACES.map((m) => m[k]).find((v) => v !== undefined),

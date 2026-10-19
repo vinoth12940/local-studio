@@ -1,9 +1,12 @@
 // chat/thread.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { $, esc, icon, jpost, toast } from "../core/util.mjs";
+import { agNoImages, md } from "../core/markdown.mjs";
+import { chatHost, showView, view } from "../ui/views.mjs";
+import { chLive, listState, renderHistory, saveChat, updateWorkspaceUI } from "./list.mjs";
 import {
-  $, activeChat, activeCodeWs, AG_RID, agLogKey, agNoImages, agWeb, attMeta, attThumb, autosize, cardHTML, chatHost,
-  chBind, chCardClick, chCardHTML, chLive, chShowSteps, codeUpdateStatus, DOC_ICON, esc, generate, icon, jpost, lib,
-  listState, liveGen, liveSkeletonHTML, loadAgent, loadCodeView, loadLibrary, md, patchCards, renderHistory, saveChat,
-  searchState, send, showView, srHome, srOpen, toast, updateCtx, updateSend, updateWorkspaceUI, view
+  activeChat, activeCodeWs, AG_RID, agLogKey, agWeb, attMeta, attThumb, autosize, cardHTML, chBind, chCardClick,
+  chCardHTML, chShowSteps, codeUpdateStatus, DOC_ICON, generate, lib, liveGen, liveSkeletonHTML, loadAgent,
+  loadCodeView, loadLibrary, patchCards, searchState, send, srHome, srOpen, updateCtx, updateSend
 } from "../modules.mjs";
 
 const CODE_STARTERS = [["i-book", "Explain this codebase", "Explain how this codebase is organized: the main modules, how they fit together, and where to start reading."], ["i-redo", "Fix failing tests", "Run the tests, find the first failure, and fix its root cause."], ["i-code", "Write tests for…", "Write tests for "], ["i-spark", "Add a feature…", "Add a feature that "]];

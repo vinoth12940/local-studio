@@ -1,8 +1,7 @@
 // chat/list.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import {
-  $, activeCodeWs, api, chDetach, chResume, confirmBox, esc, icon, jpost, liveGen, loadCodeView, newId, renderThread,
-  scrollBottom, showView, store, syncChatDock, toast, view
-} from "../modules.mjs";
+import { $, api, confirmBox, esc, icon, jpost, newId, store, toast } from "../core/util.mjs";
+import { showView, syncChatDock, view } from "../ui/views.mjs";
+import { activeCodeWs, chDetach, chResume, liveGen, loadCodeView, renderThread, scrollBottom } from "../modules.mjs";
 
 // ---------------- chats
 let chats = []; const listState = { current: null, streaming: null, ctxWindow: 32768 };

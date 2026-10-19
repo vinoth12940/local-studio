@@ -1,7 +1,7 @@
 // ui/engine.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import {
-  $, activeChat, closeMenus, gib, jpost, libraryState, listState, toast, updateHeader, updateSend
-} from "../modules.mjs";
+import { $, gib, jpost, toast } from "../core/util.mjs";
+import { closeMenus } from "./views.mjs";
+import { activeChat, libraryState, listState, updateHeader, updateSend } from "../modules.mjs";
 
 // ---------------- engine status
 let health = null, metrics = null, engineState = "down";

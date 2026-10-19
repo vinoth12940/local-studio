@@ -1,5 +1,6 @@
 // chat/attachments.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import { $, api, esc, icon, toast, updateSend } from "../modules.mjs";
+import { $, api, esc, icon, toast } from "../core/util.mjs";
+import { updateSend } from "../modules.mjs";
 
 // attachments
 const attachmentsState = { pending: [] };            // {key, name, busy, meta?, error?, preview?}

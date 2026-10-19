@@ -68,11 +68,18 @@ export {
   srSelect, srSeq, srShowPage, srStatusLine, srTimer, syncFiles, useFiles
 } from "./search/search.mjs";
 export {
-  ag, AG_CUA_MIN, AG_CUA_URL, AG_DROP, AG_EXAMPLES, AG_STATUS, AG_TAGS, AG_TIER, AG_TIER_ORDER, AG_TITLE, agAnswerCard,
-  agApprovalCard, agAttach, agAttn, agAttnNow, agBgCheck, agBoxOf, agCardEl, agClean, agClear, agClose, agConnect,
-  agContinue, agDecision, agDerive, agDetail, agEvent, agFetchStatus, agFinalText, agFresh, agGrant, agLimit,
-  agLogClick, agLogKey, agLost, agMd, agNoteEl, agOpen, agOpenSaved, agOutcome, agPausedOf, agPendingOf, agPermMissing,
-  agQuestionCard, agRender, agRenderModels, agRenderRuns, agRenderSettings, agRenderSetup, agRenderTiers, agReply,
-  agResolve, agSave, agSetErr, agSetTier, agShotUrl, agSize, agStart, agStateText, agStepRow, agStopRun, agSync,
-  agTakeoverRun, agTierKey, agTierSelect, agTitleHTML, agWeb, agWhen, loadAgent, loadAgentRuns
-} from "./main.mjs";
+  AG_CUA_MIN, AG_CUA_URL, AG_DROP, AG_EXAMPLES, AG_STATUS, AG_TAGS, AG_TIER, AG_TIER_ORDER, AG_TITLE, agBoxOf, agClean,
+  agFinalText, agMd, agNoteEl, agOutcome, agPausedOf, agPendingOf, agShotUrl, agTierKey, agTitleHTML, agWeb, agWhen
+} from "./agent/helpers.mjs";
+export {
+  ag, agFresh, agPermMissing
+} from "./agent/state.mjs";
+export {
+  agAnswerCard, agApprovalCard, agAttach, agAttn, agAttnNow, agBgCheck, agCardEl, agClear, agClose, agConnect,
+  agContinue, agDecision, agDerive, agDetail, agEvent, agFetchStatus, agLogClick, agLogKey, agLost, agOpen,
+  agOpenSaved, agQuestionCard, agRender, agRenderModels, agRenderRuns, agRenderSetup, agReply, agResolve, agSetErr,
+  agSize, agStart, agStateText, agStepRow, agStopRun, agSync, agTakeoverRun, loadAgent, loadAgentRuns
+} from "./agent/agent.mjs";
+export {
+  agGrant, agLimit, agRenderSettings, agRenderTiers, agSave, agSetTier, agTierSelect
+} from "./settings/agent.mjs";

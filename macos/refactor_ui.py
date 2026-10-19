@@ -247,14 +247,16 @@ PLAN = [
     ("library/library", ["L3207-3365"]),
     ("settings/settings", ["L3366-3452"]),
     ("search/search", ["L3453-3644"]),
-    ("agent/state", ["L3645-3665"]),
-    ("agent/helpers", ["L3666-3745"]),
+    ("agent/helpers", ["L3645-3654", "L3666-3745"]),        # pure: plain node can import it (no DOM at load)
+    ("agent/state", ["L3655-3665"]),
     ("agent/agent", ["L3746-4092"]),
     ("settings/agent", ["L4093-4180"]),
 ]
 # Load-time statements allowed to run later than before, with the reason (the tdz check still covers reads of their names).
 ORDER_OK = {
     1433: "let thinking/effort = store.get(...): moved to chat/composer, which assigns them; reading localStorage later is harmless",
+    3660: "const ag = {...} (the Agent view's state, a $(\"agLog\") lookup) now runs after the pure helper constants instead of"
+          " before: neither reads the other at load (the tdz check), so plain node can import agent/helpers.mjs",
 }
 BRIDGE = ["showView"]                 # names inline handlers and innerHTML templates call (onclick="showView('library')")
 
@@ -464,18 +466,23 @@ def generate(n, report=False):
         if name in stored:
             raise SystemExit(f"bridge name {name} is in a store")
     files, dep_order = {}, {"globals": ["modules"], "modules": [m for m, _ in plan]}
-    for m, _ in plan:
-        dep_order[m] = ["modules"]
     for module, us in modules:
         head = [f"// {module}.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json)."]
         if module == "main":
             head = ["// The UI's entry point: index.html loads it as a module. What is not split into frontend/ yet still lives here,",
                     "// in its original order (the refactor's P2 split, docs/refactor-progress.json).", 'import "./globals.mjs";']
-        names = sorted({x for o in imports[module] for x in imports[module][o]}, key=str.lower)
+        # names of modules that run earlier: imported directly (they have run already, so the order does not change);
+        # names of modules that run later: through the hub, which keeps the original order
+        back = sorted((o for o in imports[module] if o != "main" and module != "main" and rank[o] < rank[module]), key=lambda o: rank[o])
+        fwd = sorted({x for o in imports[module] if o not in back for x in imports[module][o]}, key=str.lower)
+        for o in back:
+            head.append(_import_line(sorted(imports[module][o], key=str.lower), rel(path(module), path(o))))
         if module == "main":
             dep_order["main"] = ["globals", "modules"]
-        if names:
-            head.append(_import_line(names, rel(path(module), "frontend/modules.mjs")))
+        else:
+            dep_order[module] = back + (["modules"] if fwd else [])
+        if fwd:
+            head.append(_import_line(fwd, rel(path(module), "frontend/modules.mjs")))
         body, prev = [], None
         for u in us:
             if prev is not None and units.index(prev) + 1 == units.index(u):

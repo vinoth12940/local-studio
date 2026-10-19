@@ -1,8 +1,12 @@
 // chat/computer.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { $, api, esc, icon, toast } from "../core/util.mjs";
+import { agAnswerMd } from "../core/markdown.mjs";
+import { listState, saveChat } from "./list.mjs";
+import { renderThread, scrollBottom, threadState, turnHTML } from "./thread.mjs";
+import { updateSend } from "./composer.mjs";
 import {
-  $, agAnswerMd, agAttnNow, agClose, agConnect, agDerive, agEvent, agFetchStatus, agFinalText, agFresh, agLogClick,
-  agOutcome, agRender, agShotUrl, agStateText, agStopRun, agTakeoverRun, api, esc, icon, listState, loadAgent,
-  loadAgentRuns, renderThread, saveChat, scrollBottom, threadState, toast, turnHTML, updateSend
+  agAttnNow, agClose, agConnect, agDerive, agEvent, agFetchStatus, agFinalText, agFresh, agLogClick, agOutcome,
+  agRender, agShotUrl, agStateText, agStopRun, agTakeoverRun, loadAgent, loadAgentRuns
 } from "../modules.mjs";
 
 // ---------------- computer actions in chat

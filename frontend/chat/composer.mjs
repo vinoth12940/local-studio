@@ -1,8 +1,10 @@
 // chat/composer.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import {
-  $, activeChat, api, attachmentsState, chLive, chStop, codeUpdateStatus, esc, jpost, listState, liveGen, modelThinks,
-  openChat, renderThread, saveChat, send, store, toast, view
-} from "../modules.mjs";
+import { $, api, esc, jpost, store, toast } from "../core/util.mjs";
+import { view } from "../ui/views.mjs";
+import { chLive, listState, openChat, saveChat } from "./list.mjs";
+import { modelThinks, renderThread } from "./thread.mjs";
+import { attachmentsState } from "./attachments.mjs";
+import { activeChat, chStop, codeUpdateStatus, liveGen, send } from "../modules.mjs";
 
 let thinking = store.get("think", true), effort = store.get("effort", "");
 

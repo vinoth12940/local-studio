@@ -1,11 +1,18 @@
 // chat/live.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+import { $, DEFAULT_MAX_TOKENS, esc, icon, jpost, newId, store, toast } from "../core/util.mjs";
+import { md } from "../core/markdown.mjs";
+import { view } from "../ui/views.mjs";
+import { poll } from "../ui/engine.mjs";
+import { chLive, listState, renderHistory, saveChat } from "./list.mjs";
 import {
-  $, AG_RID, attachmentsState, autosize, chAttachAction, chHarnessCardHTML, chLive, chPlanHTML, chRoundItemHTML,
-  chToolStepsInner, closeAc, CODE_MUTATING, compactCurrentChat, DEFAULT_MAX_TOKENS, drawSpark, effort, esc, fmtSecs,
-  icon, jpost, listState, md, modelThinks, newId, onAgentCodeMutation, permMode, poll, renderHistory, renderPending,
-  renderThread, saveChat, scrollBottom, searchState, showPerf, sr, store, thinking, threadState, toast, turnHTML,
-  updateCtx, updateSend, useFiles, view
-} from "../modules.mjs";
+  chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chToolStepsInner, drawSpark, fmtSecs, modelThinks, renderThread,
+  scrollBottom, showPerf, threadState, turnHTML
+} from "./thread.mjs";
+import { attachmentsState, renderPending } from "./attachments.mjs";
+import {
+  autosize, closeAc, compactCurrentChat, effort, permMode, thinking, updateCtx, updateSend
+} from "./composer.mjs";
+import { AG_RID, chAttachAction, CODE_MUTATING, onAgentCodeMutation, searchState, sr, useFiles } from "../modules.mjs";
 
 async function send() {
   const text = $("input").value.trim();

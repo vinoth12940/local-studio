@@ -1,5 +1,7 @@
 // code/editor.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import { $, api, codeUpdateStatus, esc, human, jpost, listState, toast, updateWorkspaceUI } from "../modules.mjs";
+import { $, api, esc, human, jpost, toast } from "../core/util.mjs";
+import { listState, updateWorkspaceUI } from "../chat/list.mjs";
+import { codeUpdateStatus } from "../modules.mjs";
 
 // ---------------- code (workspace view: explorer · editor + terminal · agent chat)
 let codeExTab = "files", codeOpenPath = "", codeOriginalContent = "", codeFileDiff = "", codeFullDiff = "", codeEdViewMode = "code", codeGitInfo = null, codeInstFiles = [], codeExSeq = 0;

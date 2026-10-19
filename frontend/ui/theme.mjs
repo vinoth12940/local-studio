@@ -1,5 +1,6 @@
 // ui/theme.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import { $, codeTermS, codeTermTheme, showView, store } from "../modules.mjs";
+import { $, store } from "../core/util.mjs";
+import { codeTermS, codeTermTheme, showView } from "../modules.mjs";
 
 // ---------------- theme & layout
 function applyTheme(t) { if (t) document.documentElement.dataset.theme = t; const dark = (t || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark"; $("themeIcon").setAttribute("href", dark ? "#i-sun" : "#i-moon"); try { if (codeTermS) codeTermS.term.options.theme = codeTermTheme(); } catch {} }                       // codeTermS is declared later; at start-up there is no terminal yet
