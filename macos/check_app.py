@@ -469,11 +469,81 @@ def _routes():
     return out
 
 
+def _route_key(r):
+    return json.dumps(r, sort_keys=True)
+
+
+def _may_match_same_request(a, b):
+    """Conservative: True when some request could reach both routes (so their order decides which one answers). A Mount
+    covers its whole prefix, {x:path} matches any rest, {x} any one segment, and GET also serves HEAD."""
+    def segs(p):
+        return [x for x in p.split("/") if x]
+    if "methods" not in a or "methods" not in b:
+        mount, other = (a, b) if "methods" not in a else (b, a)
+        return other["path"] == mount["path"] or other["path"].startswith(mount["path"].rstrip("/") + "/") or \
+            ("methods" not in other and (mount["path"].startswith(other["path"].rstrip("/") + "/")))
+    ma, mb = set(a["methods"]), set(b["methods"])
+    if not (ma & mb or ("GET" in ma and "HEAD" in mb) or ("HEAD" in ma and "GET" in mb)):
+        return False
+    sa, sb = segs(a["path"]), segs(b["path"])
+    for i in range(max(len(sa), len(sb))):
+        x, y = (sa[i] if i < len(sa) else None), (sb[i] if i < len(sb) else None)
+        if (x and x.endswith(":path}")) or (y and y.endswith(":path}")):
+            return True
+        if x is None or y is None:
+            return False
+        if not (x.startswith("{") or y.startswith("{") or x == y):
+            return False
+    return True
+
+
+def _route_order_problems(expected, actual):
+    """Same routes, and every pair that could answer the same request keeps its committed order. Order between routes that
+    can never match the same request does not change behavior, so moving routes into per-area routers may change it."""
+    exp, act = [_route_key(r) for r in expected], [_route_key(r) for r in actual]
+    problems = [f"route removed: {k}" for k in exp if k not in act] + [f"route added: {k}" for k in act if k not in exp]
+    if len(set(act)) != len(act):
+        problems.append("a route is registered twice")
+    if problems:
+        return problems
+    pos = {k: i for i, k in enumerate(act)}
+    for i, a in enumerate(expected):
+        for b in expected[i + 1:]:
+            if _may_match_same_request(a, b) and pos[_route_key(a)] > pos[_route_key(b)]:
+                problems.append(f"order changed for routes that can match the same request: {a['path']} must stay before {b['path']}")
+    return problems
+
+
 @check
 def route_contract_is_unchanged():
     routes = _routes()
     assert sum(1 for r in routes if "methods" in r and r["path"].startswith("/api/") or r.get("path") == "/") >= 90, len(routes)
-    _contract("routes.json", routes)
+    if UPDATE_FIXTURES:
+        _contract("routes.json", routes)
+        return
+    expected = json.loads((FIXTURES / "routes.json").read_text())
+    problems = _route_order_problems(expected, routes)
+    assert not problems, "routes.json changed. If this is intended, update the fixture (LOCAL_STUDIO_UPDATE_FIXTURES=1) in the " \
+                         "same commit:\n" + "\n".join(problems)
+
+
+@check
+def route_order_check_catches_what_matters():
+    """The order rule above: swapping two routes that can match the same request fails; swapping unrelated ones passes."""
+    r = lambda m, p, n: {"methods": m, "path": p, "name": n}                                           # noqa: E731
+    base = [r(["GET", "HEAD"], "/api/chats/{cid}", "get_chat"), r(["GET", "HEAD"], "/api/chats/recent", "recent"),
+            r(["POST"], "/api/x", "x"), {"kind": "Mount", "path": "/gallery", "name": "gallery"},
+            r(["GET", "HEAD"], "/gallery/{f}", "g"), r(["GET", "HEAD"], "/api/llm/{route:path}", "llm"),
+            r(["GET", "HEAD"], "/api/llm/health/x", "h")]
+    assert _route_order_problems(base, base) == []
+    assert _route_order_problems(base, [base[1], base[0]] + base[2:]), "a literal and a {param} on the same level overlap"
+    assert _route_order_problems(base, base[:2] + [base[3], base[2]] + base[4:]) == [], "unrelated routes may move"
+    assert _route_order_problems(base, base[:3] + [base[4], base[3]] + base[5:]), "a mount covers its prefix"
+    assert _route_order_problems(base, base[:5] + [base[6], base[5]]), "{route:path} matches any rest"
+    assert _route_order_problems(base, base[:-1]), "a removed route fails"
+    assert _route_order_problems(base, base + [r(["GET"], "/new", "n")]), "an added route fails"
+    assert not _may_match_same_request(r(["POST"], "/a/{x}", "a"), r(["GET"], "/a/b", "b")), "different methods never collide"
+    assert _may_match_same_request(r(["HEAD"], "/a/{x}", "a"), r(["GET"], "/a/b", "b")), "GET also serves HEAD"
 
 
 def _backend_sources():
@@ -553,6 +623,32 @@ def patch_points_are_inventoried():
     missing = [p["name"] for p in inv["points"] if not p["destination"]]
     assert not missing, f"add a destination module for {missing} in macos/inventory_patches.py"
     _contract("patch_points.json", inv)
+
+
+@check
+def rebound_names_are_read_through_their_owner():
+    """P1 import rule: a name rebound at run time (a suite's `app.X = fake`, or `global X`) lives in its destination module,
+    and other modules read it as owner.X, so the rebind reaches them."""
+    sys.path.insert(0, str(REPO / "macos"))
+    import inventory_patches
+    problems = inventory_patches.import_rule_violations(REPO)
+    assert not problems, "\n".join(problems)
+
+
+@check
+def code_root_and_version_stay_in_app_folder():
+    """ROOT is the folder of app.py wherever the code that defines it lives (index.html, catalog.json, setup.sh and the search
+    service's cwd are found from it), and APP_VERSION is the literal in app.py that build.sh and release.sh read."""
+    import re
+    app_dir = Path(app.__file__).resolve().parent
+    assert app.ROOT == app_dir, (app.ROOT, app_dir)
+    literal = re.search(r'^APP_VERSION = "(.*)"$', (app_dir / "app.py").read_text(), re.M).group(1)
+    assert app.APP_VERSION == literal
+    for mod in [m for name, m in sys.modules.items() if name == "studio" or name.startswith("studio.")]:
+        if "ROOT" in vars(mod):
+            assert mod.ROOT == app_dir, (mod.__name__, mod.ROOT)
+        if "APP_VERSION" in vars(mod):
+            assert mod.APP_VERSION == literal, (mod.__name__, mod.APP_VERSION)
 
 
 if __name__ == "__main__":

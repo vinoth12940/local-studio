@@ -34,3 +34,13 @@ class _GuardedModule(types.ModuleType):
 def install(module):
     module.__class__ = _GuardedModule
     return module
+
+
+def owner(module, name):
+    """The module a patch of `module.name` has to go to: the one that defines it (for the suites' setattr save/restore loops)."""
+    own = vars(module)
+    if name in own:
+        found = _studio_owner(name, own[name])
+        return sys.modules[found] if found else module
+    find = own.get("_owner_module")                     # app.py after the split: the studio module that defines `name`
+    return (find(name) if find else None) or module

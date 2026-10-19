@@ -26,15 +26,15 @@ MUTATORS = {"clear", "update", "pop", "append", "setdefault", "extend", "remove"
 # app.py are not owners: the harness lives under the "LLM proxy" and "terminal" banners, the agent loop under "approval gate".
 DESTINATION = {
     "SEARCH_URL": "studio.config", "CONTEXT": "studio.config", "AGENT_SOCK": "studio.config", "AGENT_RUNS": "studio.config",
-    "CUA_DRIVER": "studio.config", "agent_engine": "studio.services.agent",
+    "CUA_DRIVER": "studio.config", "agent_engine": "studio.config",
     "_download": "studio.services.models", "downloads": "studio.services.models", "model_installed": "studio.services.models",
     "_engine_ready": "studio.services.engines", "engine_state": "studio.services.engines", "ensure_engine": "studio.services.engines",
     "_chat_sessions": "studio.services.harness", "_chat_read_tool": "studio.services.harness",
-    "_fetch_public_web": "studio.services.harness",
+    "_fetch_public_web": "studio.services.web",
     "jobs": "studio.services.images",
     "_enable_search": "studio.services.search", "_search_process": "studio.services.search", "_search_proxy": "studio.services.search",
     "_search_running": "studio.services.search", "_start_search": "studio.services.search", "search_job": "studio.services.search",
-    "AGENT_SOCK_WAIT_S": "studio.services.agent.cua", "McpClient": "studio.services.agent.cua", "_agent_cli": "studio.services.agent.cua",
+    "AGENT_SOCK_WAIT_S": "studio.services.agent.cua", "McpClient": "studio.infra.mcp_client", "_agent_cli": "studio.services.agent.cua",
     "_agent_daemon_running": "studio.services.agent.cua", "_agent_last_use": "studio.services.agent.cua",
     "_agent_reaper_start": "studio.services.agent.cua", "_cua_perm": "studio.services.agent.cua", "cua_status": "studio.services.agent.cua",
     "start_agent_daemon": "studio.services.agent.cua", "stop_agent_daemon": "studio.services.agent.cua",
@@ -46,7 +46,11 @@ DESTINATION = {
     "_agent_model": "studio.services.agent.loop", "_agent_now": "studio.services.agent.loop",
     "_agent_profile_in_use": "studio.services.agent.loop", "_agent_runs": "studio.services.agent.loop",
     "_agent_sleep": "studio.services.agent.loop", "_cua_cache": "studio.services.agent.loop",
+    # rebound with `global` in app code (not patched by the suites, but a copy would go stale the same way)
+    "active_chats": "studio.services.harness", "_agent_reaper": "studio.services.agent.cua", "_cua_grant": "studio.services.agent.loop",
 }
+REBOUND_BY_GLOBAL = {"active_chats", "_agent_cli", "_agent_current", "_agent_last_use", "_agent_reaper", "_cua_grant"}
+MODULES = sorted(set(DESTINATION.values()), key=len, reverse=True)
 
 
 def _sections(lines):
@@ -75,17 +79,33 @@ def _top_level_defs(tree):
     return defs
 
 
+def _chain(node):
+    """`studio.services.models.downloads[k].x` -> ["studio", "services", "models", "downloads", "[]", "x"]; None if not a Name chain."""
+    out = []
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        out.append(node.attr if isinstance(node, ast.Attribute) else "[]")
+        node = node.value
+    return [node.id] + out[::-1] if isinstance(node, ast.Name) else None
+
+
 def _app_attr(node):
-    """`app.X` -> ("X", "rebind"); `app.X.y` / `app.X[k]` -> ("X", "mutate")."""
-    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "app":
-        return node.attr, "rebind"
-    base = node
-    while isinstance(base, (ast.Attribute, ast.Subscript)):
-        inner = base.value
-        if isinstance(inner, ast.Attribute) and isinstance(inner.value, ast.Name) and inner.value.id == "app":
-            return inner.attr, "mutate"
-        base = inner
-    return None, None
+    """`app.X` or `studio.<module>.X` -> ("X", "rebind"); `app.X.y` / `app.X[k]` / `studio.<module>.X.y` -> ("X", "mutate")."""
+    chain = _chain(node)
+    if not chain:
+        return None, None
+    if chain[0] == "app" and len(chain) > 1:
+        rest = chain[1:]
+    elif chain[0] == "studio":
+        dotted = ".".join(chain)
+        mod = next((m for m in MODULES if dotted.startswith(m + ".")), None)
+        if mod is None:
+            return None, None
+        rest = chain[len(mod.split(".")):]
+    else:
+        return None, None
+    if not rest or rest[0] == "[]":
+        return None, None
+    return rest[0], "rebind" if len(rest) == 1 else "mutate"
 
 
 def _test_hits(root):
@@ -107,13 +127,9 @@ def _test_hits(root):
                     if name:
                         hits[name].add((f.name, kind))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in MUTATORS:
-                v = node.func.value
-                if isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "app":
-                    hits[v.attr].add((f.name, "mutate"))
-                else:
-                    name, _ = _app_attr(v)
-                    if name:
-                        hits[name].add((f.name, "mutate"))
+                name, _ = _app_attr(node.func.value)
+                if name:
+                    hits[name].add((f.name, "mutate"))
         # `self.saved = {k: getattr(app, k) for k in HOOKS}` ... `setattr(app, k, v)`: the names in HOOKS are rebound
         if "HOOKS" in string_tuples:
             for n in string_tuples["HOOKS"]:
@@ -122,41 +138,77 @@ def _test_hits(root):
 
 
 def inventory(root=ROOT):
+    hits = _test_hits(root)
+    names = {n for n in hits if n not in MODULE_OBJECTS}
+    points = []
+    for n in sorted(names):
+        kinds = sorted({k for _, k in hits[n]})
+        points.append({
+            "name": n,
+            "destination": DESTINATION.get(n),
+            "patched": "rebind" if "rebind" in kinds else "mutate",
+            "suites": sorted({f for f, _ in hits[n]}),
+        })
+    return {
+        "points": points,
+        "module_objects_patched": sorted(n for n in hits if n in MODULE_OBJECTS),
+    }
+
+
+def analysis(root=ROOT):
+    """The P0 view of the same points: app.py banner, readers in other banners, and `global` rebinds (changes as code moves)."""
     src = (root / "app.py").read_text()
     tree = ast.parse(src)
     section = _sections(src.splitlines())
     defs = _top_level_defs(tree)
-    rebound_by_global = sorted({n for node in ast.walk(tree) if isinstance(node, ast.Global) for n in node.names})
-    hits = _test_hits(root)
-    names = {n for n in hits if n not in MODULE_OBJECTS}
+    names = {p["name"] for p in inventory(root)["points"]}
     readers = collections.defaultdict(set)
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in names and node.id in defs:
             s = section(node.lineno)
             if s != section(defs[node.id]):
                 readers[node.id].add(s)
-    points = []
-    for n in sorted(names):
-        kinds = sorted({k for _, k in hits[n]})
-        points.append({
-            "name": n,
-            "banner": section(defs[n]) if n in defs else None,
-            "destination": DESTINATION.get(n),
-            "patched": "rebind" if "rebind" in kinds else "mutate",
-            "suites": sorted({f for f, _ in hits[n]}),
-            "read_in_other_sections": sorted(readers[n]),
-            "rebound_by_global_in_app": n in rebound_by_global,
-        })
-    return {
-        "points": points,
-        "module_objects_patched": sorted(n for n in hits if n in MODULE_OBJECTS),
-        "rebound_by_global_in_app": rebound_by_global,
-    }
+    return {n: {"banner": section(defs[n]) if n in defs else None, "read_in_other_sections": sorted(readers[n])} for n in sorted(names)}
+
+
+def _own_definitions(tree):
+    """Top-level names a module defines itself (not imports)."""
+    defs = _top_level_defs(tree)
+    imported = {(a.asname or a.name).split(".")[0] for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom)) for a in node.names}
+    return {n for n in defs if n not in imported}
+
+
+def import_rule_violations(root=ROOT):
+    """P1 import rule: a name rebound at run time (by a suite or by `global`) is defined in its destination module (or still
+    in app.py), and no module copies it with `from <owner> import <name>`; readers go through `<owner>.<name>`."""
+    rebound = {p["name"] for p in inventory(root)["points"] if p["patched"] == "rebind"} | REBOUND_BY_GLOBAL
+    files = {"app": root / "app.py"}
+    for path in sorted((root / "studio").glob("**/*.py")):
+        files[".".join(path.relative_to(root).with_suffix("").parts)] = path
+    trees = {m: ast.parse(p.read_text()) for m, p in files.items()}
+    defined = {m: _own_definitions(t) for m, t in trees.items()}
+    problems = []
+    for name in sorted(rebound):
+        where = sorted(m for m, d in defined.items() if name in d)
+        dest = DESTINATION.get(name)
+        if not dest:
+            problems.append(f"{name}: no destination module in macos/inventory_patches.py")
+        elif any(m not in ("app", dest) for m in where) or not where:
+            problems.append(f"{name}: defined in {where or 'nowhere'}, expected {dest} (or app.py until it moves)")
+    for m, tree in trees.items():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("studio"):
+                for a in node.names:
+                    if a.name in rebound:
+                        problems.append(f"{m}: `from {node.module} import {a.name}` copies a name rebound at run time; use {node.module}.{a.name}")
+    return problems
 
 
 if __name__ == "__main__":
     inv = inventory()
     text = json.dumps(inv, indent=1) + "\n"
+    if "--analysis" in sys.argv[1:]:
+        text = json.dumps(analysis(), indent=1) + "\n"
     if "--write" in sys.argv[1:]:
         FIXTURE.parent.mkdir(parents=True, exist_ok=True)
         FIXTURE.write_text(text)
