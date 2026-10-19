@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app  # noqa: E402
 import patch_guard  # noqa: E402
 import studio.config  # noqa: E402
+import studio.services.engines  # noqa: E402
+import studio.services.models  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
 patch_guard.install(app)                                   # app.X = fake must reach the code that reads X
@@ -65,14 +67,14 @@ def embedder_is_not_a_chat_model():
 @check
 def embedder_is_a_known_model():
     seen = []
-    real, app._download = app._download, lambda mid, parts, kind=None: seen.append((mid, kind, parts))
+    real, studio.services.models._download = studio.services.models._download, lambda mid, parts, kind=None: seen.append((mid, kind, parts))
     try:
         app.start_download(app.search_model())
         app.start_download(app.CATALOG["image"][0])
         app.start_download(app.CATALOG["chat"][0])
         time.sleep(0.2)
     finally:
-        app._download = real
+        studio.services.models._download = real
         app.downloads.clear()
     assert [(m, k) for m, k, _ in seen] == [("embeddinggemma-2", "search"), (app.CATALOG["image"][0]["id"], "image"),
                                              (app.CATALOG["chat"][0]["id"], "chat")], seen
@@ -347,7 +349,7 @@ def search_sets_itself_up_again_after_an_update():
     calls, real = [], (app._start_search, app._enable_search, app.model_installed)
     app.SETTINGS.parent.mkdir(parents=True, exist_ok=True)
     app.SETTINGS.write_text(json.dumps({"search": {"enabled": True}}))
-    app._start_search, app._enable_search, app.model_installed = (lambda: calls.append("start")), (lambda: calls.append("setup")), (lambda m: True)
+    app._start_search, app._enable_search, studio.services.models.model_installed = (lambda: calls.append("start")), (lambda: calls.append("setup")), (lambda m: True)
     try:
         app.SEARCH_DEPS_OK.write_text("the previous version's components")
         app.search_job.clear(); app.search_job.update(status="idle")
@@ -357,7 +359,7 @@ def search_sets_itself_up_again_after_an_update():
         app.SEARCH_DEPS_OK.write_text(hashlib.sha256(app.SEARCH_REQS.read_bytes()).hexdigest())
         assert app.search_start() == {"status": "starting"} and calls == ["setup", "start"]
     finally:
-        app._start_search, app._enable_search, app.model_installed = real
+        app._start_search, app._enable_search, studio.services.models.model_installed = real
         app.SETTINGS.unlink(); app.SEARCH_DEPS_OK.unlink(missing_ok=True)
         app.search_job.clear(); app.search_job.update(status="idle")
 
@@ -425,12 +427,12 @@ def engine_status_survives_an_answer_that_is_not_json():
     real_client, real_state = app.httpx.AsyncClient, app.engine_state
     transport = httpx.MockTransport(lambda request: httpx.Response(502, text="<html>Bad gateway</html>"))
     app.httpx.AsyncClient = lambda *a, **k: real_client(transport=transport, timeout=k.get("timeout"))
-    app.engine_state = lambda: {"mode": "text", "model_id": None}
+    studio.services.engines.engine_state = lambda: {"mode": "text", "model_id": None}
     try:
         r = TestClient(app.app, base_url="http://127.0.0.1:7860").get("/api/llm/metrics")
         assert r.status_code == 503 and r.json()["status"] == "starting", (r.status_code, r.text)
     finally:
-        app.httpx.AsyncClient, app.engine_state = real_client, real_state
+        app.httpx.AsyncClient, studio.services.engines.engine_state = real_client, real_state
 
 
 # ---------------------------------------------------------------- contracts (refactor safety net)
@@ -459,10 +461,19 @@ def _contract(name, actual):
                              f"(LOCAL_STUDIO_UPDATE_FIXTURES=1) in the same commit:\n{diff}")
 
 
+def _flat_routes(routes):
+    for r in routes:
+        if type(r).__name__ == "_IncludedRouter":                     # FastAPI >= 0.146: an included APIRouter, matched in place
+            assert not r.include_context.prefix, "routers are included without a prefix"
+            yield from _flat_routes(r.original_router.routes)
+        else:
+            yield r
+
+
 def _routes():
     """In order: Starlette matches the first route whose path fits, so moving routes into routers must keep this order."""
     out = []
-    for r in app.app.routes:
+    for r in _flat_routes(app.app.routes):
         if hasattr(r, "methods") and r.methods is not None:
             out.append({"methods": sorted(r.methods), "path": r.path, "name": r.name})
         else:                                                             # a Mount (/gallery) or a websocket route

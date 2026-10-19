@@ -48,12 +48,16 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 import importlib
 
+from studio.api import engines as api_engines
+from studio.api import models as api_models
 from studio import config as studio_config
 from studio.infra import mcp_client
+from studio.services import engines as services_engines
+from studio.services import models as services_models
 from studio.config import (
     AGENT_BACKUPS_DIR, AGENT_BUSY_MSG, AGENT_DIR, AGENT_DOWNLOADS, agent_engine, agent_lock, AGENT_SCRATCH_DIR,
-    APP_SUPPORT, BIN, BREW, CATALOG, CHATS, CUA_MIN, DOCUMENT_READER, DSPARK_PY, EDIT_MODEL, ENGINES, GALLERY, HF_CLI,
-    HF_HUB, HOME, LLAMA_SERVER, LOGS, ROOT, SEARCH_DEPS_OK, SEARCH_DIR, SEARCH_PORT, SEARCH_REQS, STATE, UPLOADS, UV,
+    APP_SUPPORT, BIN, BREW, CHATS, CUA_MIN, DOCUMENT_READER, DSPARK_PY, EDIT_MODEL, ENGINES, GALLERY, HOME,
+    LLAMA_SERVER, LOGS, ROOT, SEARCH_DEPS_OK, SEARCH_DIR, SEARCH_PORT, SEARCH_REQS, STATE, UPLOADS, UV,
 )
 from studio.infra.edits import _make_diff_preview, _match_edit_block, _post_edit_diagnostics
 from studio.infra.harness_args import _call_args, _normalize_harness_args, _parse_harness_args
@@ -68,6 +72,7 @@ from studio.security.fences import (
     _is_safe_readonly_shell,
 )
 from studio.security.local_only import LocalOnly
+from studio.services.models import chat_model, chat_models, downloads, image_model, search_model, start_download
 from studio.storage.backups import _backup_file, _restore_backup_snap
 from studio.storage.chats import _chat_path
 from studio.storage.memory import _load_agent_memory, _save_agent_memory
@@ -90,6 +95,10 @@ _MOVED = (
     "studio.storage.backups",
     "studio.storage.chats",
     "studio.security.local_only",
+    "studio.services.models",
+    "studio.services.engines",
+    "studio.api.models",
+    "studio.api.engines",
 )                                                               # dependency order: owners first
 for _m in _MOVED:
     importlib.import_module(_m)
@@ -122,523 +131,12 @@ app.mount("/gallery", StaticFiles(directory=GALLERY), name="gallery")
 app.add_middleware(LocalOnly)
 
 
-def chat_models():
-    return CATALOG["chat"] + [m for m in load_settings()["custom"]]
-
-
-def chat_model(mid=None):
-    mid = mid or load_settings()["chat_model"]
-    m = next((m for m in chat_models() if m["id"] == mid), None)
-    return m or next(m for m in CATALOG["chat"] if m.get("default"))
-
-
-def image_model(mid=None):
-    mid = mid or load_settings()["image_model"]
-    return next((m for m in CATALOG["image"] if m["id"] == mid), CATALOG["image"][0])
-
-
-def search_model():
-    return CATALOG["search"][0]
-
-
-def all_models():
-    """Everything the app can download: chat models (catalog and custom), image models, the search embedder."""
-    return chat_models() + CATALOG["image"] + CATALOG["search"]
-
-
 @app.get("/api/system")
 def api_system():
     return {**system_memory(), "edit_enabled": bool(EDIT_MODEL), "version": APP_VERSION}
 
-# ---------------------------------------------------------------- models on disk
-
-
-def repo_dir(repo: str) -> Path:
-    return HF_HUB / ("models--" + repo.replace("/", "--"))
-
-
-def _repo_files(d: Path) -> set[Path]:
-    """Every real file a cached repo uses. Snapshot symlinks resolve into the repo's own
-    blobs/ or the hub-wide shared blobs/ store, so resolve them all."""
-    files = set()
-    for p in d.rglob("*"):
-        try:
-            r = p.resolve()
-            if r.is_file():
-                files.add(r)
-        except OSError:
-            pass
-    return files
-
-
-def _repo_for_dir(name: str) -> str:
-    return name[len("models--"):].replace("--", "/", 1)
-
-
-def snapshot_file(repo, name):
-    """Path of `name` inside the newest snapshot of a cached repo, or None."""
-    snaps = sorted((repo_dir(repo) / "snapshots").glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for s in snaps:
-        p = s / name
-        if p.exists():
-            return p
-    return None
-
-
-def _repo_bytes(repo):
-    """Bytes on disk for a repo, counting partial downloads."""
-    d = repo_dir(repo)
-    if not d.exists():
-        return 0
-    total = sum(f.stat().st_size for f in _repo_files(d) if not f.name.endswith(".incomplete"))
-    total += sum(p.stat().st_size for p in d.rglob("*.incomplete") if p.is_file())
-    return total
-
-
-def _incomplete(repo):
-    d = repo_dir(repo)
-    return d.exists() and any(d.rglob("*.incomplete"))
-
-
-def model_parts(m):
-    """What a catalog entry needs on disk: [(repo, [files] or None for whole repo)]."""
-    if m.get("backend") == "gguf":
-        return [(m["repo"], [f for f in (m.get("file"), m.get("mmproj")) if f])]
-    parts = [(m["repo"], None)]
-    if m.get("drafter"):
-        parts.append((m["drafter"], None))
-    return parts
-
-
-def model_installed(m):
-    for repo, files in model_parts(m):
-        if _incomplete(repo):
-            return False
-        if files:
-            if any(snapshot_file(repo, f) is None for f in files):
-                return False
-        elif not (repo_dir(repo).exists() and list((repo_dir(repo) / "snapshots").glob("*/*"))):
-            return False
-    return True
-
-
-def model_bytes(m):
-    return sum(_repo_bytes(repo) for repo, _ in model_parts(m))
-
-
-downloads: dict[str, dict] = {}
-
-
-def _download(mid, parts, kind=None):
-    job = downloads[mid]
-    log = open(LOGS / f"download-{mid}.log", "w")
-    for repo, files in parts:
-        cmd = [str(HF_CLI), "download", repo] + (files or [])
-        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        job["pid"] = proc.pid
-        rc = proc.wait()
-        if job.get("cancelled"):
-            job.update(status="cancelled")
-            return
-        if rc != 0:
-            job.update(status="error", returncode=rc)
-            return
-    job.update(status="done", finished=time.time())
-    _activate_first(mid, kind)
-
-
-def _activate_first(mid, kind):
-    """First model of its kind on this Mac: make it the active one automatically."""
-    if kind == "search":                              # the embedder is never the chat or image model
-        return
-    s = load_settings()
-    key = "image_model" if kind == "image" else "chat_model"
-    current = image_model(s[key]) if kind == "image" else chat_model(s[key])
-    if not model_installed(current) or current["id"] == mid:
-        s[key] = mid
-        save_settings(s)
-
-
-def start_download(m):
-    mid = m["id"]
-    if downloads.get(mid, {}).get("status") == "running":
-        return downloads[mid]
-    downloads[mid] = {"id": mid, "status": "running", "started": time.time()}
-    kind = next((k for k in ("image", "search") if any(i["id"] == mid for i in CATALOG[k])), "chat")
-    threading.Thread(target=_download, args=(mid, model_parts(m), kind), daemon=True).start()
-    return downloads[mid]
-
-
-def _row(m, kind, active_id, running):
-    dl = downloads.get(m["id"], {})
-    size = model_bytes(m)
-    expected = int((m.get("size_gb") or 0) * 1e9)
-    inst = model_installed(m)
-    row = {**m, "kind": kind, "installed": inst, "size_bytes": size, "expected_bytes": expected,
-           "downloading": dl.get("status") == "running", "download_error": dl.get("status") == "error",
-           "progress": min(0.99, size / expected) if dl.get("status") == "running" and expected else None,
-           "active": m["id"] == active_id and inst}
-    if kind == "chat":
-        row["running"] = running
-    return row
-
-
-@app.get("/api/models")
-def models():
-    s = load_settings()
-    eng = engine_state()
-    chat = [_row(m, "chat", s["chat_model"], eng.get("model_id") == m["id"] and eng.get("mode") is not None)
-            for m in chat_models()]
-    image = [_row(m, "image", s["image_model"], False) for m in CATALOG["image"]]
-    known = set()
-    for m in all_models():
-        known |= {repo for repo, _ in model_parts(m)}
-    other = []
-    if HF_HUB.exists():
-        for d in sorted(HF_HUB.glob("models--*")):
-            repo = _repo_for_dir(d.name)
-            if repo not in known:
-                other.append({"repo": repo, "size_bytes": _repo_bytes(repo)})
-    return {"chat": chat, "image": image, "search": [_row(m, "search", None, False) for m in CATALOG["search"]],
-            "other": other, "llama_cpp": Path(LLAMA_SERVER).exists(), "disk_free_bytes": shutil.disk_usage(HOME).free}
-
-
-def _find_any(mid):
-    m = next((m for m in all_models() if m["id"] == mid), None)
-    if not m:
-        raise HTTPException(404, "unknown model")
-    return m
-
-
-@app.post("/api/models/download")
-def download_model(id: str = Body(..., embed=True)):
-    m = _find_any(id)
-    if m.get("backend") == "gguf" and not Path(LLAMA_SERVER).exists():
-        raise HTTPException(409, "llama.cpp isn't installed. Run: brew install llama.cpp")
-    need = int((m.get("size_gb") or 0) * 1e9) - model_bytes(m)
-    if need > shutil.disk_usage(HOME).free - 5e9:
-        raise HTTPException(507, f"Not enough disk space: needs about {need / 1e9:.0f} GB.")
-    return start_download(m)
-
-
-@app.post("/api/models/cancel")
-def cancel_download(id: str = Body(..., embed=True)):
-    job = downloads.get(id)
-    if not job or job.get("status") != "running":
-        raise HTTPException(404, "no running download")
-    job["cancelled"] = True
-    if job.get("pid"):
-        try:
-            os.killpg(job["pid"], signal.SIGTERM)
-        except OSError:
-            pass
-    return {"ok": True}
-
-
-def _delete_repo(repo):
-    d = repo_dir(repo)
-    if not d.exists():
-        return 0
-    mine = _repo_files(d) | {p for p in d.rglob("*.incomplete") if p.is_file()}
-    others = set()
-    for od in HF_HUB.glob("models--*"):
-        if od != d:
-            others |= _repo_files(od)
-    freed = 0
-    for f in mine - others:
-        if HF_HUB in f.parents:                     # never touch anything outside the cache
-            freed += f.stat().st_size
-            f.unlink(missing_ok=True)
-    shutil.rmtree(d, ignore_errors=True)
-    return freed
-
-
-@app.delete("/api/models")
-def delete_model(id: str = "", repo: str = ""):
-    """Delete a catalog/custom model by id, or any cached repo by name."""
-    if repo:
-        if any(repo in {r for r, _ in model_parts(m)} for m in all_models()):
-            raise HTTPException(400, "Delete it from the model library instead.")
-        return {"ok": True, "freed_bytes": _delete_repo(repo)}
-    m = _find_any(id)
-    if m in CATALOG["search"] and load_settings()["search"]["enabled"]:
-        raise HTTPException(409, "Search is using this model. Turn Search off first.")
-    eng = engine_state()
-    if eng.get("model_id") == m["id"] and eng.get("mode"):
-        raise HTTPException(409, "This model is running. Stop the engine or switch models first.")
-    shared = set()
-    for other in all_models():
-        if other["id"] != m["id"] and model_installed(other):
-            shared |= {r for r, _ in model_parts(other)}
-    freed = sum(_delete_repo(r) for r, _ in model_parts(m) if r not in shared)
-    s = load_settings()
-    if m.get("custom"):
-        s["custom"] = [c for c in s["custom"] if c["id"] != m["id"]]
-        if s["chat_model"] == m["id"]:
-            s["chat_model"] = next(c["id"] for c in CATALOG["chat"] if c.get("default"))
-        save_settings(s)
-    return {"ok": True, "freed_bytes": freed}
-
-
-@app.post("/api/models/active")
-def set_active(id: str = Body(..., embed=True), kind: str = Body("chat", embed=True)):
-    m = _find_any(id)
-    if not model_installed(m):
-        raise HTTPException(409, "Download the model first.")
-    s = load_settings()
-    if kind == "image":
-        s["image_model"] = id
-        save_settings(s)
-        return {"ok": True}
-    s["chat_model"] = id
-    save_settings(s)
-    eng = engine_state()
-    if eng.get("mode") and eng.get("model_id") != id:      # swap the running engine in the background
-        mode = "gguf" if m.get("backend") == "gguf" else "text"
-        threading.Thread(target=_ensure_quiet, args=(mode, m), daemon=True).start()
-    return {"ok": True}
-
-
-# ---- Hugging Face search (for models outside the catalog)
-
-@app.get("/api/hf/search")
-async def hf_search(q: str, kind: str = "mlx"):
-    params = {"search": q, "sort": "downloads", "direction": "-1", "limit": "25",
-              "filter": "gguf" if kind == "gguf" else "mlx"}
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.get("https://huggingface.co/api/models", params=params)
-    if r.status_code != 200:
-        raise HTTPException(502, "Hugging Face search failed")
-    return [{"repo": m["id"], "downloads": m.get("downloads", 0), "likes": m.get("likes", 0),
-             "pipeline": m.get("pipeline_tag")} for m in r.json()]
-
-
-@app.get("/api/hf/files")
-async def hf_files(repo: str):
-    async with httpx.AsyncClient(timeout=20) as c:
-        r = await c.get(f"https://huggingface.co/api/models/{repo}/tree/main", params={"recursive": "true"})
-    if r.status_code != 200:
-        raise HTTPException(404, "Repository not found")
-    files = [f for f in r.json() if f.get("type") == "file"]
-    ggufs = [{"file": f["path"], "size": f.get("size", 0)} for f in files
-             if f["path"].endswith(".gguf") and "mmproj" not in f["path"].lower()]
-    mmproj = [{"file": f["path"], "size": f.get("size", 0)} for f in files
-              if f["path"].endswith(".gguf") and "mmproj" in f["path"].lower()]
-    return {"total": sum(f.get("size", 0) for f in files), "ggufs": ggufs, "mmproj": mmproj,
-            "has_config": any(f["path"] == "config.json" for f in files)}
-
-
-@app.post("/api/models/custom")
-async def add_custom(repo: str = Body(..., embed=True), backend: str = Body("mlx", embed=True),
-                     file: str = Body(None, embed=True), mmproj: str = Body(None, embed=True)):
-    info = await hf_files(repo)
-    if backend == "gguf":
-        if not file:
-            raise HTTPException(400, "Pick a GGUF file")
-        size = next((g["size"] for g in info["ggufs"] if g["file"] == file), 0) + \
-            next((g["size"] for g in info["mmproj"] if g["file"] == mmproj), 0)
-    else:
-        if not info["has_config"]:
-            raise HTTPException(400, "That repository isn't an MLX model (no config.json).")
-        size = info["total"]
-    slug = re.sub(r"[^a-z0-9]+", "-", (repo + "-" + (file or "")).lower()).strip("-")[:60]
-    base = re.sub(r"[-_](GGUF|gguf|MLX|mlx)$", "", repo.split("/")[-1]).replace("-", " ")
-    quant = re.search(r"(UD-)?(I?Q\d[\w]*|BF16|F16|F32)(?=\.gguf$)", file or "")
-    m = {"id": "custom-" + slug, "name": base + (f" · {quant.group(0)}" if quant else ""),
-         "backend": backend, "repo": repo, "accel": "llama.cpp" if backend == "gguf" else "MLX",
-         "vision": bool(mmproj), "size_gb": round(size / 1e9, 1), "custom": True,
-         "blurb": "Added from Hugging Face."}
-    if backend == "gguf":
-        m["file"] = file
-        if mmproj:
-            m["mmproj"] = mmproj
-    s = load_settings()
-    s["custom"] = [c for c in s["custom"] if c["id"] != m["id"]] + [m]
-    save_settings(s)
-    start_download(m)
-    return m
-
-# ---------------------------------------------------------------- engines
-ENGINE_STATE = LOGS / "engine.json"
-engine_lock = threading.Lock()
-
-
-def _proc_running(pattern):
-    return bool(subprocess.run(["pgrep", "-f", pattern], capture_output=True).stdout.strip())
-
-
-def running_mode():
-    for mode, e in ENGINES.items():
-        if _proc_running(e["pattern"]):
-            return mode
-    return None
-
-
-def engine_running():
-    return running_mode() is not None
-
-
-def engine_state():
-    """{mode, model_id} of the running engine (mode None when nothing runs)."""
-    mode = running_mode()
-    try:
-        st = json.loads(ENGINE_STATE.read_text())
-    except Exception:
-        st = {}
-    if not mode:
-        return {"mode": None, "model_id": st.get("model_id")}
-    if st.get("mode") != mode or not st.get("model_id"):
-        # started outside this app version: ask the engine what it loaded, never guess from
-        # settings (they may already name the model we're about to switch to)
-        st = {"mode": mode, "model_id": _infer_running_model(mode)}
-        if st["model_id"]:
-            ENGINE_STATE.write_text(json.dumps(st))
-    return st
-
-
-def _infer_running_model(mode):
-    try:
-        if mode == "text":
-            repo = httpx.get(ENGINES["text"]["url"] + "/health", timeout=3).json().get("target")
-            return next((m["id"] for m in chat_models() if m["repo"] == repo), None)
-        ids = [d.get("id") for d in httpx.get(ENGINES[mode]["url"] + "/v1/models", timeout=3).json().get("data", [])]
-        return next((m["id"] for m in chat_models() if m["id"] in ids or m["repo"] in ids), None)
-    except Exception:
-        return None
-
-
-def _engine_ready(mode):
-    e = ENGINES[mode]
-    try:
-        r = httpx.get(e["url"] + e["ready"], timeout=3)
-        return r.status_code == 200 and (mode != "text" or r.json().get("status") == "ok")
-    except Exception:
-        return False
-
-
-def _uses_mlx_lm(repo):
-    """mlx-dspark routes multimodal configs to mlx-vlm except qwen3_5-family; --kv-bits only
-    applies on the mlx-lm route."""
-    cfg = snapshot_file(repo, "config.json")
-    try:
-        c = json.loads(cfg.read_text()) if cfg else {}
-    except Exception:
-        c = {}
-    return c.get("model_type") in ("qwen3_5", "qwen3_5_moe") or "vision_config" not in c
-
-
-def _start_engine(mode, m):
-    log = open(LOGS / f"{ENGINES[mode]['pid']}.log", "w")
-    if mode == "text":
-        cmd = [str(BIN / "mlx-dspark"), "serve", "--model", m["repo"], "--context-window", str(studio_config.CONTEXT),
-               "--host", "127.0.0.1", "--port", "8080"]
-        if m.get("drafter"):
-            cmd += ["--drafter", m["drafter"], "--mode", m.get("mode", "auto")]
-        if _uses_mlx_lm(m["repo"]):
-            cmd += ["--kv-bits", "8"]
-    elif mode == "vision":
-        cmd = [str(DSPARK_PY), "-m", "mlx_vlm", "server", "--model", m["repo"], "--host", "127.0.0.1", "--port", "8081"]
-        if m["id"] == "qwen3.8-27b":               # the only pairing verified with mlx-vlm's DFlash path
-            cmd += ["--draft-model", m["drafter"], "--draft-kind", "dflash"]
-    else:
-        model = snapshot_file(m["repo"], m["file"])
-        cmd = [LLAMA_SERVER, "-m", str(model), "-c", str(studio_config.CONTEXT), "-ngl", "999", "--jinja",
-               "--host", "127.0.0.1", "--port", "8082", "-a", m["id"]]
-        if m.get("mmproj") and snapshot_file(m["repo"], m["mmproj"]):
-            cmd += ["--mmproj", str(snapshot_file(m["repo"], m["mmproj"]))]
-    proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-    (LOGS / f"{ENGINES[mode]['pid']}.pid").write_text(str(proc.pid))
-    ENGINE_STATE.write_text(json.dumps({"mode": mode, "model_id": m["id"]}))
-    return proc.pid
-
-
-def _stop_engine(mode):
-    e = ENGINES[mode]
-    pid = _read_pid(e["pid"])
-    if pid and _pid_alive(pid):
-        os.kill(pid, signal.SIGTERM)
-    subprocess.run(["pkill", "-f", e["pattern"]])
-    (LOGS / f"{e['pid']}.pid").unlink(missing_ok=True)
-    for _ in range(40):                       # wait for the weights to leave memory
-        if not _proc_running(e["pattern"]):
-            break
-        time.sleep(0.25)
-
-
-def ensure_engine(mode, m, timeout=300):
-    """Make (mode, model) the running engine, stopping anything else; block until ready."""
-    with engine_lock:
-        st = engine_state()
-        if st.get("mode") == mode and st.get("model_id") == m["id"] and _engine_ready(mode):
-            return False
-        for other in ENGINES:
-            if _proc_running(ENGINES[other]["pattern"]) and (other != mode or st.get("model_id") != m["id"]):
-                _stop_engine(other)
-        if not _proc_running(ENGINES[mode]["pattern"]):
-            _start_engine(mode, m)
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if _engine_ready(mode):
-                return True
-            if not _proc_running(ENGINES[mode]["pattern"]):
-                tail = (LOGS / f"{ENGINES[mode]['pid']}.log").read_text()[-600:]
-                raise RuntimeError(f"{m['name']} failed to start: {tail.strip().splitlines()[-1] if tail.strip() else 'see logs'}")
-            time.sleep(1)
-        raise RuntimeError(f"{m['name']} did not become ready in {timeout}s")
-
-
-def _ensure_quiet(mode, m):
-    try:
-        ensure_engine(mode, m)
-    except Exception:
-        pass
-
-
-@app.post("/api/engine/start")
-def engine_start():
-    if agent_lock.locked():
-        raise HTTPException(409, AGENT_BUSY_MSG)
-    m = chat_model()
-    if not model_installed(m):
-        raise HTTPException(409, f"Download {m['name']} first (Model library).")
-    mode = "gguf" if m.get("backend") == "gguf" else "text"
-    threading.Thread(target=_ensure_quiet, args=(mode, m), daemon=True).start()
-    return {"status": "starting", "mode": mode, "model_id": m["id"]}
-
-
-@app.post("/api/engine/stop")
-def engine_stop():
-    if agent_lock.locked():
-        raise HTTPException(409, AGENT_BUSY_MSG)
-    with engine_lock:
-        for mode in ENGINES:
-            _stop_engine(mode)
-    return {"status": "stopped"}
 
 # ---------------------------------------------------------------- LLM proxy
-
-
-@app.get("/api/llm/{route:path}")
-async def llm_get(route: str):
-    st = await asyncio.to_thread(engine_state)
-    mode, m = st.get("mode"), chat_model(st.get("model_id"))
-    if mode in ("vision", "gguf"):
-        ready = await asyncio.to_thread(_engine_ready, mode)
-        if route == "health":
-            return {"status": "ok" if ready else "loading", "mode": mode, "target": m["repo"],
-                    "model_id": m["id"], "model_name": m["name"], "drafter": m.get("drafter") if mode == "vision" else None,
-                    "max_draft": None, "kv_bits": None, "context_window": studio_config.CONTEXT, "warnings": []}
-        return JSONResponse({"engine": mode}, status_code=200 if ready else 503)
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{ENGINES['text']['url']}/{route}")
-        j = r.json()
-        if route == "health" and isinstance(j, dict):
-            j.update(model_id=m["id"], model_name=m["name"])
-        return JSONResponse(j, status_code=r.status_code)
-    except (httpx.HTTPError, ValueError) as e:                 # ValueError: an answer that isn't JSON (an engine still starting, a proxy page)
-        return JSONResponse({"status": "starting" if mode else "down", "model_id": m["id"], "model_name": m["name"],
-                             "error": str(e)}, status_code=503)
 
 
 FILES_PROMPT = ("The user enabled My files for this turn. Use search_files and read_file to verify the requested facts in local documents. "
@@ -1882,10 +1380,10 @@ def _run_subagent_task(task: str, role: str = "researcher", timezone: str | None
     steps_taken, files_inspected = [], []
 
     # Check if an engine is currently ready for live multi-round sub-agent execution
-    st = engine_state()
+    st = services_engines.engine_state()
     mode = st.get("mode")
     m = chat_model(st.get("model_id"))
-    if mode and _engine_ready(mode):
+    if mode and services_engines._engine_ready(mode):
         url = ENGINES[mode]["url"]
         for round_no in range(4):
             body = {"messages": messages, "tools": sub_tools, "max_tokens": 1536, "stream": True}
@@ -2834,14 +2332,14 @@ async def chat(request: Request):
             yield _sse({"error": f"{m['name']} can't read images. Switch to a model marked Vision "
                                  f"(for example Qwen3.8 27B) from the model menu."})
             return
-        if not model_installed(m):
+        if not services_models.model_installed(m):
             yield _sse({"error": f"{m['name']} isn't downloaded yet. Get it from the Model library."})
             return
-        st = await asyncio.to_thread(engine_state)
-        if st.get("mode") != mode or st.get("model_id") != m["id"] or not await asyncio.to_thread(_engine_ready, mode):
+        st = await asyncio.to_thread(services_engines.engine_state)
+        if st.get("mode") != mode or st.get("model_id") != m["id"] or not await asyncio.to_thread(services_engines._engine_ready, mode):
             yield _sse({"x_engine": {"status": "switching", "mode": mode, "model": m["name"]}})
             try:
-                await asyncio.to_thread(ensure_engine, mode, m)
+                await asyncio.to_thread(services_engines.ensure_engine, mode, m)
             except Exception as e:
                 yield _sse({"error": str(e)})
                 return
@@ -3351,7 +2849,7 @@ async def create_image(prompt: str = Form(...), width: int = Form(1024), height:
         raise HTTPException(400, "Editing needs the full Qwen-Image-2.1 checkpoint; the 4-bit "
                                  "weights installed here are text-to-image only.")
     im = image_model(model_id or None)
-    if mode != "edit" and not model_installed(im):
+    if mode != "edit" and not services_models.model_installed(im):
         raise HTTPException(409, f"{im['name']} isn't downloaded. Get it from the Model library.")
     seed_val = int(seed) if seed.strip() else secrets.randbelow(2**31)
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -3505,12 +3003,12 @@ def _enable_search():
             if rc != 0 or not search_deps_installed():
                 raise RuntimeError("Couldn't install the search components. See logs/search-setup.log.")
         m = search_model()
-        if not model_installed(m):
+        if not services_models.model_installed(m):
             search_job.update(step=f"Downloading {m['name']} ({m['size_gb']} GB)")
             start_download(m)
             while downloads[m["id"]].get("status") == "running":
                 time.sleep(1)
-            if not model_installed(m):
+            if not services_models.model_installed(m):
                 raise RuntimeError("The model download didn't finish. Check your connection and try again.")
         search_job.update(step="Starting Search")
         s = load_settings()
@@ -3542,7 +3040,7 @@ def _search_proxy(method, path, **kw):
 @app.get("/api/search/status")
 def search_status():
     m = search_model()
-    out = {**load_settings()["search"], "installed": search_deps_installed(), "model_installed": model_installed(m),
+    out = {**load_settings()["search"], "installed": search_deps_installed(), "model_installed": services_models.model_installed(m),
            "model": {"name": m["name"], "size_gb": m["size_gb"]}, "index_on_disk": SEARCH_DIR.exists(), "running": False,
            "setup": {k: search_job.get(k) for k in ("status", "step", "error")}}
     try:
@@ -3582,7 +3080,7 @@ def search_start():
     """Called by start.sh: bring the service up if the user has Search turned on."""
     if not load_settings()["search"]["enabled"]:
         return {"status": "off"}
-    if search_deps_installed() and model_installed(search_model()):
+    if search_deps_installed() and services_models.model_installed(search_model()):
         _start_search()
         return {"status": "starting"}
     search_enable()                                   # an update changed the components (or the model is gone): set up again
@@ -5840,8 +5338,8 @@ _agent_now = time.monotonic                                  # elapsed time only
 
 
 def _agent_engine_current(mode, m):
-    st = engine_state()
-    return st.get("mode") == mode and st.get("model_id") == m["id"] and _engine_ready(mode)
+    st = services_engines.engine_state()
+    return st.get("mode") == mode and st.get("model_id") == m["id"] and services_engines._engine_ready(mode)
 
 
 class AgentRun:
@@ -5982,7 +5480,7 @@ def _agent_use_engine(run, mode, m):
     if _agent_engine_current(mode, m):
         return
     run.emit({"type": "x_engine", "status": "switching", "mode": mode, "model": m["name"]})
-    ensure_engine(mode, m)
+    services_engines.ensure_engine(mode, m)
     run.emit({"type": "x_engine", "status": "ready", "mode": mode, "model": m["name"]})
 
 
@@ -6553,7 +6051,7 @@ def agent_run(body: dict = Body(...)):
     m = next((x for x in chat_models() if x["id"] == mid), None)
     if m is None:
         raise HTTPException(409, "Choose a chat model.")
-    if not model_installed(m):
+    if not services_models.model_installed(m):
         raise HTTPException(409, f"Download {m['name']} first (Model library).")
     if not agent_lock.acquire(blocking=False):
         raise HTTPException(409, "A task is already running. Stop it or wait for it to finish.")
@@ -6850,3 +6348,7 @@ def uninstall(remove_app: bool = Body(False, embed=True)):
 def index():
     # no-cache: the app window must revalidate, or it keeps showing the previous version's page after an update
     return FileResponse(ROOT / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+for _router in (api_models.router, api_engines.router):
+    app.include_router(_router)

@@ -72,6 +72,8 @@ import base64  # noqa: E402
 import patch_guard  # noqa: E402
 import studio.config  # noqa: E402
 import studio.infra.mcp_client  # noqa: E402
+import studio.services.engines  # noqa: E402
+import studio.services.models  # noqa: E402
 
 patch_guard.install(app)                                   # app.X = fake must reach the code that reads X
 
@@ -2757,9 +2759,9 @@ class Env:
             return self.adapter
         app._agent_adapter = make
         app._agent_model = self.model
-        app.ensure_engine = lambda mode, m, **kw: self.engines.append((mode, m["id"]))
+        studio.services.engines.ensure_engine = lambda mode, m, **kw: self.engines.append((mode, m["id"]))
         app._agent_engine_current = lambda mode, m: mode in self.current
-        app.model_installed = lambda m: True
+        studio.services.models.model_installed = lambda m: True
         app.cua_status = lambda: dict(CUA_OK)
         app._cua_cache.clear()
         app._cua_perm.clear()
@@ -3420,9 +3422,9 @@ def run_is_refused_until_ready():
         post = lambda **b: e.c.post("/api/agent/run", json={"task": "find x", "model_id": TEXT_MLX, **b})   # noqa: E731
         assert post(task="  ").status_code == 409
         assert post(model_id="no-such-model").status_code == 409
-        app.model_installed = lambda m: False
+        studio.services.models.model_installed = lambda m: False
         assert "Download" in post().json()["detail"]
-        app.model_installed = lambda m: True
+        studio.services.models.model_installed = lambda m: True
         app.cua_status = lambda: {"installed": False, "version": None, "ok_version": False, "telemetry": None}
         assert "CuaDriver" in post().json()["detail"]
         app.cua_status = lambda: {"installed": True, "version": "0.28.1", "ok_version": False, "telemetry": True}
@@ -4834,8 +4836,8 @@ class ChatEngine:
     def __enter__(self):
         self.saved = {k: getattr(app, k) for k in ("engine_state", "_engine_ready")}
         self.client = app.httpx.AsyncClient
-        app.engine_state = lambda: {"mode": "text", "model_id": TEXT_MLX}
-        app._engine_ready = lambda mode: True
+        studio.services.engines.engine_state = lambda: {"mode": "text", "model_id": TEXT_MLX}
+        studio.services.engines._engine_ready = lambda mode: True
         outer = self
         class Response:
             status_code = 200

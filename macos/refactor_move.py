@@ -390,6 +390,31 @@ CONFIG_ROOT_NEW = ('ROOT = Path(__file__).resolve().parent.parent               
                    '# The version lives in app.py, where macos/build.sh and release.sh read it with sed.\n'
                    'APP_VERSION = re.search(r\'^APP_VERSION = "(.*)"$\', (ROOT / "app.py").read_text(), re.M).group(1)')
 SUITES = ["macos/check_app.py", "macos/check_agent.py"]
+# Fixes to the suites made during P1 (applied to SUITES_BASE before the retargets), each with its reason.
+SUITE_FIXES = [
+    # FastAPI 0.146 keeps an included router as one _IncludedRouter entry in app.routes (matched in place, lazily) instead of
+    # copying its routes: the contract walks into it, so it still lists every route in the order requests are matched.
+    ("macos/check_app.py",
+     '''def _routes():
+    """In order: Starlette matches the first route whose path fits, so moving routes into routers must keep this order."""
+    out = []
+    for r in app.app.routes:
+        if hasattr(r, "methods") and r.methods is not None:''',
+     '''def _flat_routes(routes):
+    for r in routes:
+        if type(r).__name__ == "_IncludedRouter":                     # FastAPI >= 0.146: an included APIRouter, matched in place
+            assert not r.include_context.prefix, "routers are included without a prefix"
+            yield from _flat_routes(r.original_router.routes)
+        else:
+            yield r
+
+
+def _routes():
+    """In order: Starlette matches the first route whose path fits, so moving routes into routers must keep this order."""
+    out = []
+    for r in _flat_routes(app.app.routes):
+        if hasattr(r, "methods") and r.methods is not None:'''),
+]
 
 
 def module_path(module):
@@ -438,7 +463,7 @@ def _from_line(module, names, width=120):
     return "\n".join(out + [")"])
 
 
-def _import_lines(src, names):
+def _import_lines(src, names, router=False):
     plain, froms = [], collections.OrderedDict()
     order = list(src.imports)
     for alias in sorted(names, key=order.index):
@@ -447,6 +472,9 @@ def _import_lines(src, names):
             plain.append((name, alias))
         else:
             froms.setdefault(mod, []).append(name if name == alias else f"{name} as {alias}")
+    if router:
+        froms.setdefault("fastapi", []).insert(0, "APIRouter")
+        froms.move_to_end("fastapi", last=False) if len(froms) == 1 else None
     std = [f"import {n}" + (f" as {a}" if a != n else "") for n, a in plain if n not in THIRD_PARTY]
     std += [_from_line(m, ns) for m, ns in froms.items() if m not in THIRD_PARTY]
     third = [f"import {n}" for n, a in plain if n in THIRD_PARTY]
@@ -540,9 +568,7 @@ def render_module(module, stmts, src, owner, lead):
     imports, from_studio, mod_alias, has_route = _rewrite(module, stmts, src, owner, edits, texts)
     if module == "studio.config":
         imports.add("re")
-    std, third = _import_lines(src, imports)
-    if has_route:
-        third.append("from fastapi import APIRouter")
+    std, third = _import_lines(src, imports, router=has_route)
     doc = DOCS.get(module, f"Routes: {module.rsplit('.', 1)[-1]}.")
     head = [f'"""{doc}', "", "Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).", '"""'] + ([""] + std if std else []) + ([""] + third if third else [])
     studio_lines = _studio_import_lines(from_studio, mod_alias)
@@ -689,7 +715,12 @@ def apply(n):
             init = REPO.joinpath(*parts[:i], "__init__.py")
             files.setdefault(init, '"""Local Studio backend package (see CLAUDE.md, Architecture)."""\n' if i == 1 else "")
     for suite in SUITES:
-        files[REPO / suite] = retarget_suite(base_text(suite, SUITES_BASE), owner)
+        text = base_text(suite, SUITES_BASE)
+        for path, a, b in SUITE_FIXES:
+            if path == suite:
+                assert text.count(a) == 1, (path, a[:60])
+                text = text.replace(a, b)
+        files[REPO / suite] = retarget_suite(text, owner)
     for path in sorted((REPO / "studio").glob("**/*.py")) if (REPO / "studio").exists() else []:
         if path not in files:
             path.unlink()
