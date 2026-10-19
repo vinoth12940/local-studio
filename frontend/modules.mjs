@@ -60,15 +60,17 @@ export {
   patchCards, renderImgModels, renderLibrary, renderMenu, setActive, setStepOptions, tagsHTML, updateHeader
 } from "./library/library.mjs";
 export {
+  loadManage, loadMcp, loadStorage, loadVersions, mcpServers, STORAGE
+} from "./settings/settings.mjs";
+export {
   ag, AG_CUA_MIN, AG_CUA_URL, AG_DROP, AG_EXAMPLES, AG_STATUS, AG_TAGS, AG_TIER, AG_TIER_ORDER, AG_TITLE, agAnswerCard,
   agApprovalCard, agAttach, agAttn, agAttnNow, agBgCheck, agBoxOf, agCardEl, agClean, agClear, agClose, agConnect,
   agContinue, agDecision, agDerive, agDetail, agEvent, agFetchStatus, agFinalText, agFresh, agGrant, agLimit,
   agLogClick, agLogKey, agLost, agMd, agNoteEl, agOpen, agOpenSaved, agOutcome, agPausedOf, agPendingOf, agPermMissing,
   agQuestionCard, agRender, agRenderModels, agRenderRuns, agRenderSettings, agRenderSetup, agRenderTiers, agReply,
   agResolve, agSave, agSetErr, agSetTier, agShotUrl, agSize, agStart, agStateText, agStepRow, agStopRun, agSync,
-  agTakeoverRun, agTierKey, agTierSelect, agTitleHTML, agWeb, agWhen, loadAgent, loadAgentRuns, loadManage, loadMcp,
-  loadSearch, loadStorage, loadVersions, mainState, mcpServers, runSearch, sr, SR_ICON, SR_OFF, SR_PAUSED, SR_STOP,
-  srAddFolder, srAuto, srClosePreview, srEnable, srHome, srLoc, srMark, srOpen, srPvSeq, srPvState, srRemoveFolder,
-  srRes, srRow, srSave, srSecs, srSel, srSelect, srSeq, srShowPage, srStatusLine, srTimer, STORAGE, syncFiles,
-  useFiles
+  agTakeoverRun, agTierKey, agTierSelect, agTitleHTML, agWeb, agWhen, loadAgent, loadAgentRuns, loadSearch, mainState,
+  runSearch, sr, SR_ICON, SR_OFF, SR_PAUSED, SR_STOP, srAddFolder, srAuto, srClosePreview, srEnable, srHome, srLoc,
+  srMark, srOpen, srPvSeq, srPvState, srRemoveFolder, srRes, srRow, srSave, srSecs, srSel, srSelect, srSeq, srShowPage,
+  srStatusLine, srTimer, syncFiles, useFiles
 } from "./main.mjs";
