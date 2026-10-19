@@ -46,160 +46,80 @@ import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+import importlib
+
+from studio import config as studio_config
+from studio.infra import mcp_client
+from studio.config import (
+    AGENT_BACKUPS_DIR, AGENT_BUSY_MSG, AGENT_DIR, AGENT_DOWNLOADS, agent_engine, agent_lock, AGENT_SCRATCH_DIR,
+    APP_SUPPORT, BIN, BREW, CATALOG, CHATS, CUA_MIN, DOCUMENT_READER, DSPARK_PY, EDIT_MODEL, ENGINES, GALLERY, HF_CLI,
+    HF_HUB, HOME, LLAMA_SERVER, LOGS, ROOT, SEARCH_DEPS_OK, SEARCH_DIR, SEARCH_PORT, SEARCH_REQS, STATE, UPLOADS, UV,
+)
+from studio.infra.edits import _make_diff_preview, _match_edit_block, _post_edit_diagnostics
+from studio.infra.harness_args import _call_args, _normalize_harness_args, _parse_harness_args
+from studio.infra.mcp_client import AppUnresolved, McpError
+from studio.infra.processes import _manage_bg_process, _run_streamed_subprocess, _start_bg_shell
+from studio.infra.sse import _sse
+from studio.infra.system import _chat_datetime, _pid_alive, _read_pid, dir_size, system_memory
+from studio.infra.text import _clip, est_tokens
+from studio.infra.workspace import _chat_turn_id, _chat_workspace, _harness_root, _in_workspace
+from studio.security.fences import (
+    _gate_shell_command, _harness_path_fence, _HARNESS_SECRET_GLOBS, _HARNESS_SENSITIVE_NAMES, _HARNESS_SKIP_DIRS,
+    _is_safe_readonly_shell,
+)
+from studio.security.local_only import LocalOnly
+from studio.storage.backups import _backup_file, _restore_backup_snap
+from studio.storage.chats import _chat_path
+from studio.storage.memory import _load_agent_memory, _save_agent_memory
+from studio.storage.settings import load_settings, save_settings
+
+# ---- studio/ split (refactor P1, docs/refactor-progress.json): code moved out of this file module by module.
+_MOVED = (
+    "studio.config",
+    "studio.infra.sse",
+    "studio.infra.system",
+    "studio.infra.text",
+    "studio.infra.edits",
+    "studio.infra.harness_args",
+    "studio.infra.workspace",
+    "studio.infra.processes",
+    "studio.infra.mcp_client",
+    "studio.security.fences",
+    "studio.storage.settings",
+    "studio.storage.memory",
+    "studio.storage.backups",
+    "studio.storage.chats",
+    "studio.security.local_only",
+)                                                               # dependency order: owners first
+for _m in _MOVED:
+    importlib.import_module(_m)
+
+
+def _owner_module(name):
+    """The studio module that defines `name` (the first in dependency order that has it)."""
+    for m in _MOVED:
+        mod = sys.modules[m]
+        if name in vars(mod):
+            return mod
+    return None
+
+
+def __getattr__(name):
+    """The check suites read moved names as app.X: answer live from the owning module, so a rebind there is seen."""
+    mod = _owner_module(name)
+    if mod is None:
+        raise AttributeError(f"module 'app' has no attribute {name!r}")
+    return vars(mod)[name]
+
 
 APP_VERSION = "1.5.0"
 
-ROOT = Path(__file__).resolve().parent                       # code (inside the .app when bundled)
-STATE = Path(os.environ.get("LOCAL_STUDIO_HOME", ROOT))      # user data: images, chats, logs
-GALLERY = STATE / "gallery"
-UPLOADS = STATE / "uploads"
-LOGS = STATE / "logs"
-DATA = STATE / "data"
-CHATS = DATA / "chats"
-SETTINGS = DATA / "settings.json"
-for d in (GALLERY, UPLOADS, LOGS, CHATS):
-    d.mkdir(parents=True, exist_ok=True)
-
-HOME = Path.home()
-BIN = HOME / ".local/bin"
-UV = shutil.which("uv") or str(BIN / "uv")
-HF_HUB = Path(os.environ.get("HF_HUB_CACHE", HOME / ".cache/huggingface/hub"))
-HF_CLI = HOME / ".local/share/uv/tools/mlx-dspark/bin/hf"
-DSPARK_PY = HOME / ".local/share/uv/tools/mlx-dspark/bin/python"   # its env also ships mlx-vlm
-APP_SUPPORT = HOME / "Library/Application Support/Local Studio"
-LLAMA_SERVER = next((p for p in (shutil.which("llama-server"), "/opt/homebrew/bin/llama-server",
-                                 str(APP_SUPPORT / "llama.cpp/llama-server")) if p and Path(p).exists()),
-                    "/opt/homebrew/bin/llama-server")
-BREW = shutil.which("brew") or "/opt/homebrew/bin/brew"
-DOCUMENT_READER = (ROOT.parent.parent / "MacOS" / "DocumentReader") if (ROOT.parent.parent / "MacOS" / "DocumentReader").exists() else ROOT / "build" / "DocumentReader"
-CONTEXT = 32768
-# mflux editing needs a complete checkpoint; the q4 export used here is text-to-image only.
-EDIT_MODEL = os.environ.get("EDIT_MODEL")
-# Testing: LOCAL_STUDIO_SEARCH_PORT gives a development server its own search service, so it can
-# never reach or stop the one belonging to the app the user is running.
-SEARCH_PORT = int(os.environ.get("LOCAL_STUDIO_SEARCH_PORT", 8083))
-SEARCH_URL = f"http://127.0.0.1:{SEARCH_PORT}"                # search.py, see the search section
-SEARCH_DIR = DATA / "search"                                 # its index
-SEARCH_REQS = ROOT / "search-requirements.txt"
-SEARCH_DEPS_OK = DATA / "search-deps.ok"                     # written by setup.sh --search
-SEARCH_DEFAULTS = {"enabled": False, "folders": [], "removed": [], "paused": False, "on_battery": False}
-# Local Agent: drives the Mac through CuaDriver (MCP over a unix socket in standard mode, no manifest).
-AGENT_DIR = (DATA / "agent").absolute()                      # LaunchServices starts CuaDriver elsewhere: never relative
-AGENT_RUNS = AGENT_DIR / "runs"
-AGENT_SOCK = AGENT_DIR / "cua.sock"                          # absolute; a unix socket path must stay under 104 bytes
-AGENT_DOWNLOADS = AGENT_DIR / "downloads"                    # the agent's browser saves here, and only after Chrome's save dialog
-AGENT_MEMORY_FILE = AGENT_DIR / "memory.json"                # durable user preferences and project facts across chats
-AGENT_SCRATCH_DIR = AGENT_DIR / "scratch"                    # isolated working directory for run_python snippets
-AGENT_BACKUPS_DIR = AGENT_DIR / "backups"                    # pre-edit snapshots behind the chat's Undo button
-CUA_DRIVER = shutil.which("cua-driver") or str(BIN / "cua-driver")
-CUA_MIN = (0, 28, 2)
-AGENT_DEFAULTS = {"enabled": False, "max_steps": 40, "max_minutes": 15, "tiers": {}}   # tiers: app name -> read|ask|allowed
-AGENT_BUSY_MSG = "The agent is running a task. Stop it or wait for it to finish."
-agent_lock = threading.Lock()                                # held for the length of an agent run
-agent_engine = {"mode": None, "model_id": None}              # the engine the run uses, set by the loop
-
-CATALOG = json.loads((ROOT / "catalog.json").read_text())
 
 app = FastAPI()
 app.mount("/gallery", StaticFiles(directory=GALLERY), name="gallery")
 
-LOOPBACK = ("127.0.0.1", "localhost", "::1")
-
-
-def _local_origin(host, origin):
-    """A request from this app's own page or a local script: a loopback Host, and a loopback
-    Origin if a browser sent one."""
-    name = lambda netloc: (netloc or "").rsplit(":", 1)[0].strip("[]")                    # noqa: E731
-    return name(host) in LOOPBACK and (not origin or name(origin.split("://", 1)[-1]) in LOOPBACK)
-
-
-class LocalOnly:
-    """Every route is the app's own: search, chats, the gallery and the agent return the user's data or drive the Mac, and the
-    rest can clear storage, delete models or uninstall. So a page on another site, on another local port (Sec-Fetch-Site
-    same-site) or behind a public DNS name that resolves to 127.0.0.1 (DNS rebinding, 127.0.0.1.nip.io, localtest.me) gets 403
-    on every route and static file. The app's own page is same-origin (or "none" for a navigation) on a loopback Host, and local
-    scripts (start.sh, the Mac app) send no Origin. Plain ASGI, so streaming is untouched."""
-
-    def __init__(self, inner):
-        self.inner = inner
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] in ("http", "websocket"):
-            h = dict(scope["headers"])
-            site = h.get(b"sec-fetch-site", b"").decode("latin-1").strip().lower()
-            if site in ("cross-site", "same-site") or not _local_origin(h.get(b"host", b"").decode("latin-1"), h.get(b"origin", b"").decode("latin-1")):
-                if scope["type"] == "websocket":
-                    return await send({"type": "websocket.close", "code": 1008})
-                return await JSONResponse({"detail": "Forbidden"}, status_code=403)(scope, receive, send)
-        await self.inner(scope, receive, send)
-
 
 app.add_middleware(LocalOnly)
-
-# ---------------------------------------------------------------- helpers
-
-
-def _sysctl(name):
-    try:
-        return int(subprocess.check_output(["sysctl", "-n", name], text=True).strip())
-    except Exception:
-        return None
-
-
-def system_memory():
-    """Used = app (anonymous - purgeable) + wired + compressed, as Activity Monitor counts it."""
-    total = _sysctl("hw.memsize") or 0
-    out = subprocess.run(["vm_stat"], capture_output=True, text=True).stdout
-    page = int(re.search(r"page size of (\d+)", out).group(1))
-    pages = {k.strip().strip('"'): int(v) for k, v in re.findall(r"^(.+?):\s+(\d+)\.?$", out, re.M)}
-    used = (pages.get("Anonymous pages", 0) - pages.get("Pages purgeable", 0)
-            + pages.get("Pages wired down", 0) + pages.get("Pages occupied by compressor", 0)) * page
-    return {"total_bytes": total, "used_bytes": used, "free_percent": _sysctl("kern.memorystatus_level")}
-
-
-def dir_size(path: Path) -> int:
-    total = 0
-    for p in path.rglob("*"):
-        try:
-            if p.is_file() and not p.is_symlink():
-                total += p.stat().st_size
-        except OSError:
-            pass
-    return total
-
-
-def _pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, TypeError):
-        return False
-
-
-def _read_pid(name):
-    try:
-        return int((LOGS / f"{name}.pid").read_text().strip())
-    except Exception:
-        return None
-
-
-def load_settings():
-    try:
-        s = json.loads(SETTINGS.read_text())
-    except Exception:
-        s = {}
-    s.setdefault("chat_model", next(m["id"] for m in CATALOG["chat"] if m.get("default")))
-    s.setdefault("image_model", next(m["id"] for m in CATALOG["image"] if m.get("default")))
-    s.setdefault("custom", [])
-    s.setdefault("mcp_servers", [])
-    s["harness"] = {"auto_approve_readonly": True, **(s.get("harness") or {})}
-    s["search"] = {**SEARCH_DEFAULTS, **(s.get("search") or {})}
-    s["agent"] = {**AGENT_DEFAULTS, **(s.get("agent") or {})}
-    return s
-
-
-def save_settings(s):
-    SETTINGS.write_text(json.dumps(s, indent=2))
 
 
 def chat_models():
@@ -539,11 +459,6 @@ async def add_custom(repo: str = Body(..., embed=True), backend: str = Body("mlx
     return m
 
 # ---------------------------------------------------------------- engines
-ENGINES = {
-    "text": {"pattern": r"^[^ ]*python[^ ]* [^ ]*mlx-dspark serve", "pid": "llm", "url": "http://127.0.0.1:8080", "ready": "/health"},
-    "vision": {"pattern": r"^[^ ]*python[^ ]* -m mlx_vlm server", "pid": "vlm", "url": "http://127.0.0.1:8081", "ready": "/v1/models"},
-    "gguf": {"pattern": r"^[^ ]*llama-server .*--port 8082", "pid": "gguf", "url": "http://127.0.0.1:8082", "ready": "/health"},
-}
 ENGINE_STATE = LOGS / "engine.json"
 engine_lock = threading.Lock()
 
@@ -615,7 +530,7 @@ def _uses_mlx_lm(repo):
 def _start_engine(mode, m):
     log = open(LOGS / f"{ENGINES[mode]['pid']}.log", "w")
     if mode == "text":
-        cmd = [str(BIN / "mlx-dspark"), "serve", "--model", m["repo"], "--context-window", str(CONTEXT),
+        cmd = [str(BIN / "mlx-dspark"), "serve", "--model", m["repo"], "--context-window", str(studio_config.CONTEXT),
                "--host", "127.0.0.1", "--port", "8080"]
         if m.get("drafter"):
             cmd += ["--drafter", m["drafter"], "--mode", m.get("mode", "auto")]
@@ -627,7 +542,7 @@ def _start_engine(mode, m):
             cmd += ["--draft-model", m["drafter"], "--draft-kind", "dflash"]
     else:
         model = snapshot_file(m["repo"], m["file"])
-        cmd = [LLAMA_SERVER, "-m", str(model), "-c", str(CONTEXT), "-ngl", "999", "--jinja",
+        cmd = [LLAMA_SERVER, "-m", str(model), "-c", str(studio_config.CONTEXT), "-ngl", "999", "--jinja",
                "--host", "127.0.0.1", "--port", "8082", "-a", m["id"]]
         if m.get("mmproj") and snapshot_file(m["repo"], m["mmproj"]):
             cmd += ["--mmproj", str(snapshot_file(m["repo"], m["mmproj"]))]
@@ -712,7 +627,7 @@ async def llm_get(route: str):
         if route == "health":
             return {"status": "ok" if ready else "loading", "mode": mode, "target": m["repo"],
                     "model_id": m["id"], "model_name": m["name"], "drafter": m.get("drafter") if mode == "vision" else None,
-                    "max_draft": None, "kv_bits": None, "context_window": CONTEXT, "warnings": []}
+                    "max_draft": None, "kv_bits": None, "context_window": studio_config.CONTEXT, "warnings": []}
         return JSONResponse({"engine": mode}, status_code=200 if ready else 503)
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -724,10 +639,6 @@ async def llm_get(route: str):
     except (httpx.HTTPError, ValueError) as e:                 # ValueError: an answer that isn't JSON (an engine still starting, a proxy page)
         return JSONResponse({"status": "starting" if mode else "down", "model_id": m["id"], "model_name": m["name"],
                              "error": str(e)}, status_code=503)
-
-
-def _sse(obj):
-    return f"data: {json.dumps(obj)}\n\n"
 
 
 FILES_PROMPT = ("The user enabled My files for this turn. Use search_files and read_file to verify the requested facts in local documents. "
@@ -852,49 +763,10 @@ CHAT_TOOLS = CHAT_READ_TOOLS + CHAT_ACTION_TOOLS + [CHAT_COMPUTER_TOOL, CHAT_REP
 CHAT_TOOL_ROUNDS = 12
 
 
-# -- Agent Harness helpers: local-model argument repair, path/command safety fences, memory, and interactive chat sessions
-
-_HARNESS_SKIP_DIRS = frozenset((".git", "node_modules", "venv", ".venv", "__pycache__", "build", "dist", "target", "DerivedData", "Pods", "site-packages", ".Trash"))
-_HARNESS_SENSITIVE_NAMES = frozenset((".ssh", ".aws", ".gnupg", ".kube", ".npmrc", ".pypirc", ".netrc", "Keychains", "Passwords", "Cookies"))
-_HARNESS_SECRET_GLOBS = ("*.pem", "*.p12", "*.pfx", "*.keychain*", "id_rsa*", "id_ed25519*", "id_ecdsa*", "credentials.json", "secrets.json")
-_HARNESS_ALLOWED_ENV = frozenset((".env.example", ".env.sample", ".env.template"))
-_HARNESS_SYS_PREFIXES = ("/System", "/Library", "/usr", "/bin", "/sbin", "/etc", "/var", "/private/etc", "/Applications")
 _WORKSPACE_INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md", ".localstudio.md", ".claude/CLAUDE.md", ".cursorrules")
-_SHELL_BLOCKED_RE = re.compile(
-    r"(?:^|[;&|`\n\s])(?:sudo|su|doas|csrutil|diskutil|launchctl|shutdown|reboot|halt|mkfs)\b"
-    r"|\bsecurity\s+(?:find-|dump-|delete-|export|unlock-)"
-    r"|\brm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+(?:/(?:\s|$)|~(?:/|\s|$)|\$HOME\b|\*(?:\s|$))"
-    r"|\b(?:curl|wget)\b[^|\n]*\|\s*(?:sh|bash|zsh|python\d*)\b"
-    r"|\bdd\s+if="
-    r"|:\(\)\s*\{"
-    r"|\b(?:chmod|chown)\b[^;\n]+(?:/etc|/System|/usr|/bin|/sbin|/Library|/var|/private)"
-    r"|(?:/|\b)(?:\.ssh|\.aws|\.gnupg|Keychains)(?:/|\b)", re.I)
 
 _chat_session_perms: dict[str, set[str]] = {}                # chat_id -> {"edit", "exec", "mcp"} granted for the session
 _chat_sessions: dict[str, "_ChatSession"] = {}               # session_id -> active _ChatSession waiting for approval/question
-_memory_lock = threading.Lock()
-_bg_processes: dict[str, dict] = {}                          # proc_id -> background terminal process entry
-_bg_lock = threading.Lock()
-# The chat's workspace folder. Set only inside the worker thread of one tool call (asyncio.to_thread copies the
-# context), so it never leaks between requests; _chat_read_tool keeps its 3-argument signature.
-_chat_workspace: contextvars.ContextVar = contextvars.ContextVar("_chat_workspace", default=None)
-_chat_turn_id: contextvars.ContextVar = contextvars.ContextVar("_chat_turn_id", default=None)
-
-
-def _harness_root() -> Path:
-    """Where relative paths and commands start: the chat's workspace, else the checkout (dev) or home (inside the .app)."""
-    ws = _chat_workspace.get()
-    if ws:
-        return Path(ws)
-    return HOME if any(part.endswith(".app") for part in ROOT.parts) else ROOT
-
-
-def _in_workspace(workspace, fn, *args, turn_id=None):
-    """Run fn(*args) with the chat's workspace set; meant for asyncio.to_thread so the setting stays in that thread."""
-    _chat_workspace.set(workspace)
-    if turn_id is not None:
-        _chat_turn_id.set(turn_id)
-    return fn(*args)
 
 
 def _load_workspace_instructions(workspace=None) -> list[dict]:
@@ -978,23 +850,6 @@ def chat_session_reply(sid: str, body: dict = Body(...)):
     return {"ok": True}
 
 
-def _load_agent_memory() -> dict:
-    with _memory_lock:
-        try:
-            data = json.loads(AGENT_MEMORY_FILE.read_text())
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
-
-
-def _save_agent_memory(data: dict):
-    with _memory_lock:
-        AGENT_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = AGENT_MEMORY_FILE.with_name(".memory.tmp")
-        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-        os.replace(tmp, AGENT_MEMORY_FILE)
-
-
 @app.get("/api/agent/memory")
 def api_get_memory():
     return {"memories": _load_agent_memory()}
@@ -1021,358 +876,6 @@ def api_delete_memory(key: str):
     mem.pop(key, None)
     _save_agent_memory(mem)
     return {"ok": True, "memories": mem}
-
-
-def _parse_harness_args(raw):
-    """Parse tool arguments from local models, repairing code fences or trailing commas when needed."""
-    parsed = _call_args(raw)
-    if isinstance(parsed, dict):
-        return parsed
-    if isinstance(raw, str):
-        s = raw.strip()
-        if s.startswith("```"):
-            s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s, flags=re.I | re.S).strip()
-        repaired = re.sub(r",\s*([}\]])", r"\1", s)
-        for candidate in (s, repaired):
-            try:
-                val = json.loads(candidate)
-                if isinstance(val, dict):
-                    return val
-            except ValueError:
-                pass
-        try:
-            val = ast.literal_eval(s)
-            if isinstance(val, dict):
-                return val
-        except Exception:
-            pass
-    return parsed
-
-
-def _normalize_harness_args(name, args):
-    """Map common parameter aliases and stringified integers emitted by local models to canonical schema keys."""
-    if not isinstance(args, dict):
-        return args
-    out = dict(args)
-    alias_map = {
-        "read_file": (("path", ("filepath", "file_path", "file", "filename")), ("file_id", ("id",)),
-                      ("start_line", ("line", "from_line", "offset")), ("max_lines", ("lines", "limit", "n_lines"))),
-        "write_file": (("path", ("filepath", "file_path", "file", "filename", "target_file")),
-                       ("content", ("text", "body", "code", "contents"))),
-        "edit_file": (("path", ("filepath", "file_path", "file", "filename", "target_file")),
-                      ("old_text", ("old_str", "old_string", "search", "target", "find", "old", "old_content")),
-                      ("new_text", ("new_str", "new_string", "replace", "replacement", "new", "new_content"))),
-        "multi_edit_file": (("path", ("filepath", "file_path", "file", "filename", "target_file")),
-                            ("edits", ("changes", "replacements", "patches", "chunks"))),
-        "code_outline": (("path", ("filepath", "file_path", "file", "filename")),),
-        "git_status": (("path", ("dir", "directory", "folder", "cwd")),),
-        "git_diff": (("path", ("filepath", "file_path", "file", "dir")),),
-        "delegate_task": (("task", ("prompt", "query", "instruction", "description", "goal")),
-                          ("role", ("agent", "type", "worker", "subagent"))),
-        "manage_process": (("process_id", ("pid", "id", "proc_id")), ("action", ("cmd", "command", "op"))),
-        "list_directory": (("path", ("dir", "directory", "folder", "dirpath")),),
-        "find_files": (("pattern", ("query", "glob", "name", "filename")), ("path", ("dir", "directory", "folder"))),
-        "grep_files": (("query", ("pattern", "search", "text", "regex")), ("path", ("dir", "directory", "folder", "file")),
-                       ("glob", ("file_pattern", "include", "filter"))),
-        "run_python": (("code", ("script", "python", "source", "program")),),
-        "run_shell": (("command", ("cmd", "shell", "script")), ("cwd", ("dir", "directory", "path", "workdir"))),
-        "todo_write": (("todos", ("tasks", "items", "plan", "steps", "checklist")),),
-        "memory_store": (("key", ("name", "topic", "title")), ("value", ("content", "text", "fact", "memory"))),
-        "memory_recall": (("query", ("key", "search", "topic", "q")),),
-        "ask_user": (("question", ("prompt", "text", "message", "query")), ("options", ("choices", "items"))),
-        "web_search": (("query", ("q", "search", "keywords")),),
-        "read_webpage": (("url", ("link", "href", "page")),),
-        "search_files": (("query", ("q", "search", "name")),),
-    }
-    for canonical, aliases in alias_map.get(name, ()):
-        if out.get(canonical) is None:
-            for alt in aliases:
-                if out.get(alt) is not None:
-                    out[canonical] = out.pop(alt)
-                    break
-    for int_key in ("file_id", "start_page", "max_pages", "start_line", "max_lines", "timeout"):
-        val = out.get(int_key)
-        if isinstance(val, str) and val.strip().lstrip("-").isdigit():
-            out[int_key] = int(val.strip())
-    if name == "read_file":
-        if type(out.get("start_page")) is int:
-            out["start_page"] = max(1, out["start_page"])
-        if type(out.get("max_pages")) is int:
-            out["max_pages"] = max(1, min(4, out["max_pages"]))
-    if name == "multi_edit_file" and isinstance(out.get("edits"), list):
-        norm_edits = []
-        for ed in out["edits"]:
-            if isinstance(ed, dict):
-                norm_edits.append(_normalize_harness_args("edit_file", ed))
-        out["edits"] = norm_edits
-    if name == "todo_write" and isinstance(out.get("todos"), list):
-        norm_todos = []
-        for item in out["todos"][:25]:
-            if isinstance(item, str) and item.strip():
-                norm_todos.append({"content": item.strip()[:240], "status": "pending"})
-            elif isinstance(item, dict):
-                content = str(item.get("content") or item.get("task") or item.get("title") or item.get("text") or "").strip()[:240]
-                raw_st = str(item.get("status") or ("completed" if item.get("done") else "pending")).strip().lower()
-                st = "completed" if raw_st in ("completed", "done", "complete", "finished", "true") else \
-                     "in_progress" if raw_st in ("in_progress", "active", "running", "doing", "working") else "pending"
-                if content:
-                    norm_todos.append({"content": content, "status": st})
-        out["todos"] = norm_todos
-    return out
-
-
-def _harness_path_fence(raw_path, write=False) -> Path:
-    """Resolve a local path and reject credentials, private keys, browser profiles, or system directories."""
-    if raw_path is None or (isinstance(raw_path, str) and not raw_path.strip()):
-        if write:
-            raise ValueError("A file path is required")
-        return _harness_root()
-    if not isinstance(raw_path, str) or "\x00" in raw_path or len(raw_path) > 1024:
-        raise ValueError("Invalid file path")
-    p = Path(raw_path.strip()).expanduser()
-    if not p.is_absolute():
-        p = _harness_root() / p
-    try:
-        resolved = p.resolve()
-    except OSError:
-        resolved = p.absolute()
-    parts = set(resolved.parts) | set(p.parts)
-    if parts & _HARNESS_SENSITIVE_NAMES:
-        raise ValueError(f"Access to sensitive directory ({next(iter(parts & _HARNESS_SENSITIVE_NAMES))}) is blocked")
-    name_low = resolved.name.lower()
-    if (name_low == ".env" or (name_low.startswith(".env.") and name_low not in _HARNESS_ALLOWED_ENV)):
-        raise ValueError("Access to .env secret files is blocked")
-    if any(fnmatch.fnmatch(name_low, g) for g in _HARNESS_SECRET_GLOBS):
-        raise ValueError(f"Access to credential or key file ({resolved.name}) is blocked")
-    res_str = str(resolved)
-    for blocked_dir in (HOME / "Library/Keychains", HOME / "Library/Application Support/Google/Chrome",
-                        HOME / "Library/Safari", HOME / "Library/Cookies", HOME / "Library/Mail",
-                        HOME / "Library/Messages", HOME / "Library/Passwords"):
-        b_str = str(blocked_dir)
-        if res_str == b_str or res_str.startswith(b_str + "/"):
-            raise ValueError("Access to protected macOS user data is blocked")
-    if write:
-        for sys_prefix in _HARNESS_SYS_PREFIXES:
-            if res_str == sys_prefix or res_str.startswith(sys_prefix + "/"):
-                raise ValueError(f"Writing to system path ({sys_prefix}) is blocked")
-        if any(part.lower().endswith(".app") for part in resolved.parts):
-            raise ValueError("Writing inside macOS application bundles (.app) is blocked")
-        for internal in (SETTINGS, CHATS, AGENT_RUNS, AGENT_MEMORY_FILE, AGENT_BACKUPS_DIR):
-            i_str = str(internal.resolve() if internal.exists() else internal.absolute())
-            if res_str == i_str or res_str.startswith(i_str + "/"):
-                raise ValueError("Modifying Local Studio internal state files directly is blocked")
-    return resolved
-
-
-def _gate_shell_command(cmd):
-    if not isinstance(cmd, str) or not cmd.strip():
-        return False, "run_shell requires a non-empty command string."
-    if len(cmd) > 4000 or "\x00" in cmd:
-        return False, "Command is too long or contains invalid control characters."
-    if _SHELL_BLOCKED_RE.search(cmd):
-        return False, "This shell command is blocked because it accesses privileged, destructive, or credential targets."
-    return True, "Runs a local shell command in the workspace."
-
-
-_SAFE_READONLY_BINS = frozenset(("ls", "pwd", "which", "whoami", "uname", "date", "wc", "head", "tail", "cat", "stat", "file"))
-_SAFE_GIT_SUBCMDS = frozenset(("status", "diff", "log", "show", "branch", "rev-parse", "ls-files", "blame", "shortlog"))
-
-
-def _is_safe_readonly_shell(cmd: str) -> bool:
-    """True when cmd is a single, non-chained read-only inspection or test verification command."""
-    if not isinstance(cmd, str) or not cmd.strip():
-        return False
-    ok, _ = _gate_shell_command(cmd)
-    if not ok:
-        return False
-    s = cmd.strip()
-    if any(op in s for op in (";", "&&", "||", "|", ">", "<", "`", "$(", "\n", "\r", "&")):
-        return False
-    try:
-        tokens = shlex.split(s)
-    except ValueError:
-        return False
-    if not tokens:
-        return False
-    # Check any path-like arguments against the path fence so cat ~/.ssh/id_rsa is never auto-approved
-    for tok in tokens[1:]:
-        if not tok.startswith("-") and ("/" in tok or tok.startswith("~") or tok.startswith(".")):
-            try:
-                _harness_path_fence(tok, write=False)
-            except ValueError:
-                return False
-    prog = Path(tokens[0]).name
-    if prog == "git":
-        if len(tokens) < 2:
-            return False
-        # Skip harmless global flags like --no-pager
-        idx = 1
-        while idx < len(tokens) and tokens[idx] in ("--no-pager",):
-            idx += 1
-        if idx >= len(tokens):
-            return False
-        sub = tokens[idx]
-        if sub not in _SAFE_GIT_SUBCMDS:
-            return False
-        if sub == "branch" and any(a in ("-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move") for a in tokens[idx + 1:]):
-            return False
-        if any(a.startswith(("--output", "--ext-diff", "--exec", "-c")) for a in tokens[idx + 1:]):
-            return False
-        return True
-    if prog in _SAFE_READONLY_BINS:
-        return True
-    if prog in ("pytest", "py.test"):
-        return True
-    if prog in ("python", "python3") and len(tokens) >= 3 and tokens[1] == "-m" and tokens[2] in ("pytest", "unittest", "py_compile"):
-        return True
-    if prog == "node" and len(tokens) == 3 and tokens[1] in ("--check", "-c"):
-        return True
-    if prog == "cargo" and len(tokens) >= 2 and tokens[1] in ("check", "test", "clippy"):
-        return True
-    if prog == "go" and len(tokens) >= 2 and tokens[1] in ("test", "vet"):
-        return True
-    if prog == "npm" and len(tokens) >= 2 and (tokens[1] in ("test", "t") or (tokens[1] == "run" and len(tokens) >= 3 and tokens[2] in ("test", "lint", "check", "typecheck"))):
-        return True
-    return False
-
-
-def _post_edit_diagnostics(target: Path) -> dict:
-    """Run fast, deterministic syntax/lint verification on a modified file so the model can self-heal in the next round."""
-    ext = target.suffix.lower()
-    try:
-        if ext == ".py":
-            src = target.read_text(encoding="utf-8", errors="replace")
-            try:
-                ast.parse(src, filename=str(target))
-                return {"syntax_check": "OK", "syntax_ok": True, "checker": "ast.parse"}
-            except SyntaxError as err:
-                msg = f"SyntaxError at line {err.lineno}: {err.msg}"
-                return {"syntax_check": msg, "syntax_ok": False, "checker": "ast.parse",
-                        "line": err.lineno, "offset": err.offset, "error": msg}
-        if ext == ".json":
-            src = target.read_text(encoding="utf-8", errors="replace")
-            try:
-                json.loads(src)
-                return {"syntax_check": "OK", "syntax_ok": True, "checker": "json.loads"}
-            except json.JSONDecodeError as err:
-                msg = f"JSONDecodeError at line {err.lineno}, column {err.colno}: {err.msg}"
-                return {"syntax_check": msg, "syntax_ok": False, "checker": "json.loads",
-                        "line": err.lineno, "column": err.colno, "error": msg}
-        if ext in (".js", ".mjs", ".cjs") and shutil.which("node"):
-            res = subprocess.run(["node", "--check", str(target)], capture_output=True, text=True, timeout=4)
-            if res.returncode == 0:
-                return {"syntax_check": "OK", "syntax_ok": True, "checker": "node --check"}
-            err_line = "\n".join((res.stderr or res.stdout or "Syntax error").strip().splitlines()[:4])
-            return {"syntax_check": err_line[:400], "syntax_ok": False, "checker": "node --check", "error": err_line[:400]}
-        if ext == ".swift" and shutil.which("swiftc"):
-            res = subprocess.run(["swiftc", "-parse", str(target)], capture_output=True, text=True, timeout=5)
-            if res.returncode == 0:
-                return {"syntax_check": "OK", "syntax_ok": True, "checker": "swiftc -parse"}
-            err_line = "\n".join((res.stderr or res.stdout or "Swift syntax error").strip().splitlines()[:4])
-            return {"syntax_check": err_line[:400], "syntax_ok": False, "checker": "swiftc -parse", "error": err_line[:400]}
-    except Exception as exc:
-        return {"syntax_check": f"skipped ({exc})", "syntax_ok": True}
-    return {"syntax_check": "OK", "syntax_ok": True, "checker": "none"}
-
-
-def _make_diff_preview(path_str, old_content, new_content, max_lines=80):
-    diff = list(difflib.unified_diff(
-        old_content.splitlines(), new_content.splitlines(),
-        fromfile=f"a/{Path(path_str).name}", tofile=f"b/{Path(path_str).name}", lineterm=""
-    ))
-    if not diff:
-        return "(no text changes)"
-    text = "\n".join(diff[:max_lines])
-    if len(diff) > max_lines:
-        text += f"\n... (+{len(diff) - max_lines} more diff lines)"
-    return text[:4000]
-
-
-_LINE_NO_RE = re.compile(r"^\s*\d+: ?")
-
-
-def _strip_line_numbers(text):
-    """Drop `12: ` prefixes a model copied from read_file output, only when every non-empty line has one."""
-    lines = text.split("\n")
-    if not any(ln.strip() for ln in lines) or not all(_LINE_NO_RE.match(ln) for ln in lines if ln.strip()):
-        return text
-    return "\n".join(_LINE_NO_RE.sub("", ln, count=1) for ln in lines)
-
-
-def _match_edit_block(current, old_s, new_s, replace_all=False):
-    """(replacements, updated text) for an edit_file call; raises ValueError with guidance when it can't place it.
-    Tries the exact text, then the text without copied line numbers, then the same lines ignoring indentation
-    and trailing spaces (the replacement is re-indented to match the file). Never edits an ambiguous match."""
-    def exact(old, new):
-        count = current.count(old)
-        if count > 1 and not replace_all:
-            raise ValueError(f"old_text matched {count} places. Include more surrounding lines or set replace_all=true.")
-        return (count if replace_all else 1, current.replace(old, new) if replace_all else current.replace(old, new, 1)) if count else None
-
-    hit = exact(old_s, new_s)
-    if hit:
-        return hit
-    old2 = _strip_line_numbers(old_s)
-    new2 = _strip_line_numbers(new_s) if old2 != old_s else new_s
-    if old2 != old_s and old2.strip():
-        hit = exact(old2, new2)
-        if hit:
-            return hit
-    want = [ln.strip() for ln in old2.strip("\n").split("\n")]
-    if any(want):
-        lines = current.splitlines(keepends=True)
-        n = len(want)
-        spots = [i for i in range(len(lines) - n + 1) if [ln.strip() for ln in lines[i:i + n]] == want]
-        if len(spots) > 1 and not replace_all:
-            raise ValueError(f"old_text matched {len(spots)} places (ignoring indentation). Include more surrounding lines or set replace_all=true.")
-        if spots:
-            first_old = next(ln for ln in old2.strip("\n").split("\n") if ln.strip())
-            old_indent = first_old[:len(first_old) - len(first_old.lstrip())]
-            new_lines = new2.strip("\n").split("\n") if new2.strip("\n") else []
-            for i in reversed(spots if replace_all else spots[:1]):
-                file_first = next(ln for ln in lines[i:i + n] if ln.strip())
-                file_indent = file_first[:len(file_first) - len(file_first.lstrip())]
-                fixed = [(file_indent + ln[len(old_indent):]) if ln.startswith(old_indent) else (file_indent + ln.lstrip() if ln.strip() else ln)
-                         for ln in new_lines]
-                end = lines[i + n - 1]
-                eol = end[len(end.rstrip("\r\n")):] or ("\n" if i + n < len(lines) else "")
-                lines[i:i + n] = [ln + "\n" for ln in fixed[:-1]] + ([fixed[-1] + eol] if fixed else [])
-            return (len(spots) if replace_all else 1, "".join(lines))
-    raise ValueError("old_text was not found in the file. Call read_file with path first and copy the exact lines (without line numbers).")
-
-
-def _backup_file(target, turn_id=None):
-    """Snapshot a file (or its absence) before the model changes it; returns the backup id for Undo."""
-    AGENT_BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
-    existed = target.is_file()
-    content = target.read_text(encoding="utf-8", errors="replace") if existed else None
-    if existed and len(content) > 2_000_000:
-        return None                                          # too large to keep a copy of; the edit still runs
-    bid = uuid.uuid4().hex[:16]
-    tid = turn_id or _chat_turn_id.get()
-    (AGENT_BACKUPS_DIR / f"{bid}.json").write_text(json.dumps({
-        "id": bid, "turn_id": tid, "path": str(target), "existed": existed,
-        "content": content, "created": time.time()
-    }))
-    for old in sorted(AGENT_BACKUPS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)[:-100]:
-        old.unlink(missing_ok=True)                          # keep the newest 100
-    return bid
-
-
-def _restore_backup_snap(p: Path) -> dict:
-    snap = json.loads(p.read_text())
-    target = _harness_path_fence(snap.get("path"), write=True)
-    if target.is_symlink():
-        raise ValueError("Cannot undo over a symbolic link.")
-    if snap.get("existed"):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:6]}.tmp")
-        tmp.write_text(snap.get("content") or "", encoding="utf-8")
-        os.replace(tmp, target)
-    else:
-        target.unlink(missing_ok=True)
-    p.unlink(missing_ok=True)
-    return {"ok": True, "backup_id": snap.get("id"), "path": str(target), "name": target.name, "restored": bool(snap.get("existed"))}
 
 
 @app.post("/api/agent/undo")
@@ -1549,104 +1052,6 @@ def harness_gate(name, args, chat_id=None, extra_perms=()):
         return "risky", f"Runs command in {cwd}", meta
 
     return "safe", None, None
-
-
-def _run_streamed_subprocess(argv, cwd, env, timeout=30, on_output=None):
-    """Run a child process, streaming stdout/stderr lines to on_output(chunk) if provided, up to timeout."""
-    proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, env=env, start_new_session=True, bufsize=1)
-    out_chunks, err_chunks = [], []
-
-    def _reader(pipe, target, prefix=""):
-        for line in pipe:
-            target.append(line)
-            if on_output and sum(len(x) for x in target) <= 6000:
-                try:
-                    on_output(prefix + line)
-                except Exception:
-                    pass
-
-    t_out = threading.Thread(target=_reader, args=(proc.stdout, out_chunks), daemon=True)
-    t_err = threading.Thread(target=_reader, args=(proc.stderr, err_chunks), daemon=True)
-    t_out.start()
-    t_err.start()
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            proc.kill()
-        raise ValueError(f"Execution timed out after {timeout} seconds")
-    t_out.join(timeout=1)
-    t_err.join(timeout=1)
-    return proc.returncode, "".join(out_chunks), "".join(err_chunks)
-
-
-def _start_bg_shell(cmd: str, cwd: Path, env: dict) -> dict:
-    """Start a long-running background shell command (e.g., dev server or watcher) and track its log buffer."""
-    LOGS.mkdir(parents=True, exist_ok=True)
-    proc_id = uuid.uuid4().hex[:10]
-    log_path = LOGS / f"bg-{proc_id}.log"
-    log_file = open(log_path, "w", encoding="utf-8")
-    proc = subprocess.Popen(["/bin/zsh", "-c", cmd], cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT,
-                            text=True, env=env, start_new_session=True)
-    entry = {"process_id": proc_id, "pid": proc.pid, "command": cmd, "cwd": str(cwd),
-             "started": time.time(), "log_path": str(log_path), "proc": proc, "log_file": log_file}
-    with _bg_lock:
-        _bg_processes[proc_id] = entry
-    # Wait briefly (150ms) to catch immediate startup output or fast-exit errors
-    time.sleep(0.15)
-    rc = proc.poll()
-    initial_out = ""
-    try:
-        log_file.flush()
-        initial_out = log_path.read_text(encoding="utf-8", errors="replace")[:2000]
-    except OSError:
-        pass
-    return {"process_id": proc_id, "pid": proc.pid, "command": cmd, "cwd": str(cwd),
-            "status": "exited" if rc is not None else "running", "returncode": rc, "stdout": initial_out}
-
-
-def _manage_bg_process(action: str, process_id: str | None = None) -> dict:
-    action = (action or "list").strip().lower()
-    with _bg_lock:
-        items = list(_bg_processes.values())
-    if action == "list" or not process_id:
-        out = []
-        for it in items:
-            rc = it["proc"].poll()
-            out.append({"process_id": it["process_id"], "pid": it["pid"], "command": it["command"],
-                        "cwd": it["cwd"], "status": "exited" if rc is not None else "running",
-                        "returncode": rc, "elapsed_s": round(time.time() - it["started"], 1)})
-        return {"processes": out, "count": len(out)}
-    with _bg_lock:
-        entry = _bg_processes.get(process_id)
-    if not entry:
-        raise ValueError(f"Unknown background process_id: {process_id}")
-    proc = entry["proc"]
-    log_path = Path(entry["log_path"])
-    if action == "stop":
-        if proc.poll() is None:
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-                proc.wait(timeout=2)
-            except (OSError, subprocess.TimeoutExpired):
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except OSError:
-                    proc.kill()
-        try:
-            entry["log_file"].close()
-        except Exception:
-            pass
-        tail = log_path.read_text(encoding="utf-8", errors="replace")[-3000:] if log_path.is_file() else ""
-        return {"process_id": process_id, "status": "stopped", "returncode": proc.poll(), "logs": tail}
-    rc = proc.poll()
-    tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:] if log_path.is_file() else ""
-    return {"process_id": process_id, "pid": entry["pid"], "command": entry["command"],
-            "status": "exited" if rc is not None else "running", "returncode": rc,
-            "elapsed_s": round(time.time() - entry["started"], 1), "logs": tail}
 
 
 @app.get("/api/processes")
@@ -2021,22 +1426,6 @@ def _read_local_path(raw_path, start_line=1, max_lines=160, start_page=1, max_pa
             "text": numbered, "truncated": end_line < len(lines)}
 
 
-def _chat_datetime(zone=None):
-    if zone:
-        try:
-            now = datetime.now(ZoneInfo(zone))
-        except (ZoneInfoNotFoundError, ValueError, TypeError):
-            raise ValueError("Use a valid IANA timezone, such as America/Chicago or UTC")
-    else:
-        now = datetime.now().astimezone()
-        try:
-            zone = str(Path('/etc/localtime').resolve()).split('/zoneinfo/', 1)[1]
-        except (OSError, IndexError):
-            zone = str(now.tzinfo)
-    return {"datetime": now.isoformat(timespec="seconds"), "date": now.date().isoformat(),
-            "weekday": now.strftime("%A"), "timezone": zone, "utc_offset": now.strftime("%z")}
-
-
 def _public_web_target(url):
     """Validate and pin one public destination. DNS is checked once and the connection uses that IP."""
     if not isinstance(url, str) or len(url) > 4000 or re.search(r"[\x00-\x20\\]", url):
@@ -2277,7 +1666,7 @@ def _get_custom_mcp_client(srv: dict) -> "McpClient":
         if cli is None or cli.argv != argv or getattr(cli, "env", None) != env:
             if cli is not None:
                 cli.close()
-            cli = McpClient(argv, allowed=None, env=env)
+            cli = mcp_client.McpClient(argv, allowed=None, env=env)
             _custom_mcp_clients[sid] = cli
         return cli
 
@@ -2968,7 +2357,7 @@ def _chat_fit_context(body):
         images = sum(1 for m in messages for p in (m.get("content") if isinstance(m.get("content"), list) else []) if isinstance(p, dict) and p.get("type") == "image_url")
         return int(chars / 3.2) + images * 1200
     evicted = []
-    while cost() > CONTEXT - 1024:
+    while cost() > studio_config.CONTEXT - 1024:
         last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=0)
         if last_user <= 1: break
         next_user = next((i for i in range(2, last_user + 1) if messages[i].get("role") == "user"), last_user)
@@ -2976,9 +2365,9 @@ def _chat_fit_context(body):
         del messages[1:next_user]       # remove a whole older turn, including all its tool results
     if evicted and messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
         summary = _summarize_messages_deterministic(evicted)[:800]
-        if cost() + int(len(summary) / 3.2) <= CONTEXT - 1024 and "### Conversation Checkpoint Summary" not in messages[0]["content"]:
+        if cost() + int(len(summary) / 3.2) <= studio_config.CONTEXT - 1024 and "### Conversation Checkpoint Summary" not in messages[0]["content"]:
             messages[0] = {**messages[0], "content": messages[0]["content"].rstrip() + "\n\n" + summary}
-    if cost() > CONTEXT - 1024:
+    if cost() > studio_config.CONTEXT - 1024:
         # Observation masking: when multiple tool rounds exist in the current turn, compact older rounds first.
         last_asst = max((i for i, m in enumerate(messages) if m.get("role") == "assistant" and m.get("tool_calls")), default=-1)
         for index, message in enumerate(messages):
@@ -2986,14 +2375,14 @@ def _chat_fit_context(body):
                 message = dict(message)
                 message["content"] = json.dumps({"truncated": True, "excerpt": message["content"][:600]})
                 messages[index] = message
-    if cost() > CONTEXT - 1024:
+    if cost() > studio_config.CONTEXT - 1024:
         for index, message in enumerate(messages):
             if message.get("role") == "tool" and len(message.get("content", "")) > 1500:
                 message = dict(message)
                 message["content"] = json.dumps({"truncated": True, "excerpt": message["content"][:1500]})
                 # Replace only this evidence, never drop its corresponding native tool call.
                 messages[index] = message
-    if CONTEXT - cost() - 512 < 512:
+    if studio_config.CONTEXT - cost() - 512 < 512:
         for index, message in enumerate(messages):
             if message.get("role") == "tool" and len(message.get("content", "")) > 400:
                 raw = message["content"]
@@ -3004,7 +2393,7 @@ def _chat_fit_context(body):
                 message = dict(message)
                 message["content"] = json.dumps({"truncated": True, "excerpt": str(raw)[:400]})
                 messages[index] = message
-    room = CONTEXT - cost() - 512
+    room = studio_config.CONTEXT - cost() - 512
     if room < 512: raise ValueError("This conversation is too long to fit the tool evidence. Start a new chat or shorten the request.")
     body["messages"], body["max_tokens"] = messages, min(int(body["max_tokens"]), room)
 
@@ -3429,7 +2818,7 @@ async def chat(request: Request):
             images += sum(1 for p in c if p.get("type") == "image_url")
         else:
             prompt_chars += len(c or "")
-    room = CONTEXT - int(prompt_chars / 3.2) - images * 1200 - 512
+    room = studio_config.CONTEXT - int(prompt_chars / 3.2) - images * 1200 - 512
     body["max_tokens"] = max(512, min(int(body.get("max_tokens") or 16384), room))
     body["stream"] = True
     body.setdefault("stream_options", {"include_usage": True})
@@ -3851,14 +3240,6 @@ def build_messages(messages):
 
 # ---------------------------------------------------------------- saved conversations
 
-_ID = re.compile(r"^[a-f0-9]{8,32}$")
-
-
-def _chat_path(cid):
-    if not _ID.fullmatch(cid):
-        raise HTTPException(400, "bad id")
-    return CHATS / f"{cid}.json"
-
 
 @app.get("/api/chats")
 def list_chats():
@@ -4075,7 +3456,7 @@ def search_deps_installed():
 
 def _search_running():
     try:
-        return httpx.get(SEARCH_URL + "/health", timeout=2).status_code == 200
+        return httpx.get(studio_config.SEARCH_URL + "/health", timeout=2).status_code == 200
     except httpx.HTTPError:
         return False
 
@@ -4149,7 +3530,7 @@ def _enable_search():
 
 def _search_proxy(method, path, **kw):
     try:
-        r = httpx.request(method, SEARCH_URL + path, timeout=60, **kw)
+        r = httpx.request(method, studio_config.SEARCH_URL + path, timeout=60, **kw)
     except httpx.HTTPError:
         raise HTTPException(503, "Search isn't running. Turn it on in Settings.")
     if r.status_code != 200:
@@ -4165,7 +3546,7 @@ def search_status():
            "model": {"name": m["name"], "size_gb": m["size_gb"]}, "index_on_disk": SEARCH_DIR.exists(), "running": False,
            "setup": {k: search_job.get(k) for k in ("status", "step", "error")}}
     try:
-        r = httpx.get(SEARCH_URL + "/status", timeout=3)
+        r = httpx.get(studio_config.SEARCH_URL + "/status", timeout=3)
         if r.status_code == 200:
             out.update(r.json(), running=True)
     except httpx.HTTPError:
@@ -4224,7 +3605,7 @@ def search_settings(body: dict = Body(...)):
             s["search"][key] = bool(body[key])
     save_settings(s)
     try:
-        httpx.post(SEARCH_URL + "/reload", timeout=3)
+        httpx.post(studio_config.SEARCH_URL + "/reload", timeout=3)
     except httpx.HTTPError:
         pass
     return s["search"]
@@ -4317,175 +3698,25 @@ def search_choose_folder():
 
 # ---------------------------------------------------------------- agent
 
-AGENT_CUA_TOOLS = frozenset((
-    "start_session end_session get_session check_permissions health_report "
-    "browser_prepare get_browser_state browser_navigate browser_click browser_type browser_pointer browser_dialog browser_download "
-    "list_apps list_windows launch_app get_window_state click double_click type_text set_value press_key hotkey scroll invoke_menu zoom bring_to_front"
-).split())                                                   # everything else CuaDriver offers (kill_app, clipboard_*, set_config, ...) is never reachable
 AGENT_PERM_MSG = "Grant Accessibility and Screen Recording to CuaDriver first (Settings → Agent)."
 _cua_perm: dict = {}                                         # check_permissions of the running daemon: {accessibility, screen_recording}; {} = not looked yet
 AGENT_IDLE_S = 600                                           # stop the daemon this long after the last call when no run is active
 AGENT_SOCK_WAIT_S = 10                                       # how long to wait for a fresh daemon's socket
 
 
-class McpError(Exception):
-    pass
-
-
-class AppUnresolved(McpError):
-    """get_window_state answered, but the app's window can't be resolved through accessibility (degraded ax_window_unresolved):
-    clicks and keys can't reach it until the user quits and reopens the app."""
-
-
-class McpClient:
-    """MCP over stdio to a child process: newline-delimited JSON-RPC 2.0. Calls are serialized; a reader
-    thread routes each response to the queue of the request that is waiting for it. If the process has
-    exited, the next call starts it again (once). A call that dies mid-flight is reported, never replayed:
-    a click that may have happened must not happen twice."""
-
-    def __init__(self, argv, allowed=AGENT_CUA_TOOLS, prepare=None, touch=None, env=None):
-        self.argv, self.allowed, self.prepare, self.touch, self.env = argv, allowed, prepare, touch, env
-        self.proc = None
-        self.pending: dict = {}
-        self.next_id = 0
-        self.eof = True
-        self.lock = threading.RLock()
-
-    @property
-    def alive(self):
-        return self.proc is not None and self.proc.poll() is None and not self.eof
-
-    def start(self):
-        with self.lock:
-            self._start()
-
-    def _start(self):
-        self._kill()
-        if self.prepare:
-            self.prepare()
-        self.pending, self.eof = {}, False
-        p_env = {**os.environ, **(self.env or {})} if self.env else None
-        try:
-            self.proc = subprocess.Popen(self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True, env=p_env)
-        except OSError as e:
-            self.eof = True
-            raise McpError(f"Couldn't start {Path(self.argv[0]).name}: {e}")
-        threading.Thread(target=self._read, args=(self.proc, self.pending), daemon=True).start()
-        try:
-            self._request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
-                                         "clientInfo": {"name": "local-studio", "version": APP_VERSION}}, 15)
-            self._write({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        except McpError:
-            self._kill()
-            raise
-
-    def _read(self, proc, pending):
-        for line in proc.stdout:
-            try:
-                msg = json.loads(line)
-            except ValueError:
-                continue
-            q = pending.get(msg.get("id")) if isinstance(msg, dict) and "method" not in msg else None
-            if q is not None:
-                q.put(msg)
-        if proc is self.proc:
-            self.eof = True
-        for q in list(pending.values()):                      # wake every waiter: the process is gone
-            q.put(None)
-
-    def _write(self, msg):
-        try:
-            self.proc.stdin.write((json.dumps(msg) + "\n").encode())
-            self.proc.stdin.flush()
-        except (OSError, ValueError, AttributeError):
-            raise McpError("The computer-control helper stopped responding.")
-
-    def _request(self, method, params, timeout):
-        self.next_id += 1
-        rid, q = self.next_id, queue.Queue()
-        self.pending[rid] = q
-        try:
-            self._write({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
-            try:
-                msg = q.get(timeout=timeout)
-            except queue.Empty:
-                raise McpError(f"{method} timed out after {timeout:g}s")
-            if msg is None:
-                raise McpError("The computer-control helper stopped responding.")
-            if "error" in msg:
-                raise McpError(str(msg["error"].get("message") or msg["error"]))
-            return msg.get("result") or {}
-        finally:
-            self.pending.pop(rid, None)
-
-    def list_tools(self, timeout=15):
-        with self.lock:
-            if self.touch:
-                self.touch()
-            if not self.alive:
-                self._start()
-            res = self._request("tools/list", {}, timeout)
-            if self.touch:
-                self.touch()
-        return res.get("tools") or []
-
-    def call(self, name, args, timeout=30):
-        if self.allowed is not None and name not in self.allowed:
-            raise McpError(f"{name} is not allowed")
-        with self.lock:
-            if self.touch:
-                self.touch()
-            if not self.alive:
-                self._start()
-            res = self._request("tools/call", {"name": name, "arguments": args or {}}, timeout)
-            if self.touch:
-                self.touch()
-        parts = res.get("content") or []
-        text = "\n".join(p.get("text", "") for p in parts if p.get("type") == "text")
-        data = res.get("structuredContent")
-        if data is None:
-            try:
-                data = json.loads(text)
-            except ValueError:
-                data = None
-        image = next((base64.b64decode(p["data"]) for p in parts if p.get("type") == "image" and p.get("data")), None)
-        return {"ok": not res.get("isError"), "text": text, "data": data if isinstance(data, dict) else None, "image": image}
-
-    def _kill(self):
-        proc, self.proc, self.eof = self.proc, None, True
-        if proc is not None:
-            try:
-                proc.stdin.close()
-            except OSError:
-                pass
-            try:
-                proc.terminate()
-                proc.wait(timeout=3)
-            except (OSError, subprocess.TimeoutExpired):
-                proc.kill()
-            try:
-                proc.stdout.close()
-            except OSError:
-                pass
-
-    def close(self):
-        with self.lock:
-            self._kill()
-
-
 def cua_status():
     """What the Settings screen shows about the CuaDriver install."""
     out = {"installed": False, "version": None, "ok_version": False, "telemetry": None}
-    if not Path(CUA_DRIVER).exists():
+    if not Path(studio_config.CUA_DRIVER).exists():
         return out
     out["installed"] = True
     try:
-        head = subprocess.run([CUA_DRIVER, "--help"], capture_output=True, text=True, timeout=5).stdout
+        head = subprocess.run([studio_config.CUA_DRIVER, "--help"], capture_output=True, text=True, timeout=5).stdout
         m = re.match(r"\s*cua-driver (\d+)\.(\d+)\.(\d+)", head)
         if m:
             out["version"] = ".".join(m.groups())
             out["ok_version"] = tuple(int(x) for x in m.groups()) >= CUA_MIN
-        t = subprocess.run([CUA_DRIVER, "telemetry", "status"], capture_output=True, text=True, timeout=5).stdout
+        t = subprocess.run([studio_config.CUA_DRIVER, "telemetry", "status"], capture_output=True, text=True, timeout=5).stdout
         m = re.search(r"Telemetry:\s*(enabled|disabled)", t)
         out["telemetry"] = m.group(1) == "enabled" if m else None
     except (OSError, subprocess.TimeoutExpired):
@@ -4496,7 +3727,7 @@ def cua_status():
 def agent_daemon_pattern():
     """Matches our CuaDriver daemon (its own socket) and not another app's, such as one on the default socket.
     No `^` anchor: the Mac app's data folder contains spaces."""
-    return "cua-driver serve --socket " + re.escape(str(AGENT_SOCK))
+    return "cua-driver serve --socket " + re.escape(str(studio_config.AGENT_SOCK))
 
 
 def _agent_daemon_running():
@@ -4506,18 +3737,18 @@ def _agent_daemon_running():
 def start_agent_daemon():
     """Start CuaDriver's daemon through LaunchServices, so it runs with CuaDriver's own macOS permissions
     (not those of this app), on a socket of our own."""
-    if len(str(AGENT_SOCK).encode()) >= 104:                 # sun_path holds 104 bytes on macOS, the terminating NUL included
-        raise McpError(f"The agent's socket path is too long for macOS (104 bytes at most): {AGENT_SOCK}. Use a shorter data folder.")
+    if len(str(studio_config.AGENT_SOCK).encode()) >= 104:                 # sun_path holds 104 bytes on macOS, the terminating NUL included
+        raise McpError(f"The agent's socket path is too long for macOS (104 bytes at most): {studio_config.AGENT_SOCK}. Use a shorter data folder.")
     AGENT_DIR.mkdir(parents=True, exist_ok=True)
     if not _agent_daemon_running():                          # one that is still starting just needs its socket awaited
         _cua_perm.clear()                                    # a new daemon: look at its permissions again
-        AGENT_SOCK.unlink(missing_ok=True)                   # a stale one from a daemon that died
-        if subprocess.run(["open", "-n", "-g", "-a", "CuaDriver", "--args", "serve", "--socket", str(AGENT_SOCK),
+        studio_config.AGENT_SOCK.unlink(missing_ok=True)                   # a stale one from a daemon that died
+        if subprocess.run(["open", "-n", "-g", "-a", "CuaDriver", "--args", "serve", "--socket", str(studio_config.AGENT_SOCK),
                            "--permission-mode", "standard"], capture_output=True).returncode != 0:
             raise McpError("Couldn't start CuaDriver. Is it installed in Applications?")
     deadline = time.time() + AGENT_SOCK_WAIT_S
     while time.time() < deadline:
-        if AGENT_SOCK.exists():
+        if studio_config.AGENT_SOCK.exists():
             return
         time.sleep(0.1)
     raise McpError("CuaDriver started but didn't open its socket.")
@@ -4536,7 +3767,7 @@ def stop_agent_daemon():
         if not _agent_daemon_running():
             break
         time.sleep(0.1)
-    AGENT_SOCK.unlink(missing_ok=True)
+    studio_config.AGENT_SOCK.unlink(missing_ok=True)
 
 
 def _perm_value(v):
@@ -4595,7 +3826,7 @@ def _perm_missing(p):
 
 
 def _ensure_agent_daemon():
-    if not (_agent_daemon_running() and AGENT_SOCK.exists()):
+    if not (_agent_daemon_running() and studio_config.AGENT_SOCK.exists()):
         start_agent_daemon()
 
 
@@ -4617,7 +3848,7 @@ def agent_client():
     with _agent_cli_lock:
         _ensure_agent_daemon()
         if _agent_cli is None:
-            _agent_cli = McpClient([CUA_DRIVER, "mcp", "--socket", str(AGENT_SOCK)], prepare=_ensure_agent_daemon, touch=agent_touch)
+            _agent_cli = mcp_client.McpClient([studio_config.CUA_DRIVER, "mcp", "--socket", str(studio_config.AGENT_SOCK)], prepare=_ensure_agent_daemon, touch=agent_touch)
         agent_touch()
         _agent_reaper_start()
         return _agent_cli
@@ -4652,14 +3883,6 @@ def _agent_reaper_start():
 
 
 # -- views: CuaDriver page/app snapshots -> compact text with short refs (e1..eN) for a 32k-context model
-
-def est_tokens(s):
-    return int(len(s) / 3.2)                                 # the same heuristic /api/chat uses
-
-
-def _clip(s, n):
-    s = " ".join(str(s or "").split())                       # one line, no stray control whitespace
-    return s if len(s) <= n else s[:n - 1] + "…"
 
 
 _OUTLINE_LINE = re.compile(r'^(\s*)- ([\w-]+)(?: "(.*?)"(?= \[|\s*$))?')
@@ -6536,23 +5759,6 @@ def split_thought(msg):
     return "\n".join(p for p in (reasoning, inline) if p), content
 
 
-def _call_args(a):
-    """Arguments as the model wrote them: a dict, or JSON text of one. Anything else is handed back unchanged for validate_call."""
-    if isinstance(a, str):
-        if not a.strip():
-            return {}
-        try:
-            a = json.loads(a)
-        except ValueError:
-            return a
-        if isinstance(a, str):                               # JSON text inside JSON text
-            try:
-                a = json.loads(a)
-            except ValueError:
-                pass
-    return {} if a is None else a
-
-
 AGENT_SCAN_CHARS = 20000                                     # a tool call is short; scanning more only costs time
 
 
@@ -6658,7 +5864,7 @@ class AgentRun:
 
     @property
     def path(self):
-        return AGENT_RUNS / f"{self.id}.json"
+        return studio_config.AGENT_RUNS / f"{self.id}.json"
 
     def emit(self, ev):
         with self.cond:
@@ -6674,8 +5880,8 @@ class AgentRun:
                     "context": self.context, "chat_id": self.chat_id, "events": list(self.events)}
 
     def save(self):
-        AGENT_RUNS.mkdir(parents=True, exist_ok=True)
-        tmp = AGENT_RUNS / f".{self.id}.tmp"                 # readers never see half a file
+        studio_config.AGENT_RUNS.mkdir(parents=True, exist_ok=True)
+        tmp = studio_config.AGENT_RUNS / f".{self.id}.tmp"                 # readers never see half a file
         tmp.write_text(json.dumps(self.to_dict()))
         os.replace(tmp, self.path)
 
@@ -6684,7 +5890,7 @@ class AgentRun:
         ext = "jpg" if data and data[:2] == b"\xff\xd8" else "png" if data and data[:8] == b"\x89PNG\r\n\x1a\n" else None
         if not ext:
             return None
-        d = AGENT_RUNS / self.id
+        d = studio_config.AGENT_RUNS / self.id
         d.mkdir(parents=True, exist_ok=True)
         (d / f"{name}.{ext}").write_bytes(data)
         return f"{name}.{ext}"
@@ -7154,7 +6360,7 @@ def _forget_chat_context(cid):
                 run.save()
             except OSError:
                 pass
-    for p in AGENT_RUNS.glob("*.json"):
+    for p in studio_config.AGENT_RUNS.glob("*.json"):
         try:
             d = json.loads(p.read_text())
             if not isinstance(d, dict) or not d.get("chat_id") or d.get("context") is None or (cid is not None and d["chat_id"] != cid):
@@ -7171,7 +6377,7 @@ def _forget_chat_context(cid):
 
 def _agent_mark_interrupted():
     """Runs a previous process left running (Local Studio quit mid-run) are saved as interrupted."""
-    for p in AGENT_RUNS.glob("*.json"):
+    for p in studio_config.AGENT_RUNS.glob("*.json"):
         try:
             d = json.loads(p.read_text())
             if not isinstance(d, dict) or d.get("status") not in AGENT_ACTIVE:
@@ -7199,7 +6405,7 @@ def _agent_saved(rid):
     if run is not None:
         return run.to_dict()
     try:
-        d = json.loads((AGENT_RUNS / f"{rid}.json").read_text())
+        d = json.loads((studio_config.AGENT_RUNS / f"{rid}.json").read_text())
     except (OSError, ValueError):
         raise HTTPException(404, "No such task")
     if not isinstance(d, dict):
@@ -7288,22 +6494,22 @@ def agent_settings(body: dict = Body(...)):
 def agent_permissions():
     """Only from the user's click in Settings: CuaDriver asks macOS for Accessibility and Screen Recording."""
     global _cua_grant
-    if not Path(CUA_DRIVER).exists():
+    if not Path(studio_config.CUA_DRIVER).exists():
         raise HTTPException(409, "Install CuaDriver first.")
     with _cua_grant_lock:                                    # one at a time: a second click while macOS is asking does nothing new
         if _cua_grant is not None and _cua_grant.is_alive():
             raise HTTPException(409, "Already asking macOS for permissions.")
-        _cua_grant = threading.Thread(target=_cua_quiet, args=([CUA_DRIVER, "permissions", "grant"], 600), daemon=True)
+        _cua_grant = threading.Thread(target=_cua_quiet, args=([studio_config.CUA_DRIVER, "permissions", "grant"], 600), daemon=True)
         _cua_grant.start()
     return {"status": "started"}
 
 
 @app.post("/api/agent/telemetry/disable")
 def agent_telemetry_disable():
-    if not Path(CUA_DRIVER).exists():
+    if not Path(studio_config.CUA_DRIVER).exists():
         raise HTTPException(409, "Install CuaDriver first.")
     try:
-        r = subprocess.run([CUA_DRIVER, "telemetry", "disable"], capture_output=True, text=True, timeout=15)
+        r = subprocess.run([studio_config.CUA_DRIVER, "telemetry", "disable"], capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise HTTPException(500, f"cua-driver failed: {_clip(e, 200)}")
     finally:
@@ -7467,7 +6673,7 @@ def agent_resume(rid: str):
 @app.get("/api/agent/runs")
 def agent_runs():
     out = {}
-    for p in AGENT_RUNS.glob("*.json"):
+    for p in studio_config.AGENT_RUNS.glob("*.json"):
         try:
             d = json.loads(p.read_text())
         except (OSError, ValueError):
@@ -7475,7 +6681,7 @@ def agent_runs():
         if isinstance(d, dict) and _AGENT_RID.match(str(d.get("id") or "")):
             out[d["id"]] = {k: d.get(k) for k in ("id", "task", "status", "started", "chat_id")}
     for rid, run in list(_agent_runs.items()):
-        if (AGENT_RUNS / f"{rid}.json").exists():
+        if (studio_config.AGENT_RUNS / f"{rid}.json").exists():
             out[rid] = {"id": rid, "task": run.task, "status": run.status, "started": run.started, "chat_id": run.chat_id}
     return sorted(out.values(), key=lambda r: r.get("started") or 0, reverse=True)
 
@@ -7489,7 +6695,7 @@ def agent_run_get(rid: str):
 def agent_shot(rid: str, name: str):
     if not _AGENT_RID.match(rid) or not _AGENT_SHOT.match(name):
         raise HTTPException(404)
-    folder = (AGENT_RUNS / rid).resolve()
+    folder = (studio_config.AGENT_RUNS / rid).resolve()
     p = (folder / name).resolve()
     if p.parent != folder or not p.is_file():
         raise HTTPException(404)
@@ -7503,11 +6709,11 @@ def agent_run_delete(rid: str):
     run = _agent_runs.get(rid)
     if run is not None and (run.status in AGENT_ACTIVE or (run.thread is not None and run.thread.is_alive())):
         raise HTTPException(409, "Stop the task first.")
-    p = AGENT_RUNS / f"{rid}.json"
+    p = studio_config.AGENT_RUNS / f"{rid}.json"
     if run is None and not p.exists():
         raise HTTPException(404)
     p.unlink(missing_ok=True)
-    shutil.rmtree(AGENT_RUNS / rid, ignore_errors=True)
+    shutil.rmtree(studio_config.AGENT_RUNS / rid, ignore_errors=True)
     _agent_runs.pop(rid, None)
     return {"deleted": rid}
 

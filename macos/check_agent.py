@@ -70,12 +70,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app  # noqa: E402
 import base64  # noqa: E402
 import patch_guard  # noqa: E402
+import studio.config  # noqa: E402
+import studio.infra.mcp_client  # noqa: E402
 
 patch_guard.install(app)                                   # app.X = fake must reach the code that reads X
 
 REAL_PROFILE = app.AGENT_PROFILE
 app.AGENT_PROFILE = TMP / "NoProfile" / "local-studio"     # no check may read or write the real browser profile
-app.CUA_DRIVER = str(TMP / "no-cua-driver")               # the real one is installed on this Mac: no check may run it
+studio.config.CUA_DRIVER = str(TMP / "no-cua-driver")               # the real one is installed on this Mac: no check may run it
 from fastapi.testclient import TestClient  # noqa: E402
 
 CHECKS = []
@@ -321,18 +323,18 @@ def cua_status_parses_the_cli():
     def cli(cmd):
         return (0, "cua-driver 0.28.2 \u2014 cross-platform computer-use automation driver\nUSAGE: ...") if "--help" in cmd else (0, "Telemetry: enabled (source: default)\n")
     real = app.CUA_DRIVER
-    app.CUA_DRIVER = sys.executable                         # any file that exists
+    studio.config.CUA_DRIVER = sys.executable                         # any file that exists
     try:
         with Stub(cli) as s:
             assert app.cua_status() == {"installed": True, "version": "0.28.2", "ok_version": True, "telemetry": True}
             assert all(c[0] == sys.executable for c in s.calls) and len(s.calls) == 2
         with Stub(lambda cmd: (0, "cua-driver 0.28.1 \u2014 x") if "--help" in cmd else (0, "Telemetry: disabled (source: config)")):
             assert app.cua_status() == {"installed": True, "version": "0.28.1", "ok_version": False, "telemetry": False}
-        app.CUA_DRIVER = str(TMP / "missing-cua-driver")
+        studio.config.CUA_DRIVER = str(TMP / "missing-cua-driver")
         with Stub(lambda cmd: (_ for _ in ()).throw(AssertionError("must not run a missing binary"))):
             assert app.cua_status() == {"installed": False, "version": None, "ok_version": False, "telemetry": None}
     finally:
-        app.CUA_DRIVER = real
+        studio.config.CUA_DRIVER = real
 
 
 @check
@@ -379,7 +381,7 @@ def daemon_start_and_stop_use_open_and_pkill():
         app.AGENT_SOCK_WAIT_S = real
     # a socket path a unix socket can't hold is a clear error before anything is started
     real_sock = app.AGENT_SOCK
-    app.AGENT_SOCK = TMP / ("x" * 90) / "cua.sock"
+    studio.config.AGENT_SOCK = TMP / ("x" * 90) / "cua.sock"
     try:
         with Stub(lambda cmd: (1, "")) as s:
             try:
@@ -390,7 +392,7 @@ def daemon_start_and_stop_use_open_and_pkill():
                 raise AssertionError("expected McpError")
             assert not any(c[0] == "open" for c in s.calls), s.calls
     finally:
-        app.AGENT_SOCK = real_sock
+        studio.config.AGENT_SOCK = real_sock
 
 
 @check
@@ -425,7 +427,7 @@ def agent_client_is_a_singleton_that_ensures_the_daemon():
             made.append((argv, kw)); self.alive = True
         def close(self):
             self.alive = False
-    app.McpClient, app._agent_cli = Rec, None
+    studio.infra.mcp_client.McpClient, app._agent_cli = Rec, None
     app._agent_daemon_running = lambda: False
     app.start_agent_daemon = lambda: started.append(1)
     app._agent_reaper_start = lambda: None
@@ -435,7 +437,7 @@ def agent_client_is_a_singleton_that_ensures_the_daemon():
         assert made[0][0] == [app.CUA_DRIVER, "mcp", "--socket", str(app.AGENT_SOCK)]
         assert made[0][1]["prepare"] is app._ensure_agent_daemon and made[0][1]["touch"] is app.agent_touch
     finally:
-        app.McpClient, app._agent_daemon_running, app.start_agent_daemon, app._agent_reaper_start, app._agent_cli = saved
+        studio.infra.mcp_client.McpClient, app._agent_daemon_running, app.start_agent_daemon, app._agent_reaper_start, app._agent_cli = saved
 
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "agent"
@@ -2776,7 +2778,7 @@ class Env:
                 r.cond.notify_all()
             r.thread.join(5)
         for k, v in self.saved.items():
-            setattr(app, k, v)
+            setattr(patch_guard.owner(app, k), k, v)
         app._cua_cache.clear()
         app._cua_perm.clear()
         if self.settings is None:
@@ -3452,11 +3454,11 @@ def interrupted_on_restart():
     assert (runs / "garbage.json").read_text() == "{not json"
     # the sweep itself is safe with no runs folder
     real = app.AGENT_RUNS
-    app.AGENT_RUNS = TMP / "nowhere" / "runs"
+    studio.config.AGENT_RUNS = TMP / "nowhere" / "runs"
     try:
         app._agent_mark_interrupted()
     finally:
-        app.AGENT_RUNS = real
+        studio.config.AGENT_RUNS = real
 
 
 @check
@@ -3780,7 +3782,7 @@ def cuadriver_setup_routes_run_only_on_click():
     c = TestClient(app.app, base_url="http://127.0.0.1:7860")
     assert c.post("/api/agent/permissions").status_code == 409                          # not installed (CUA_DRIVER is a missing path)
     real = app.CUA_DRIVER
-    app.CUA_DRIVER = sys.executable
+    studio.config.CUA_DRIVER = sys.executable
     try:
         with Stub(lambda cmd: (0, "")) as s:
             assert c.post("/api/agent/permissions").status_code == 200
@@ -3791,7 +3793,7 @@ def cuadriver_setup_routes_run_only_on_click():
             assert c.post("/api/agent/telemetry/disable").status_code == 200
             assert s.calls[-1] == [sys.executable, "telemetry", "disable"]
     finally:
-        app.CUA_DRIVER = real
+        studio.config.CUA_DRIVER = real
 
 
 @check
@@ -4023,7 +4025,7 @@ def cua_status_is_cached_and_grant_runs_once():
     if app._cua_grant is not None:
         app._cua_grant.join(5)
     release, real_drv = th.Event(), app.CUA_DRIVER
-    app.CUA_DRIVER = sys.executable
+    studio.config.CUA_DRIVER = sys.executable
     try:
         with Stub(lambda cmd: (release.wait(5), (0, ""))[1]) as s:
             assert c.post("/api/agent/permissions").status_code == 200
@@ -4034,7 +4036,7 @@ def cua_status_is_cached_and_grant_runs_once():
             app._cua_grant.join(5)
             assert s.calls == [[sys.executable, "permissions", "grant"]] * 2, s.calls
     finally:
-        app.CUA_DRIVER = real_drv
+        studio.config.CUA_DRIVER = real_drv
 
 
 
@@ -4856,7 +4858,7 @@ class ChatEngine:
 
     def __exit__(self, *args):
         app.httpx.AsyncClient = self.client
-        for key, value in self.saved.items(): setattr(app, key, value)
+        for key, value in self.saved.items(): setattr(patch_guard.owner(app, key), key, value)
 
 
 def chat_delta(**delta):
@@ -4942,7 +4944,7 @@ def natural_chat_rejects_unknown_tools_and_never_executes_examples():
 @check
 def chat_context_trimming_keeps_complete_tool_turns():
     context = app.CONTEXT
-    app.CONTEXT = 4096
+    studio.config.CONTEXT = 4096
     calls = [{"id": key, "type": "function", "function": {"name": "read_file", "arguments": '{"file_id":1}'}} for key in ("one", "two")]
     def body(messages): return {"messages": messages, "tools": app.CHAT_TOOLS, "max_tokens": 1024}
     try:
@@ -4959,7 +4961,7 @@ def chat_context_trimming_keeps_complete_tool_turns():
         assert json.loads(b["messages"][-2]["content"])["excerpt"].startswith("first")
         assert json.loads(b["messages"][-1]["content"])["excerpt"].startswith("second")
         assert [m.get("tool_call_id") for m in b["messages"][-2:]] == ["one", "two"]
-    finally: app.CONTEXT = context
+    finally: studio.config.CONTEXT = context
 
 
 @check
