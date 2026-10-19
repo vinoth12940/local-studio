@@ -112,14 +112,24 @@ def _enable_search():
         search_job.update(status="error", error=str(e), step=None)
 
 
+def _search_headers():
+    try:
+        token = (STATE / 'data/.api-token').read_text().strip()
+        return {'Authorization': 'Bearer ' + token} if token else {}
+    except OSError:
+        return {}
+
+
 def _search_proxy(method, path, **kw):
     try:
-        r = httpx.request(method, config.SEARCH_URL + path, timeout=60, **kw)
+        headers = {**_search_headers(), **kw.pop("headers", {})}
+        r = httpx.request(method, config.SEARCH_URL + path, timeout=60, headers=headers, **kw)
     except httpx.HTTPError:
         raise HTTPException(503, "Search isn't running. Turn it on in Settings.")
     if r.status_code != 200:
         detail = r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else None
-        raise HTTPException(r.status_code, detail or "Search error")
+        raise HTTPException(r.status_code, detail or "Search error",
+                            headers={"Retry-After": r.headers["retry-after"]} if r.headers.get("retry-after") else None)
     return r
 
 

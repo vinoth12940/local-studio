@@ -18,6 +18,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import search  # noqa: E402
+import studio.search.config as search_config
+import studio.search.crawler as search_crawler
+import studio.search.extractors as search_extractors
+import studio.search.store as search_store
+import patch_guard
+patch_guard.install(search)
 
 CHECKS = []
 
@@ -359,7 +365,7 @@ def indexer_errors():
                 raise ValueError("cannot read this one")
             return real(path, kind)
 
-        search.extract = flaky
+        search_extractors.extract = flaky
         try:
             ix.run_once()
             c = st.counts()
@@ -373,7 +379,7 @@ def indexer_errors():
             ix.run_once()
             assert calls.count("bad.txt") == 2
         finally:
-            search.extract = real
+            search_extractors.extract = real
 
 
 @check
@@ -510,11 +516,11 @@ def crash_on_a_file_does_not_loop():
         st.set_meta("in_flight", str(killer["id"]))         # the service died while this file was in flight
         ix2 = search.Indexer(search.Store(Path(d) / "index.db"), FakeEmbedder(), config=lambda: cfg, app_url=None)
         calls, real = [], search.extract
-        search.extract = lambda p, k: calls.append(Path(p).name) or real(p, k)
+        search_extractors.extract = lambda p, k: calls.append(Path(p).name) or real(p, k)
         try:
             ix2.run_once()
         finally:
-            search.extract = real
+            search_extractors.extract = real
         assert "killer.pdf.txt" not in calls, "the file that crashed the service is not tried again"
         errs = ix2.store.errors()
         assert len(errs) == 1 and errs[0]["path"].endswith("killer.pdf.txt") and "stopped the service" in errs[0]["error"]
@@ -528,7 +534,7 @@ def explicit_folders_win():
         for f in ("Documents/a.txt", "Documents/Taxes/2025.txt", "Library/Preferences/p.txt", "Library/CloudStorage/Dropbox/d.txt"):
             (home / f).parent.mkdir(parents=True, exist_ok=True)
             (home / f).write_text("x")
-        real_home, search.HOME = search.HOME, home
+        real_home, search_config.HOME = search.HOME, home
         try:
             assert _names(search.walk([str(home)])) == ["2025.txt", "a.txt"], "walking down from home never enters Library"
             assert _names(search.walk([str(home)], removed=[str(home / "Documents")])) == []
@@ -538,7 +544,7 @@ def explicit_folders_win():
             assert both == ["2025.txt"]
             assert _names(search.walk([str(home / "Library" / "CloudStorage" / "Dropbox")])) == ["d.txt"], "an added cloud-storage folder is walked"
         finally:
-            search.HOME = real_home
+            search_config.HOME = real_home
 
 
 @check
@@ -578,7 +584,7 @@ def icloud_eviction_keeps_the_index():
         real = search._dataless
         try:
             marks = {"evicted.txt"}
-            search._dataless = lambda st_: getattr(st_, "_n", None) in marks
+            search_crawler._dataless = lambda st_: getattr(st_, "_n", None) in marks
             real_scandir = os.scandir
 
             class E:
@@ -598,7 +604,7 @@ def icloud_eviction_keeps_the_index():
             search.os.scandir = lambda p: [E(e) for e in real_scandir(p)]
             got = {Path(p).name: k for p, _, _, k in search.walk([str(root)])}
         finally:
-            search._dataless, search.os.scandir = real, real_scandir
+            search_crawler._dataless, search.os.scandir = real, real_scandir
         assert got == {"evicted.txt": "placeholder", "local.txt": "document"}, got
 
 
@@ -721,7 +727,7 @@ def unreadable_files_are_retried_after_an_upgrade():
         st.replace_chunks(fid["ok.txt"], [("text", "fine", "", _unit(1))])
         assert search.Store(db).pending() == [], "same version: a failed file is left alone"
         real = search.EXTRACT_VERSION
-        search.EXTRACT_VERSION = real + 1
+        search_store.EXTRACT_VERSION = real + 1
         try:
             st2 = search.Store(db)
             assert [f["name"] for f in st2.pending()] == ["statement.pdf"] and st2.errors() == []
@@ -729,7 +735,7 @@ def unreadable_files_are_retried_after_an_upgrade():
             st2.mark_error(fid["statement.pdf"], "still broken")
             assert search.Store(db).pending() == []
         finally:
-            search.EXTRACT_VERSION = real
+            search_store.EXTRACT_VERSION = real
 
 
 @check
@@ -851,12 +857,12 @@ def videos_are_indexed_by_picture_and_sound():
                 return [{"kind": "audio", "audio": "piano music", "locator": "0s"}]
             return real(path, kind)
 
-        search.extract = fake
+        search_extractors.extract = fake
         try:
             assert [f["kind"] for f in (st.sync(list(search.walk([str(root)]))), st.pending())[1]] == ["document", "audio", "video"], "videos come after audio"
             ix.run_once()
         finally:
-            search.extract = real
+            search_extractors.extract = real
         s = search.Searcher(st, ix.embedder)
         hit = s.search("birthday cake candles", kind="video")
         assert [(r["name"], r["kind"], r["locator"], r["snippet"]) for r in hit] == [("holiday.mp4", "video", "35s", "")], hit
@@ -880,19 +886,19 @@ def a_better_reader_redoes_only_that_kind():
     with tempfile.TemporaryDirectory() as d:
         db = Path(d) / "index.db"
         real = (search.EXTRACT_VERSION, dict(search.REDO_KINDS))
-        search.EXTRACT_VERSION, search.REDO_KINDS = 50, {}
+        search_store.EXTRACT_VERSION, search_store.REDO_KINDS = 50, {}
         try:
             st = search.Store(db)
             st.sync([("/r/clip.mp4", 1, 1.0, "video"), ("/r/notes.txt", 1, 1.0, "document")])
             for f in st.pending():
                 st.replace_chunks(f["id"], [("image" if f["kind"] == "video" else "text", None if f["kind"] == "video" else "x", "0s", _unit(f["id"]))])
-            search.EXTRACT_VERSION, search.REDO_KINDS = 52, {51: ("video",), 52: ()}
+            search_store.EXTRACT_VERSION, search_store.REDO_KINDS = 52, {51: ("video",), 52: ()}
             st2 = search.Store(db)
             assert [f["name"] for f in st2.pending()] == ["clip.mp4"], st2.pending()
             assert st2.counts()["chunks"] == 2, "its old frames stay searchable until it is redone"
             assert search.Store(db).pending() == st2.pending() and search.Store(db).get_meta("extract_version") == "52"
         finally:
-            search.EXTRACT_VERSION, search.REDO_KINDS = real[0], real[1]
+            search_store.EXTRACT_VERSION, search_store.REDO_KINDS = real[0], real[1]
 
 
 @check
@@ -933,7 +939,7 @@ def read_file_uses_the_actual_scanned_or_filled_document():
         st.sync([(str(path),path.stat().st_size,1.0,"document")])
         fid=st.pending()[0]["id"]
         reader, run=search.DOCUMENT_READER, search.subprocess.run
-        search.DOCUMENT_READER=path
+        search_config.DOCUMENT_READER=path
         calls=[]
         def native(args, **kw):
             calls.append(args)
@@ -951,7 +957,7 @@ def read_file_uses_the_actual_scanned_or_filled_document():
             except ValueError as e: assert "does NOT establish" in str(e)
             else: raise AssertionError("Empty OCR must not silently become a blank-document claim")
         finally:
-            search.DOCUMENT_READER,search.subprocess.run=reader,run
+            search_config.DOCUMENT_READER,search.subprocess.run=reader,run
             st.db.close()
 
 
@@ -966,6 +972,46 @@ def document_dates_keep_their_evidence_and_uncertainty():
     explicit = search.document_date("invoice 20251017.pdf", "")
     assert explicit["document_date"] == "2025-10-17" and explicit["date_source"] == "filename"
 
+
+
+@check
+def incremental_edits_are_debounced_and_do_not_reembed_unchanged_files():
+    with tempfile.TemporaryDirectory() as d:
+        root,st,ix,_=_tree(d,{'one.txt':'plumber invoice','two.txt':'tokyo itinerary'})
+        original_config=ix.config
+        ix.config=lambda:{**original_config(),'incremental':True}
+        ix.run_once()
+        calls=[];real=search_extractors.extract
+        search_extractors.extract=lambda path,kind:calls.append(Path(path).name) or real(path,kind)
+        try:
+            (root/'one.txt').write_text('electrician quote updated')
+            assert ix.poll_changes(now=10)==[] and calls==[]
+            (root/'one.txt').write_text('electrician quote final revision')
+            assert ix.poll_changes(now=10.2)==[] and calls==[]
+            result=ix.poll_changes(now=11)
+            assert result==[str(root/'one.txt')] and calls==['one.txt'],(result,calls)
+            assert st.counts()['files_done']==2
+            assert search.Searcher(st,ix.embedder).search('electrician final revision')[0]['name']=='one.txt'
+            assert ix.poll_changes(now=12)==[] and calls==['one.txt']
+            (root/'two.txt').unlink();ix.poll_changes(now=13);ix.poll_changes(now=14)
+            assert st.counts()['files_total']==1 and calls==['one.txt']
+            (root/'new.txt').write_text('dentist appointment');ix.poll_changes(now=15);ix.poll_changes(now=16)
+            assert calls==['one.txt','new.txt'] and st.counts()['files_done']==2
+            offline=root/'offline';offline.mkdir();(offline/'old.txt').write_text('keep this evidence')
+            ix.poll_changes(now=17);ix.poll_changes(now=18)
+            offline.chmod(0)
+            try:
+                ix.poll_changes(now=19);ix.poll_changes(now=20)
+                assert st.counts()['files_total']==3, 'unreadable directories must retain indexed files'
+            finally:offline.chmod(0o700)
+            # A full pass is visibly busy for the entire pass, and always clears its flag.
+            real_run=ix.run_once
+            def full():
+                assert ix.full_indexing
+                raise RuntimeError('synthetic full-index failure')
+            ix.run_once=full;ix.run_pass();assert not ix.full_indexing and ix.problem
+            ix.run_once=real_run
+        finally:search_extractors.extract=real
 
 if __name__ == "__main__":
     want = sys.argv[1:]

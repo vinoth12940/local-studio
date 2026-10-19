@@ -12,6 +12,7 @@ from studio.config import SETTINGS
 FLAGS = {
     "performance.isolated_io": (False, "Use a bounded dedicated pool for search media/render routes"),
     "performance.chat_index": (False, "Cache chat titles/timestamps while validating file signatures on every list request"),
+    "search.incremental": (False, "Debounce edited-file reindexing and return 503 plus Retry-After during full index passes"),
     "streams.resume": (False, "Keep bounded chat SSE buffers and allow reattachment with event IDs"),
     "logging.json_requests": (False, "Write one JSON line per slow (>= 250 ms), failing or non-GET request to logs/requests.jsonl"),
     "security.api_token": (False, "Require the private local API token or startup cookie; readiness probes remain public"),

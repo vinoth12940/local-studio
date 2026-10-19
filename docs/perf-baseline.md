@@ -437,3 +437,21 @@ SQLite's migrations, dual stores and recovery paths are not justified by these n
 P5.sqlite's conditional prerequisite is false, so no database, migration, deletion, storage.sqlite flag or SQL query plan
 is introduced. Existing JSON data remains authoritative; switching the cache off uses the original list path.
 Revisit only if future realistic measurements exceed the target after the cache is enabled.
+
+
+## Final search, OCR and UI budgets (2026-10-18)
+
+The real EmbeddingGemma evaluation used the existing synthetic `build/search_samples` corpus and a throwaway index:
+21 files / 24 chunks, zero extraction errors, 20/20 expected top results, all seven preview checks and video
+sampling checks pass before and after packaging. Final warm candidate lookup: p50 6.81 ms, p95 7.63 ms, max 7.78 ms
+(20 queries; model already loaded by indexing). This is a small synthetic corpus, not a large personal index latency guarantee.
+
+`macos/bench_document.py` reads four synthetic scanned pages through the compiled DocumentReader: 0.403, 0.363,
+0.349 seconds (max 0.403s). No personal files are read. Both fit the starting 300 ms candidate / 5 s OCR targets
+under these fixture conditions.
+
+Final warm browser load on isolated authenticated/enforcing-CSP port 7861: HTML 107,748 decoded bytes (108,048
+transferred including headers); 27 local modules, 221,260 decoded bytes and 33,007 transferred with revalidation/cache.
+`domInteractive` 14 ms, load 37 ms, API transfers about 21 KB, no console errors. This warm-cache result does not
+claim a cold-network improvement: HTML + module decoded source is about 329 KB, versus the original combined
+HTML/JS ~302 KB, reflecting added features. The metadata/cache and pool deltas above are the demonstrated API gains.

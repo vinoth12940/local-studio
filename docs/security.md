@@ -77,6 +77,7 @@ re-read when the file changes. All flags below default to the previous behavior:
 | `harness.rlimits` | `false` | `true`: kernel CPU/file/fd caps and RSS watchdog, with optional lower `harness.limits`. |
 | `performance.isolated_io` | `false` | `true`: isolate slow search rendering from quick API routes in a bounded executor. |
 | `performance.chat_index` | `false` | `true`: cache chat metadata while validating authoritative JSON signatures on every list request. |
+| `search.incremental` | `false` | `true`: poll configured search roots and debounce changed-file reindexing; full passes return 503/Retry-After. |
 | `streams.resume` | `false` | `true`: retain bounded process-local chat SSE replay buffers and enable reconnect/reload resume. |
 | `logging.json_requests` | `false` | `true`: slow, failing and non-GET request metadata in `logs/requests.jsonl`; no bodies, headers or query strings. |
 | `security.redact` | `false` | `true`: filter the output/log surfaces described above. Restart child processes to replace their log descriptors. |
@@ -163,3 +164,29 @@ Buffers are process-local: at most eight streams, 4,096 events and 2 MiB per str
 buffers retained for at most five minutes (earlier completed buffers can be evicted for capacity).
 An expired replay cursor returns 410 rather than restarting execution. Process restart loses buffers;
 a saved handle then reports unavailability. This is reconnection support, not durable job scheduling.
+
+
+## Search-service boundaries and incremental updates
+
+`search.py` remains the command-line entrypoint, with code under `studio/search/`. The service's
+Host/Origin/Fetch-Metadata checks remain intact. With `security.api_token=true`, all search-service
+routes except `/health` also require the same private bearer token; the UI proxy supplies it, so
+calling the search port directly does not bypass the optional token gate. Search's own health
+endpoint returns no user data. `LOCAL_STUDIO_UI_PORT` can redirect its busy probe in isolated development.
+
+`search.incremental` defaults to false. When enabled, the normal crawler policy polls metadata
+under configured roots once per second while idle, preserving unreadable/unmounted subtrees.
+Changes are debounced for 0.5 seconds and only changed paths are synchronized and re-embedded;
+unchanged vectors remain. New files and deletions are included. This trades metadata polling
+work for shorter edit-to-search delay; it does not add unconfigured workspaces to the search roots.
+Full crawl/index passes return HTTP 503 with Retry-After on search/passages until complete, and
+the UI proxy preserves that header. The previous periodic-rescan behavior remains when disabled.
+
+## Release gate
+
+`macos/release.sh --dry-run` audits both exact-pinned requirement sets through temporary projects,
+then verifies the built app with `codesign --verify --deep --strict`. Audit or signature failure
+stops the release. The installed uv build's standalone `--script` audit path did not work; a
+temporary pyproject was verified with both dependency sets and leaves no project/lockfile in the checkout.
+Developer ID signed builds additionally run `spctl -a -vv --type execute`; a local-development
+signature does not satisfy that distribution condition. Dry run creates no DMG and submits no notarization.

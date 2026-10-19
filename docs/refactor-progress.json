@@ -16,7 +16,8 @@
    "check_app.py passes",
    "temporarily reorder two routes in a scratch copy -> check fails"
   ],
-  "passes": true
+  "passes": true,
+  "note": "2026-10-18 final audit: strengthened route_contract_is_unchanged to compare the complete ordered list, in addition to match-order analysis. New negative check swaps independent /api/system and /api/busy routes and proves strict order drift is rejected. Existing order-helper assertions preserved."
  },
  {
   "id": "P0.sse-contract",
@@ -587,7 +588,8 @@
    "check_search.py",
    "search eval"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: search.py is a 23-line live-reexport/CLI entrypoint; studio/search owns config/chunking/crawler/store/ranking/extractors/embedder/indexer/preview/api/auth/cli. Launch python search.py --port 8083 and cwd=ROOT unchanged. Suite patch assignment targets only retargeted to defining owners, assertions preserved; guard and dedicated import/HTTP contracts added. 35 moved definitions mechanically AST-equivalent. Offline search checks pass; real model before/after/final eval: 21 files, 24 chunks, zero errors, 20/20 expected top results, all preview/video checks. Full build and signed-bundle search CLI/ROOT/STATE smoke pass."
  },
  {
   "id": "P6.incremental-index",
@@ -596,7 +598,8 @@
   "verify": [
    "check_search.py new checks"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: search.incremental defaults false. Existing crawler polls configured roots while idle; 0.5s debounce updates only changed paths and reembeds only stable edited/new files; deletions handled, unreadable subtrees retained. Targeted Store sync preserves unchanged rows. New check_search regression verifies rapid edits cause one final reembed, unchanged vectors preserved, deletion/addition and failed full-pass flag cleanup. Search API tests verify 503/Retry-After during full passes and old flag-off behavior; backend proxy preserves Retry-After. Token-enabled internal search calls are authenticated too. Full suite/build pass."
  },
  {
   "id": "P6.release-audit",
@@ -605,7 +608,8 @@
   "verify": [
    "release.sh dry run"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: macos/audit_dependencies.py generates throwaway pyprojects from both pinned requirement sets; verified workaround because this uv audit --script still searched for pyproject.toml. Release audits are fatal on error; codesign --verify --deep --strict always runs, Developer ID builds run spctl assessment (normal release after notarization; dry-run directly). release.sh --dry-run exit 0: app 25 and search 93 packages, no known vulnerabilities/adverse statuses; signature valid. Current Apple Development signature does not meet the conditional Developer ID assessment branch; no DMG/notarization/publication performed."
  },
  {
   "id": "DoD.agent-12-rounds",
@@ -694,6 +698,7 @@
   "verify": [
    "docs/security.md + CLAUDE.md"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: Parsed studio/storage/flags.py FLAGS and checked all 12 names occur in docs/security.md and CLAUDE.md. Security doc lists each default and how to enable it, plus per-chat Python network and reduced resource caps. All defaults retain old behavior; SQLite conditional decision adds no flag. Settings untouched outside isolated test STATE."
  }
 ]

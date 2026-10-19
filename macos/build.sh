@@ -18,6 +18,7 @@ python3 -c "import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]
   && echo "   app.py and studio/ OK"
 UV=$(command -v uv || echo ~/.local/bin/uv)
 $UV run -q --no-project --python 3.12 --with numpy python "$HERE/check_search.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" --with numpy python "$HERE/check_search_contract.py"
 $UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_app.py"
 $UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_agent.py"
 

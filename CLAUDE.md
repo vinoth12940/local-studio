@@ -146,7 +146,7 @@ name in the module that defines it. Other modules must read it as `owner.X` (`en
 define; save/restore loops use `patch_guard.owner(app, name)`. Reading `app.X` is fine (it forwards to the owner, live).
 
 **Contracts.** `check_app.py` compares the routes (`macos/fixtures/routes.json`; routes that could answer the same request
-must keep their order), the SSE events and their fields plus the UI's handlers (`sse_contract.json`), and the patch points
+must keep their order; the full ordered snapshot also rejects independent-route reordering), the SSE events and their fields plus the UI's handlers (`sse_contract.json`), and the patch points
 (`patch_points.json`). A change that is meant updates the fixture in the same commit:
 `LOCAL_STUDIO_UPDATE_FIXTURES=1 uv run ... python macos/check_app.py route_contract_is_unchanged`.
 
@@ -157,7 +157,18 @@ must keep their order), the SSE events and their fields plus the UI's handlers (
 `harness.rlimits` (false), and `security.csp` ("off"; opt in with "report-only").
 See [docs/security.md](docs/security.md) for every flag, configuration examples, coverage and remaining P3 work.
 The user authorized completing the plan, including isolated enforcement validation. Production defaults remain unchanged. P4 adds `performance.isolated_io`, `performance.chat_index`, and
-`streams.resume` (all false); see the same document for opt-in settings and replay retention/stop behavior.
+`streams.resume`, and `search.incremental` (all false); see the same document for opt-in settings and replay retention/stop behavior.
+
+### Standalone search package
+
+`search.py` is a thin compatibility entrypoint and live re-export surface. `studio/search/` owns
+`config`, `chunking`, `crawler`, `store`, `ranking`, `extractors`, `embedder`, `indexer`, `preview`, `api`,
+`auth`, and `cli`. Heavy dependencies remain lazy. Launch remains `python search.py --port 8083`
+with `cwd=ROOT`; ROOT still points to the directory containing search.py. The existing `studio/`
+bundle copy includes this package. Search patch owners are `config.HOME`/`DOCUMENT_READER`,
+`extractors.extract`, `crawler._dataless`, and `store.EXTRACT_VERSION`/`REDO_KINDS`; the same owner.attr
+rule applies. `check_search_contract.py` verifies its independent HTTP routes and authentication.
+`macos/release.sh --dry-run` performs both dependency audits and strict signature verification without publishing.
 
 ### Code vs. user data
 

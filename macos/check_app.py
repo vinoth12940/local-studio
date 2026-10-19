@@ -727,6 +727,7 @@ def route_contract_is_unchanged():
         _contract("routes.json", routes)
         return
     expected = json.loads((FIXTURES / "routes.json").read_text())
+    assert routes == expected, "Ordered route contract changed; update the fixture only for an intended route change"
     problems = _route_order_problems(expected, routes)
     assert not problems, "routes.json changed. If this is intended, update the fixture (LOCAL_STUDIO_UPDATE_FIXTURES=1) in the " \
                          "same commit:\n" + "\n".join(problems)
@@ -769,6 +770,10 @@ def _sse_contract():
     chat, run, other = {}, {}, {}
     terminal = []
     for path in _backend_sources():
+        # The standalone search service has a separate HTTP contract check. Its preview `type`
+        # values are not computer-agent run events; inspect only the UI backend for SSE shapes.
+        if path.is_relative_to(REPO / "studio/search"):
+            continue
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
@@ -1060,6 +1065,30 @@ def resumable_chat_buffers_survive_disconnect_and_pending_approval():
     finally:
         app.save_settings(original)
         streams._STREAMS.clear()
+
+
+@check
+def search_rebuild_retry_after_reaches_the_ui():
+    from unittest.mock import patch
+    import httpx
+    response=httpx.Response(503,json={'detail':'Search index is being rebuilt'},headers={'Retry-After':'1'})
+    with patch('studio.services.search.httpx.request',return_value=response):
+        from fastapi.testclient import TestClient
+        result=TestClient(app.app,base_url='http://127.0.0.1:7860').post('/api/search',json={'query':'test'})
+        assert result.status_code==503 and result.headers['retry-after']=='1'
+
+
+@check
+def route_contract_rejects_even_independent_route_reordering():
+    from unittest.mock import patch
+    routes=_routes();changed=list(routes)
+    first=next(i for i,r in enumerate(routes) if r['path']=='/api/system')
+    second=next(i for i,r in enumerate(routes) if r['path']=='/api/busy')
+    changed[first],changed[second]=changed[second],changed[first]
+    assert _route_order_problems(routes,changed)==[], 'these literal routes are independent'
+    with patch(__name__+'._routes',return_value=changed):
+        try:route_contract_is_unchanged();assert False,'ordered snapshot drift was accepted'
+        except AssertionError as exc:assert 'Ordered route contract changed' in str(exc)
 
 if __name__ == "__main__":
     want = sys.argv[1:]

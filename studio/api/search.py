@@ -30,7 +30,7 @@ def search_status():
            "model": {"name": m["name"], "size_gb": m["size_gb"]}, "index_on_disk": SEARCH_DIR.exists(), "running": False,
            "setup": {k: search_job.get(k) for k in ("status", "step", "error")}}
     try:
-        r = httpx.get(config.SEARCH_URL + "/status", timeout=3)
+        r = httpx.get(config.SEARCH_URL + "/status", timeout=3, headers=services_search._search_headers())
         if r.status_code == 200:
             out.update(r.json(), running=True)
     except httpx.HTTPError:
@@ -89,7 +89,7 @@ def search_settings(body: dict = Body(...)):
             s["search"][key] = bool(body[key])
     save_settings(s)
     try:
-        httpx.post(config.SEARCH_URL + "/reload", timeout=3)
+        httpx.post(config.SEARCH_URL + "/reload", timeout=3, headers=services_search._search_headers())
     except httpx.HTTPError:
         pass
     return s["search"]

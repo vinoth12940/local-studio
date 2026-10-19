@@ -32,7 +32,7 @@ from studio.security.headers import SecurityHeaders, internal_error
 from studio.security.local_only import LocalOnly
 from studio.security.api_token import ApiToken
 
-# Every studio module, in dependency order: a module only imports from modules listed before it.
+# Every UI backend module, in dependency order; the standalone studio.search service has its own entrypoint.
 MODULES = (
     "studio.config",
     "studio.security.redact",

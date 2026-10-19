@@ -8,7 +8,31 @@
 # Then this script notarizes and staples automatically.
 set -e
 HERE="${0:A:h}"; ROOT="${HERE:h}"
-"$HERE/build.sh"
+DRY_RUN=0
+if [[ "${1:-}" == "--dry-run" ]]; then
+  DRY_RUN=1
+elif [[ -n "${1:-}" ]]; then
+  echo "Usage: $0 [--dry-run]" >&2; exit 2
+fi
+UV=$(command -v uv || echo ~/.local/bin/uv)
+python3 "$HERE/audit_dependencies.py" --uv "$UV"
+if (( ! DRY_RUN )); then "$HERE/build.sh"; fi
+APP="$ROOT/build/Local Studio.app"
+[[ -d "$APP" ]] || { echo "Build the app before a dry run: ./macos/build.sh" >&2; exit 1; }
+echo "==> Verifying app signature"
+codesign --verify --deep --strict --verbose=2 "$APP"
+assess_distribution() {
+  if codesign -dv --verbose=4 "$APP" 2>&1 | /usr/bin/grep -q '^Authority=Developer ID Application:'; then
+    spctl -a -vv --type execute "$APP"
+  else
+    echo "   Gatekeeper distribution assessment requires a Developer ID signed build; current signature is local development."
+  fi
+}
+if (( DRY_RUN )); then
+  assess_distribution
+  echo "Dry run passed: dependency audits and signature checks; no DMG or notarization submitted."
+  exit 0
+fi
 VERSION=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' "$ROOT/app.py")
 DMG="$ROOT/build/Local-Studio-$VERSION.dmg"
 STAGE="$ROOT/build/dmg"
@@ -34,4 +58,6 @@ else
   echo "   No Developer ID certificate: this DMG opens without warnings only on your own Macs."
   echo "   On other Macs: right-click the app → Open, or System Settings → Privacy & Security → Open Anyway."
 fi
+# Assess after notarization, so a new Developer ID build can obtain its ticket first.
+assess_distribution
 echo "Done: $DMG ($(du -h "$DMG" | cut -f1))"

@@ -5795,6 +5795,9 @@ def harness_seatbelt_denies_escapes_credentials_and_python_network():
         assert run("print(open('credential-alias').read())")[0] != 0
         upper = TMP / ".SSH/config"; upper.parent.mkdir(exist_ok=True); upper.write_text('synthetic uppercase credential')
         assert run(f"print(open({str(upper)!r}).read())")[0] != 0
+        for name in ('.ENV', 'CERT.PEM', '.API-TOKEN', 'CREDENTIALS.JSON'):
+            credential = ws / name; credential.write_text('synthetic case-variant credential')
+            assert run(f"print(open({str(credential)!r}).read())")[0] != 0, name
         # An explicit per-chat opt-in can permit Python networking; it does not change the default.
         import socket
         with socket.socket() as listener:

@@ -16,7 +16,7 @@ This file provides repository instructions and architectural guidance for coding
 - `studio/`: the FastAPI backend split by concern: `config.py`, `infra/`, `security/` (LocalOnly, fences, gates), `storage/` (settings, flags, memory, backups, chats), `services/` (models, engines, harness, agent, search, terminal, ...), `api/` (one APIRouter per area), `main.py` (builds the app). Imports flow down that list only. See CLAUDE.md, Backend layout.
 - `index.html`: the page's markup and CSS, loading `frontend/main.mjs` as a module.
 - `frontend/`: the UI's vanilla JS ES modules by concern (`core/`, `ui/`, `chat/`, `code/`, `images/`, `library/`, `settings/`, `search/`, `agent/`, boot in `main.mjs`). Modules import directly from modules that run before them and through `frontend/modules.mjs` for later ones (keeps the start-up order); names several modules assign live in `createStore` stores (`listState.current`, ...); names inline handlers call are set on `window` in `frontend/globals.mjs`. See CLAUDE.md, UI modules.
-- `search.py` + `search-requirements.txt`: On-device semantic & lexical file search service (~1,410 lines, EmbeddingGemma 2 on MLX, port 8083).
+- `search.py` + `studio/search/` + `search-requirements.txt`: On-device semantic & lexical file search service (EmbeddingGemma 2 on MLX, port 8083); thin CLI/re-exports, same launch pattern and cwd.
 - `catalog.json`: Curated MLX, GGUF, and mflux models.
 - `setup.sh` / `install.sh` / `start.sh` / `stop.sh` / `uninstall.sh`: zsh lifecycle scripts.
 - `macos/`:
@@ -126,3 +126,6 @@ Enforcing CSP was authorized and verified in isolated development as part of com
 `security.api_token`, `harness.sandbox`, and `harness.rlimits` also default to false; see the security document for opt-in setup.
 Subprocess logs use `studio/infra/logs.py::open_log` so redaction, when enabled, happens before disk writes.
 New persistent JSON writes should use `studio/storage/atomic.py::write_text_atomic`.
+
+P4/P6 flags `performance.isolated_io`, `performance.chat_index`, `streams.resume`, and `search.incremental` default to false.
+Search has its own route/auth contract check in `macos/check_search_contract.py`; its payloads are independent of backend SSE.
