@@ -2,129 +2,12 @@
 // in its original order (the refactor's P2 split, docs/refactor-progress.json).
 import "./globals.mjs";
 import {
-  $, agAnswerMd, agNoImages, api, confirmBox, DEFAULT_MAX_TOKENS, esc, gib, human, icon, jpost, md, newId, store,
-  toast
+  $, agAnswerMd, agNoImages, api, chatHost, closeMenus, confirmBox, DEFAULT_MAX_TOKENS, engineState, esc, gib, human,
+  icon, jpost, md, newId, poll, showView, store, syncChatDock, toast, view
 } from "./modules.mjs";
 
-// ---------------- theme & layout
-function applyTheme(t) { if (t) document.documentElement.dataset.theme = t; const dark = (t || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark"; $("themeIcon").setAttribute("href", dark ? "#i-sun" : "#i-moon"); try { if (codeTermS) codeTermS.term.options.theme = codeTermTheme(); } catch {} }                       // codeTermS is declared later; at start-up there is no terminal yet
-applyTheme(store.get("theme", null));
-$("themeBtn").onclick = (e) => { e.stopPropagation(); const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"); const n = cur === "dark" ? "light" : "dark"; store.set("theme", n); applyTheme(n); };
-function setCollapsed(c) { $("app").classList.toggle("collapsed", c); $("expand").style.display = c ? "" : "none"; store.set("collapsed", c); }
-setCollapsed(store.get("collapsed", innerWidth < 820));
-$("collapse").onclick = () => setCollapsed(true); $("expand").onclick = () => setCollapsed(false); $("scrim").onclick = () => setCollapsed(true);
-$("engineCard").onclick = () => showView("manage");
-
-// ---------------- views
-let view = "chat";
-function chatHost() {
-  return view === "code" && $("codeChatDock") ? $("codeChatDock") : $("v-chat");
-}
-function syncChatDock() {
-  const host = chatHost();
-  if (!host) return;
-  const scroll = $("chatScroll"), jump = $("jumpBtn"), wrap = $("composerWrap");
-  if (scroll && scroll.parentElement !== host) host.appendChild(scroll);
-  if (jump && jump.parentElement !== host) host.appendChild(jump);
-  const w = document.querySelector(".welcome");
-  if (w && w.parentElement !== host) host.prepend(w);
-  if (wrap && (!w || !w.contains(wrap)) && wrap.parentElement !== host) host.appendChild(wrap);
-}
-function showView(v) {
-  view = v;
-  document.querySelectorAll(".view").forEach((s) => s.classList.toggle("on", s.id === "v-" + v));
-  document.querySelectorAll(".navitem[data-view]").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
-  updateHeader();
-  $("modelBtn").querySelector("svg").style.display = (v === "chat" || v === "code") ? "" : "none";
-  closeMenus();
-  if (v === "code" || v === "chat") {
-    syncChatDock();
-    renderThread();
-    scrollBottom(true);                                                                 // the thread moved between views: show the latest turn
-  }
-  if (v === "code") {
-    loadCodeView(); setTimeout(() => $("input").focus(), 0);
-    codeTermStart().then(() => { if (codeTermS) codeTermS.term.options.theme = codeTermTheme(); });
-  }
-  if (v === "images") { loadGallery(); loadLibrary(); }
-  if (v === "library") loadLibrary();
-  if (v === "manage") loadManage();
-  if (v === "search") { loadSearch(); setTimeout(() => $("srQuery").focus(), 0); }
-  if (v === "agent") agOpen();
-  if (v === "chat") { setTimeout(() => $("input").focus(), 0); agFetchStatus(); }
-  renderHistory();
-  if (innerWidth < 820) setCollapsed(true);
-}
-document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
-function closeMenus() { $("modelMenu").classList.remove("on"); }
-$("modelBtn").onclick = (e) => { e.stopPropagation(); if (view !== "chat" && view !== "code") return; $("modelMenu").classList.toggle("on"); };
-document.addEventListener("click", (e) => { if (!e.target.closest("#modelMenu") && !e.target.closest("#modelBtn")) closeMenus(); if (!e.target.closest("#inspector") && !e.target.closest("#inspBtn")) $("inspector").classList.remove("on"); });
-$("inspBtn").onclick = (e) => { e.stopPropagation(); $("inspector").classList.toggle("on"); };
-$("inspClose").onclick = () => $("inspector").classList.remove("on");
-$("mmSettings").onclick = () => { closeMenus(); $("settingsDlg").showModal(); };
-$("settingsDone").onclick = () => { $("settingsDlg").close(); store.set("settings", { sys: $("sysPrompt").value, max: $("maxTok").value, temp: $("temp").value }); toast("Settings saved"); };
-{ const s = store.get("settings", {}); $("sysPrompt").value = s.sys || ""; $("maxTok").value = s.max || DEFAULT_MAX_TOKENS; $("temp").value = s.temp || ""; }
-
-// ---------------- engine status
-let health = null, metrics = null, engineState = "down";
-async function poll() {
-  try { health = await (await fetch("/api/llm/health")).json(); } catch { health = null; }
-  const st = health?.status;
-  engineState = st === "ok" ? "ready" : (st === "loading" || st === "starting") ? "loading" : "down";
-  metrics = null;
-  if (engineState === "ready") { try { metrics = await (await fetch("/api/llm/metrics")).json(); } catch {} }
-  const dotCls = engineState === "ready" ? "ok" : engineState === "loading" ? "warn" : "bad";
-  const emode = health?.mode, vision = emode === "vision";
-  const label = engineState === "ready" ? (vision ? "Ready · Vision" : emode === "gguf" ? "Ready · llama.cpp" : "Ready") : engineState === "loading" ? (health?.phase === "warming_up" ? "Warming up…" : "Loading model…") : "Engine stopped";
-  runningName = engineState === "down" ? null : (health?.model_name || null);
-  runningMode = engineState === "down" ? null : emode;
-  updateHeader();
-  $("engName").textContent = runningName || activeChat()?.name || "No model";
-  $("mModel").textContent = runningName || activeChat()?.name || "–";
-  $("engDesc").textContent = emode === "gguf" ? "llama.cpp server (GGUF)" : vision ? "mlx-vlm server (images + text)" : "mlx-dspark with speculative decoding";
-  const port = emode === "gguf" ? 8082 : vision ? 8081 : 8080;
-  $("apiUrl").textContent = `http://127.0.0.1:${port}/v1`;
-  for (const id of ["engDot", "hdrDot"]) $(id).className = "dot " + dotCls;
-  $("hdrStatusTxt").textContent = label;
-  const mean = metrics?.mean_decode_tokens_per_sec;
-  $("engSt").textContent = engineState === "ready" && mean ? `${label} · ${(+mean).toFixed(0)} tok/s avg` : label;
-  $("mmBadge").textContent = label; $("mmBadge").className = "badge " + (engineState === "ready" ? "ok" : engineState === "loading" ? "warn" : "");
-  $("mmEngineTxt").textContent = engineState === "down" ? "Start engine" : "Stop engine";
-  $("engToggleTxt").textContent = engineState === "down" ? "Start" : "Stop";
-  $("mStatus").textContent = label;
-  if (health && engineState === "ready") {
-    $("eDr").textContent = (health.drafter || "none").split("/").pop(); $("eMode").textContent = emode === "gguf" ? "llama.cpp" : (health.mode || "–");
-    $("eCap").textContent = health.max_draft ?? "–"; $("eKv").textContent = health.kv_bits ? `${health.kv_bits}-bit` : "bf16";
-    ctxWindow = health.context_window || ctxWindow; $("ctxMax").textContent = `${Math.round(ctxWindow / 1024)}k`;
-    $("eWarn").textContent = (health.warnings || []).map((w) => w.message || w).join(" ");
-  }
-  if (metrics) {
-    const m = metrics.memory || {}, s = metrics.system || {};
-    $("eRes").textContent = m.active_bytes ? `${gib(m.active_bytes)} GB` : "–"; $("ePeak").textContent = m.peak_bytes ? `${gib(m.peak_bytes)} GB` : "–";
-    $("ePress").textContent = s.pressure || "–"; $("eSwap").textContent = s.swap_used_bytes != null ? `${gib(s.swap_used_bytes)} GB` : "–";
-    $("eReq").textContent = metrics.requests ?? "–"; $("eMean").textContent = mean ? `${(+mean).toFixed(1)} tok/s` : "–";
-    $("mRes").textContent = m.active_bytes ? `${gib(m.active_bytes)} GB` : "–"; $("mSpeed").textContent = mean ? `${(+mean).toFixed(1)} tok/s` : "–"; $("mReq").textContent = metrics.requests ?? "–";
-  } else { $("mRes").textContent = "–"; $("mSpeed").textContent = "–"; $("mReq").textContent = "–"; }
-  try {
-    const sys = await (await fetch("/api/system")).json();
-    $("ramTxt").textContent = `${gib(sys.used_bytes)} / ${gib(sys.total_bytes)} GB`;
-    $("ramBar").style.width = Math.min(100, sys.used_bytes / sys.total_bytes * 100) + "%";
-  } catch {}
-  updateSend();
-}
-setInterval(poll, 4000);
-async function toggleEngine() {
-  try {
-    if (engineState === "down") { await jpost("/api/engine/start"); toast("Starting engine…"); }
-    else { await jpost("/api/engine/stop"); toast("Engine stopped · memory released"); }
-  } catch (e) { toast(e.message); }
-  setTimeout(poll, 800);
-}
-$("mmEngine").onclick = () => { closeMenus(); toggleEngine(); };
-$("engToggle").onclick = toggleEngine;
-
 // ---------------- chats
-let chats = [], current = null, streaming = null, ctxWindow = 32768;
+let chats = [], current = null, streaming = null; const mainState = { ctxWindow: 32768 };
 let codeWorkspace = store.get("code_workspace", null);
 let chRun = null;          // the task this chat started in Agent mode: { chat, msg, starting, s (run state, see agFresh), el, ui }
 const chLive = () => !!(chRun && (chRun.starting || chRun.s.live));
@@ -676,7 +559,7 @@ function showPerf(x) {
   $("tDec").innerHTML = `${x?.decode_tokens_per_sec ?? "–"}<small>tok/s</small>`;
   $("tUp").innerHTML = `${x?.ceiling_tokens_per_sec ? (x.decode_tokens_per_sec / x.ceiling_tokens_per_sec).toFixed(2) : "–"}<small>×</small>`;
   $("tAcc").textContent = x?.accept_len ?? "–"; $("tTtft").innerHTML = `${x?.ttft_seconds ?? "–"}<small>s</small>`;
-  const ctx = x?.context_tokens || 0; $("ctxTxt").textContent = `${ctx.toLocaleString()} tokens`; $("ctxBar").style.width = Math.min(100, ctx / ctxWindow * 100) + "%";
+  const ctx = x?.context_tokens || 0; $("ctxTxt").textContent = `${ctx.toLocaleString()} tokens`; $("ctxBar").style.width = Math.min(100, ctx / mainState.ctxWindow * 100) + "%";
 }
 function drawSpark() {
   const pts = (current?.messages || []).filter((m) => m.stats?.decode_tokens_per_sec).slice(-20).map((m) => m.stats.decode_tokens_per_sec);
@@ -840,7 +723,7 @@ function ctxUsage(chat = current) {
   while (i >= 0 && !msgs[i].stats?.prompt_tokens) i--;
   let used = i >= 0 ? (msgs[i].stats.prompt_tokens || 0) + (msgs[i].stats.completion_tokens || 0) : 2000;
   for (const m of msgs.slice(i + 1)) used += Math.ceil((m.content || "").length / 3.2) + (m.attachments || []).reduce((a, x) => a + (x.tokens_est || (x.kind === "image" ? 1200 : 0)), 0);
-  return { used, total: ctxWindow, measured: i === msgs.length - 1 };
+  return { used, total: mainState.ctxWindow, measured: i === msgs.length - 1 };
 }
 const fmtTok = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
 function updateCtx() {
@@ -1903,15 +1786,15 @@ $("v-code").addEventListener("click", async (e) => {
 window.onbeforeunload = (e) => { if (codeDirty()) { e.preventDefault(); e.returnValue = ""; } };
 
 // ---------------- library
-let lib = null, libTab = "chat", runningName = null, runningMode = null;
+let lib = null, libTab = "chat"; mainState.runningName = null; mainState.runningMode = null;
 const activeChat = () => lib?.chat.find((m) => m.active);
 const activeImage = () => lib?.image.find((m) => m.active);
 function updateHeader() {
   if (view === "chat") {
     const a = activeChat();
-    $("hdrTitle").textContent = runningName || a?.name || "Local Studio";
-    $("hdrSub").textContent = runningMode === "vision" ? "Vision" : runningMode === "gguf" ? "llama.cpp" : (a?.accel || "");
-  } else if (view === "code") { $("hdrTitle").textContent = "Code"; $("hdrSub").textContent = runningName || activeChat()?.name || ""; }
+    $("hdrTitle").textContent = mainState.runningName || a?.name || "Local Studio";
+    $("hdrSub").textContent = mainState.runningMode === "vision" ? "Vision" : mainState.runningMode === "gguf" ? "llama.cpp" : (a?.accel || "");
+  } else if (view === "code") { $("hdrTitle").textContent = "Code"; $("hdrSub").textContent = mainState.runningName || activeChat()?.name || ""; }
   else if (view === "images") { $("hdrTitle").textContent = activeImage()?.name || "Images"; $("hdrSub").textContent = "mflux"; }
   else if (view === "library") { $("hdrTitle").textContent = "Model library"; $("hdrSub").textContent = ""; }
   else if (view === "search") { $("hdrTitle").textContent = "Search"; $("hdrSub").textContent = "EmbeddingGemma 2"; }
@@ -2896,27 +2779,26 @@ export {
   agLimit, agLogClick, agLogKey, agLost, agMd, agNoteEl, agOpen, agOpenSaved, agOutcome, agPausedOf, agPendingOf,
   agPermMissing, agQuestionCard, agRender, agRenderModels, agRenderRuns, agRenderSettings, agRenderSetup,
   agRenderTiers, agReply, agResolve, agSave, agSetErr, agSetTier, agShotUrl, agSize, agStart, agStateText, agStepRow,
-  agStopRun, agSync, agTakeoverRun, agTierKey, agTierSelect, agTitleHTML, agWeb, agWhen, applyAc, applyTheme, attMeta,
-  attThumb, autosize, autoTop, cardHTML, cardSig, CH_STATUS, chatHost, chats, chAttachAction, chatView, chBind,
-  chCardClick, chCardHTML, chContextText, chDetach, chEnded, chHarnessCardHTML, chLive, chNewRun, chPlanHTML, chResume,
-  chRetry, chRoundItemHTML, chRoundsHTML, chRun, chShowSteps, chStop, chSwapTurn, chSync, chToolsHTML,
-  chToolStepsInner, chWebSourcesHTML, closeAc, closeMenus, CODE_CHECKED, CODE_MUTATING, CODE_STARTERS, codeCloseFile,
-  codeConfirmDiscard, codeDirty, codeEdViewMode, codeEmpty, codeExSeq, codeExTab, codeFileDiff, codeFullDiff,
-  codeGitInfo, codeInstFiles, codeJump, codeMarkActive, codeOpenPath, codeOriginalContent, codeSelectExTab,
-  codeShowAllChanges, codeShowDiag, codeSyncDirty, codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart,
-  codeTermStream, codeTermTheme, codeUpdateStatus, codeWorkspace, codeWsQ, compactCurrentChat, ctxUsage, ctxWindow,
-  current, deleteImage, diffLinesHTML, dlText, DOC_ICON, dragDepth, drawSpark, EDIT_TOOLS, effort, engineState,
-  fmtSecs, fmtTok, gallery, generate, groupOf, health, hfKind, hfSearch, lbItem, lib, libTab, liveGen,
-  liveSkeletonHTML, loadAgent, loadAgentRuns, loadChats, loadCodeProcesses, loadCodeView, loadGallery, loadLibrary,
-  loadManage, loadMcp, loadSearch, loadStorage, loadVersions, loadXterm, mcpServers, metrics, modelThinks, newChat,
-  noFilesOnce, onAgentCodeMutation, openChat, openCodeFile, openLightbox, patchCards, pending, perfGrid, perfLine,
-  PERM_WORDS, permMode, poll, renderAc, renderCodeExplorer, renderDiffLinesHTML, renderHistory, renderImgModels,
-  renderLibrary, renderMenu, renderOnboarding, renderPending, renderThread, runningMode, runningName, runSearch,
-  saveChat, saveCodeFile, scrollBottom, send, setActive, setCodeEditorMode, setCollapsed, setStepOptions, showPerf,
-  showView, SLASH_CMDS, sourcesHTML, sr, SR_ICON, SR_OFF, SR_PAUSED, SR_STOP, srAddFolder, srAuto, srClosePreview,
-  srEnable, srHome, srLoc, srMark, srOpen, srPvSeq, srPvState, srRemoveFolder, srRes, srRow, srSave, srSecs, srSel,
-  srSelect, srSeq, srShowPage, srStatusLine, srTimer, STARTERS, stick, STORAGE, streaming, syncChatDock, syncEffort,
-  syncFiles, syncMode, syncThink, sysRam, tagsHTML, thinking, thoughtHTML, tickWork, toggleEngine, toggleMode,
-  TOOL_LABELS, toolLabel, toolResultHTML, track, turnHTML, updateAc, updateCodeGutter, updateCtx, updateHeader,
-  updateSend, updateWorkspaceUI, useFiles, view, workStart, workTimer, XTERM_FILES, xtermLoad
+  agStopRun, agSync, agTakeoverRun, agTierKey, agTierSelect, agTitleHTML, agWeb, agWhen, applyAc, attMeta, attThumb,
+  autosize, autoTop, cardHTML, cardSig, CH_STATUS, chats, chAttachAction, chatView, chBind, chCardClick, chCardHTML,
+  chContextText, chDetach, chEnded, chHarnessCardHTML, chLive, chNewRun, chPlanHTML, chResume, chRetry,
+  chRoundItemHTML, chRoundsHTML, chRun, chShowSteps, chStop, chSwapTurn, chSync, chToolsHTML, chToolStepsInner,
+  chWebSourcesHTML, closeAc, CODE_CHECKED, CODE_MUTATING, CODE_STARTERS, codeCloseFile, codeConfirmDiscard, codeDirty,
+  codeEdViewMode, codeEmpty, codeExSeq, codeExTab, codeFileDiff, codeFullDiff, codeGitInfo, codeInstFiles, codeJump,
+  codeMarkActive, codeOpenPath, codeOriginalContent, codeSelectExTab, codeShowAllChanges, codeShowDiag, codeSyncDirty,
+  codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme, codeUpdateStatus,
+  codeWorkspace, codeWsQ, compactCurrentChat, ctxUsage, current, deleteImage, diffLinesHTML, dlText, DOC_ICON,
+  dragDepth, drawSpark, EDIT_TOOLS, effort, fmtSecs, fmtTok, gallery, generate, groupOf, hfKind, hfSearch, lbItem, lib,
+  libTab, liveGen, liveSkeletonHTML, loadAgent, loadAgentRuns, loadChats, loadCodeProcesses, loadCodeView, loadGallery,
+  loadLibrary, loadManage, loadMcp, loadSearch, loadStorage, loadVersions, loadXterm, mainState, mcpServers,
+  modelThinks, newChat, noFilesOnce, onAgentCodeMutation, openChat, openCodeFile, openLightbox, patchCards, pending,
+  perfGrid, perfLine, PERM_WORDS, permMode, renderAc, renderCodeExplorer, renderDiffLinesHTML, renderHistory,
+  renderImgModels, renderLibrary, renderMenu, renderOnboarding, renderPending, renderThread, runSearch, saveChat,
+  saveCodeFile, scrollBottom, send, setActive, setCodeEditorMode, setStepOptions, showPerf, SLASH_CMDS, sourcesHTML,
+  sr, SR_ICON, SR_OFF, SR_PAUSED, SR_STOP, srAddFolder, srAuto, srClosePreview, srEnable, srHome, srLoc, srMark,
+  srOpen, srPvSeq, srPvState, srRemoveFolder, srRes, srRow, srSave, srSecs, srSel, srSelect, srSeq, srShowPage,
+  srStatusLine, srTimer, STARTERS, stick, STORAGE, streaming, syncEffort, syncFiles, syncMode, syncThink, sysRam,
+  tagsHTML, thinking, thoughtHTML, tickWork, toggleMode, TOOL_LABELS, toolLabel, toolResultHTML, track, turnHTML,
+  updateAc, updateCodeGutter, updateCtx, updateHeader, updateSend, updateWorkspaceUI, useFiles, workStart, workTimer,
+  XTERM_FILES, xtermLoad
 };

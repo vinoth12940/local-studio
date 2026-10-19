@@ -501,6 +501,9 @@ def generate(n, report=False):
             hub.append("export {\n  " + _wrap(names) + f"\n}} from \"{rel('frontend/modules.mjs', path(m))}\";")
         else:
             hub.append(f'import "{rel("frontend/modules.mjs", path(m))}";')
+    rest_names = sorted(info["main"][0] - set(stored) | ({_store_name("main")} if "main" in stored.values() else set()), key=str.lower)
+    if rest_names:                                                 # not split out yet: main.mjs, which already runs last
+        hub.append("export {\n  " + _wrap(rest_names) + "\n} from \"./main.mjs\";")
     files["frontend/modules.mjs"] = "\n".join(hub) + "\n"
     alias = lambda m: m.replace("/", "_")                                            # noqa: E731
     g = ["// The page's globals, set in one place (refactor P2). Inline handlers and innerHTML templates call these by name, and",
@@ -514,10 +517,10 @@ def generate(n, report=False):
     spaces = ["main"] + [alias(m) for m in mods]
     stores = sorted({f"{alias(m)}.{_store_name(m)}" for m in set(stored.values())})
     g += ["const SPACES = [" + ", ".join(spaces) + "];",
-          "const STORES = [" + ", ".join(stores) + "];                  // names more than one module assigns live in these",
+          "const STORES = () => [" + ", ".join(stores) + "];            // names more than one module assigns live in these",
           "window.LS = new Proxy({}, {",
-          "  get: (_, k) => STORES.find((s) => k in s)?.[k] ?? SPACES.map((m) => m[k]).find((v) => v !== undefined),",
-          "  set: (_, k, v) => { const s = STORES.find((x) => k in x); if (!s) return false; s[k] = v; return true; },",
+          "  get: (_, k) => STORES().find((s) => k in s)?.[k] ?? SPACES.map((m) => m[k]).find((v) => v !== undefined),",
+          "  set: (_, k, v) => { const s = STORES().find((x) => k in x); if (!s) return false; s[k] = v; return true; },",
           "});"]
     files["frontend/globals.mjs"] = "\n".join(g) + "\n"
     a2, b2, _ = index_script(new_html)
