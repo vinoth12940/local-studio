@@ -8,6 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from studio.infra.logs import open_log
 from studio.config import APP_SUPPORT, APP_VERSION, BREW, DSPARK_PY, LLAMA_SERVER, LOGS, ROOT, UV
 
 
@@ -39,7 +40,7 @@ def _versions():
 
 
 def _run_update():
-    log = open(LOGS / "update.log", "w")
+    log = open_log(LOGS / "update.log", "w")
     steps = [[UV, "tool", "upgrade", "mlx-dspark"], [UV, "tool", "upgrade", "mflux"]]
     if Path(BREW).exists() and not LLAMA_SERVER.startswith(str(APP_SUPPORT)):
         steps.append([BREW, "upgrade", "llama.cpp"] if Path(LLAMA_SERVER).exists() else [BREW, "install", "llama.cpp"])

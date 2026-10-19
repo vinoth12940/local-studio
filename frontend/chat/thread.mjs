@@ -76,8 +76,9 @@ function renderOnboarding(w) {
     <h1 style="margin-bottom:8px">Choose your first model</h1>
     <p style="text-align:center;color:var(--muted);margin:0 0 26px">Models run entirely on this Mac. Picked for your ${Math.round(gb)} GB of memory — you can add more any time in the Model library.</p>
     <div class="cards" id="obCards">${models.map((m, i) => cardHTML({ ...m, blurb: (i === 0 ? "Recommended for this Mac. " : "") + m.blurb })).join("")}</div>
-    <p style="text-align:center;margin-top:18px"><button class="btn sm" data-view="library" onclick="showView('library')">Browse all models</button></p></div>`;
+    <p style="text-align:center;margin-top:18px"><button class="btn sm" data-view="library">Browse all models</button></p></div>`;
   w.onclick = async (e) => {
+    const v = e.target.closest("button[data-view]"); if (v) { showView(v.dataset.view); return; }   // no inline handlers (CSP)
     const b = e.target.closest("button[data-dl],button[data-cancel]"); if (!b) return;
     try { if (b.dataset.dl) { await jpost("/api/models/download", { id: b.dataset.dl }); toast("Downloading — chat unlocks when it finishes"); } else { await jpost("/api/models/cancel", { id: b.dataset.cancel }); } } catch (err) { toast(err.message); }
     loadLibrary();

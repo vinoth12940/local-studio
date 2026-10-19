@@ -117,3 +117,12 @@ Only one heavy LLM engine process runs at a time (`ensure_engine(mode, model)` u
 
 See `docs/superpowers/plans/2026-10-17-ai-native-sdlc-agent-harness.md` for full architectural specifications, API routes, and verification tests for all Tier 1–3 Agent Harness features (all done). Not built yet: Plan/Act/Auto mode with `intent.md`/`spec.md`/`plan.md`, `PreToolUse`/`PostToolUse` hooks, test-file write protection, Skills with `load_skill`, `REVIEW.md` review passes, `macos/evals/`, and `POST /api/agent/trigger`.
 
+
+## P3 security controls
+
+See `docs/security.md` for the OWASP Agentic Top 10 control map, remaining exposures, and flag configuration.
+`security.redact`, `security.upload_sniff`, and `security.mcp_approval` default to false; `security.csp` defaults to "off".
+Enforcing CSP was authorized and verified in isolated development as part of completing the plan; the default remains off.
+`security.api_token`, `harness.sandbox`, and `harness.rlimits` also default to false; see the security document for opt-in setup.
+Subprocess logs use `studio/infra/logs.py::open_log` so redaction, when enabled, happens before disk writes.
+New persistent JSON writes should use `studio/storage/atomic.py::write_text_atomic`.

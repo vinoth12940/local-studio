@@ -8,6 +8,7 @@ import subprocess
 
 from fastapi import APIRouter, Body, HTTPException
 
+from studio.infra.logs import open_log
 from studio.config import CHATS, GALLERY, HOME, LOGS, ROOT, STATE, UPLOADS
 from studio.infra.system import dir_size
 from studio.services.agent.loop import _forget_chat_context
@@ -60,5 +61,5 @@ def clear_storage(what: str = Body(..., embed=True)):
 def uninstall(remove_app: bool = Body(False, embed=True)):
     log = HOME / "local-studio-uninstall.log"
     args = ["/bin/zsh", str(ROOT / "uninstall.sh"), "--yes"] + (["--remove-app"] if remove_app else [])
-    subprocess.Popen(args, stdout=open(log, "w"), stderr=subprocess.STDOUT, start_new_session=True)
+    subprocess.Popen(args, stdout=open_log(log, "w"), stderr=subprocess.STDOUT, start_new_session=True)
     return {"ok": True, "log": str(log)}

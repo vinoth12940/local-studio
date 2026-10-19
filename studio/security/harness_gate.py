@@ -10,7 +10,7 @@ from studio.infra.edits import _make_diff_preview, _match_edit_block
 from studio.infra.harness_args import _normalize_harness_args
 from studio.infra.workspace import _harness_root
 from studio.security.fences import _gate_shell_command, _harness_path_fence, _is_safe_readonly_shell
-from studio.services.mcp_custom import _get_mcp_chat_tools
+from studio.services.mcp_custom import _get_mcp_chat_tools, _mcp_launch_preview
 from studio.storage.settings import load_settings
 
 
@@ -145,7 +145,8 @@ def _gate_custom_mcp_tool(full_name: str, args: dict, perms: set) -> tuple[str, 
         parts = full_name.split("__", 2)
         srv_id, tool_name = (parts[1], parts[2]) if len(parts) == 3 else ("custom", full_name)
         info = {"server_id": srv_id, "server_name": srv_id, "name": tool_name, "trusted": False}
-    preview = json.dumps(args or {}, indent=2, ensure_ascii=False)[:2000]
+    srv = next((s for s in load_settings().get("mcp_servers", []) if s.get("id") == info["server_id"]), {})
+    preview = _mcp_launch_preview(srv) + "\n\nTool arguments:\n" + json.dumps(args or {}, indent=2, ensure_ascii=False)[:2000]
     meta = {
         "title": f"MCP {info['server_name']}: {info['name']}",
         "preview": preview, "kind": "code", "perm_scope": "mcp"

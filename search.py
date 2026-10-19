@@ -974,7 +974,12 @@ class Indexer:
         if not self.app_url:
             return False
         try:
-            with urllib.request.urlopen(self.app_url + "/api/busy", timeout=1) as r:
+            req = urllib.request.Request(self.app_url + "/api/busy")
+            try:
+                req.add_header("Authorization", "Bearer " + (STATE / "data/.api-token").read_text().strip())
+            except OSError:
+                pass
+            with urllib.request.urlopen(req, timeout=1) as r:
                 return bool(json.load(r).get("busy"))
         except Exception:
             return False                                  # app not answering: keep indexing

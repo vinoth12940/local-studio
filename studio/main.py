@@ -6,7 +6,6 @@ import importlib
 import sys
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 
 from studio.api import agent as api_agent
 from studio.api import attachments as api_attachments
@@ -26,13 +25,20 @@ from studio.api import undo as api_undo
 from studio.api import updates as api_updates
 from studio.api import workspace as api_workspace
 from studio.config import GALLERY, ROOT
+from studio.infra.logs import install_log_redaction
 from studio.infra.request_log import RequestLog
-from studio.infra.static import FreshStaticFiles
+from studio.infra.static import FreshStaticFiles, MediaStaticFiles
+from studio.security.headers import SecurityHeaders, internal_error
 from studio.security.local_only import LocalOnly
+from studio.security.api_token import ApiToken
 
 # Every studio module, in dependency order: a module only imports from modules listed before it.
 MODULES = (
     "studio.config",
+    "studio.security.redact",
+    "studio.security.uploads",
+    "studio.storage.atomic",
+    "studio.infra.logs",
     "studio.infra.sse",
     "studio.infra.system",
     "studio.infra.text",
@@ -50,6 +56,8 @@ MODULES = (
     "studio.infra.request_log",
     "studio.infra.static",
     "studio.security.local_only",
+    "studio.security.headers",
+    "studio.security.api_token",
     "studio.services.models",
     "studio.services.engines",
     "studio.api.models",
@@ -86,11 +94,15 @@ MODULES = (
 for _m in MODULES:
     importlib.import_module(_m)
 
+install_log_redaction()
 app = FastAPI()
-app.mount("/gallery", StaticFiles(directory=GALLERY), name="gallery")
+app.add_exception_handler(Exception, internal_error)
+app.mount("/gallery", MediaStaticFiles(directory=GALLERY), name="gallery")
 app.mount("/frontend", FreshStaticFiles(directory=ROOT / "frontend"), name="frontend")   # the UI's ES modules (read-only code)
 app.add_middleware(RequestLog)                               # inside LocalOnly; does nothing unless logging.json_requests
-app.add_middleware(LocalOnly)                                # outermost: every route and static file
+app.add_middleware(ApiToken)
+app.add_middleware(LocalOnly)                                # every route and static file
+app.add_middleware(SecurityHeaders)                          # outermost: nosniff (and the CSP flag) on every response, 403s too
 # In the order the routes had in app.py. No two routes can match the same request (macos/check_app.py checks that their
 # order is kept if two ever could), so the order between areas does not change which route answers.
 for _router in (api_system.router, api_models.router, api_engines.router, api_chat.router, api_memory.router, api_undo.router,

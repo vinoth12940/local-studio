@@ -399,7 +399,8 @@
   "verify": [
    "review against the OWASP PDF"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: docs/security.md maps all ten category headings to code controls and remaining exposures, reviewed against OWASP primary PDF https://genai.owasp.org/download/52117/ (printed contents/headings pp. 9-38). Includes flags, defaults, enabling instructions, and pending token/sandbox/resource controls."
  },
  {
   "id": "P3.fence-tests",
@@ -429,7 +430,8 @@
    "check_agent.py new checks",
    "dev server approval card"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: Custom MCP descriptions and tool results are labeled/framed as untrusted; delimiter-like content is JSON-escaped. Approval previews include the quoted command and configured env. New opt-in security.mcp_approval defaults off; when on, discovery/calls require configuration-bound consent. check_agent harness_mcp_untrusted_framing_and_launch_approval passes, including no-spawn and stale-fingerprint cases. Browser Settings launch dialog and synthetic chat approval card verified on isolated 7862 (7861 was occupied); full command/env visible, cancel tested."
  },
  {
   "id": "P3.redaction",
@@ -438,7 +440,8 @@
   "verify": [
    "check_agent.py new checks"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: security.redact defaults off; filters live/completed tool results/errors, Python/uvicorn/request/CSP logs, and app-managed subprocess log descriptors before disk writes. Stream buffering handles split tokens and PEM delimiters. check_agent harness_redaction_handles_chunk_boundaries_logs_and_sse passes, with every split point, real foreground/background logs and fake-engine chat SSE. Existing app redaction checks also pass. Scope/limits documented in docs/security.md."
  },
  {
   "id": "P3.headers",
@@ -447,7 +450,8 @@
   "verify": [
    "check_app.py"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: check_app every_response_says_nosniff_and_csp_follows_its_flag and uploads_bound_reads_and_reject_escaped_media_paths pass: nosniff on LocalOnly 403s and outer error-handler 500s too; private gallery/upload caching and dispositions. Gallery raster images inline, other formats attachment."
  },
  {
   "id": "P3.uploads",
@@ -456,7 +460,8 @@
   "verify": [
    "check_app.py"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: check_app uploads_are_sniffed_only_when_the_flag_is_on and uploads_bound_reads_and_reject_escaped_media_paths pass. Existing random names retained, read bounded at 60 MB + 1 before 413, flag security.upload_sniff defaults off; resolved media path fenced and contained under UPLOADS, symlink escapes refused."
  },
  {
   "id": "P3.atomic-writes",
@@ -465,7 +470,8 @@
   "verify": [
    "check_app.py new check"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: settings, chat PUT, compaction, upload metadata and both engine.json writes use storage/atomic.py (exclusive private temp, flush/fsync, os.replace, cleanup on failure). check_app settings_and_chats_are_written_atomically and uploads_bound_reads_and_reject_escaped_media_paths pass, including injected disk-full failure and engine state readback."
  },
  {
   "id": "P3.csp-report-only",
@@ -475,7 +481,8 @@
    "check_app.py header check",
    "dev server: zero reports in normal use"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: check_app verifies policy headers/modes and reporting; Google Fonts and jsDelivr permitted, no inline scripts/handlers remain. Isolated dev server 7862 (7861 occupied), security.csp=report-only: all main views, dark theme, xterm terminal/CDN, synthetic 12-round turn, sanitized markdown, MCP launch dialog and chat approval card; zero browser warnings/errors, zero report requests and no csp.log created. CSP enforcement not activated; separate approval item remains false. Also verified 375px chat has no horizontal overflow. Full build exit 0: search 42, app 33, agent 178, OCR 3 checks, plus UI/sanitizer, Swift and strict signature verification; no bundle bytecode. Log: build/p3-verification/build.log."
  },
  {
   "id": "P3.csp-enforce",
@@ -484,7 +491,8 @@
   "verify": [
    "dev server full spot-check list with no violations"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: User authorized finishing the whole plan after the enforcement question. Isolated authenticated 7861 with security.csp=enforce: all views, synthetic send/stop and liveGen switch/reattach, 12 rounds, model switching, 1/2/3/Esc/Shift+Tab approvals, scratch Save/Diff/diagnostics/Undo/Revert, /compact, terminal reload/reattach, dark theme and 375px. Zero console warnings/errors and zero CSP report requests. Default remains off."
  },
  {
   "id": "P3.api-token",
@@ -495,7 +503,8 @@
    "start.sh flow on 7861",
    "Swift wrapper build"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: check_app api_token_requires_private_credentials_and_bootstrap_is_one_time passes: 32-byte random bearer and distinct single-use bootstrap ticket, files 0600, cookies HttpOnly/SameSite Strict, all data/static routes protected, Host/Origin fence preserved, health model hidden. start.sh --ui tested on 7861 with /tmp/ls-plan-dev and search disabled; authenticated API works, unauthenticated API 401, startup URL delivered and browser cookie exchange verified. Foundation cookie properties checked natively; Swift wrapper builds. Scripts/search read bearer files; no production state changed."
  },
  {
   "id": "P3.sandbox",
@@ -504,7 +513,8 @@
   "verify": [
    "check_agent.py new checks: write outside workspace denied, credential read denied, network denied for run_python"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: check_agent harness_seatbelt_denies_escapes_credentials_and_python_network passes using real sandbox-exec: workspace/temp writes succeed; outside writes, synthetic credential reads (including symlink/case variants), Python network denied. Foreground/background shells covered. Missing sandbox-exec refuses without fallback. Per-chat Python network opt-in via harness.python_network_chats tested. Flag harness.sandbox defaults false."
  },
  {
   "id": "P3.rlimits",
@@ -513,7 +523,8 @@
   "verify": [
    "check_agent.py new checks"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: check_agent harness_kernel_limits_and_rss_watchdog passes: real child getrlimit readback, CPU loop killed, 8KB reduced file cap enforced, excess opens refused, 160MiB child killed by reduced process-group RSS cap; background open-file cap verified. Flag harness.rlimits defaults false; CPU/file/fd caps applied in preexec_fn; RSS watchdog best effort."
  },
  {
   "id": "P4.measure",
@@ -598,7 +609,8 @@
   "verify": [
    "dev server 7861, synthetic messages into current"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: isolated authenticated/enforcing-CSP 7861, LS.current synthetic 12-round turn: exactly 12 .chround blocks, sanitized markdown; no model engine started."
  },
  {
   "id": "DoD.undo-revert",
@@ -607,7 +619,8 @@
   "verify": [
    "dev server, scratch workspace"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: isolated 7861 scratch example.py; actual Undo button restored value 5 to 4. Two real backup fixtures bound to a synthetic turn; actual Revert turn button restored value 4 to 2, with readback through workspace API."
  },
  {
   "id": "DoD.compact",
@@ -616,7 +629,8 @@
   "verify": [
    "dev server"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: isolated 7861, entered /compact through actual composer send path; 10 messages became 5 with a checkpoint; no engine call."
  },
  {
   "id": "DoD.ocr-read-file",
@@ -625,7 +639,8 @@
   "verify": [
    "check_agent OCR checks + check_document.py"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: Full check_agent file/OCR routing checks and native check_document pass. New check_harness_ocr.py (run by build.sh after reader compilation) creates a scanned PDF, calls actual read_file(path), verifies on_device_ocr, date extraction and page clamping. Full build exit 0."
  },
  {
   "id": "DoD.terminal-reattach",
@@ -634,7 +649,8 @@
   "verify": [
    "dev server"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: isolated 7861 terminal in /private/tmp/ls-plan-dev/scratch; after page reload same terminal b7e145f2bbfe reattached and replayed p3_reattach_marker."
  },
  {
   "id": "DoD.model-switch-ui",
@@ -643,7 +659,8 @@
   "verify": [
    "dev server"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: fetch POST /api/chat stubbed client-side; synthetic x_engine switching showed Loading Synthetic P3 model, ready cleared it, final answer rendered. No engine launched."
  },
  {
   "id": "DoD.save-diagnostics",
@@ -652,7 +669,8 @@
   "verify": [
    "dev server, scratch workspace"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: Code view on scratch example.py, invalid Python Save showed Syntax error, corrected Save showed Syntax OK, Diff mode opened. Real workspace save API and backups used."
  },
  {
   "id": "DoD.approval-prompts",
@@ -661,7 +679,8 @@
   "verify": [
    "dev server, synthetic x_approval"
   ],
-  "passes": false
+  "passes": true,
+  "note": "2026-10-18: synthetic SSE approvals in actual generate path: 1 -> allow, 2 -> allow_session, 3 -> feedback decline, Esc -> deny. Shift+Tab changed ask to accept_edits. Actual client reply bodies captured with a stubbed approval endpoint; no execution."
  },
  {
   "id": "DoD.flags-listed",

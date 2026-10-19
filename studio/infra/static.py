@@ -14,3 +14,13 @@ class FreshStaticFiles(StaticFiles):
         if str(full_path).endswith((".mjs", ".js")):
             response.headers["Content-Type"] = "text/javascript; charset=utf-8"
         return response
+
+
+class MediaStaticFiles(StaticFiles):
+    """The image gallery: generated PNGs (unique names) and their settings sidecars, shown inline and cached privately."""
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        response.headers["Cache-Control"] = "private, max-age=86400"
+        raster = str(full_path).lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))
+        response.headers["Content-Disposition"] = "inline" if raster else "attachment"
+        return response

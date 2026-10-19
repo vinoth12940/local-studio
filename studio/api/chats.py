@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, HTTPException
 
 from studio.config import CHATS
 from studio.services.agent.loop import _forget_chat_context
+from studio.storage.atomic import write_text_atomic
 from studio.storage.chats import _chat_path
 
 router = APIRouter()
@@ -41,7 +42,7 @@ def get_chat(cid: str):
 def put_chat(cid: str, chat: dict = Body(...)):
     chat["id"] = cid
     chat["updated"] = time.time()
-    _chat_path(cid).write_text(json.dumps(chat))
+    write_text_atomic(_chat_path(cid), json.dumps(chat))           # never a half-written chat (refactor P3)
     return {"ok": True, "updated": chat["updated"]}
 
 

@@ -320,6 +320,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let sem = DispatchSemaphore(value: 0)
         var req = URLRequest(url: probeURL)
         req.timeoutInterval = 1.5
+        if let token = try? String(contentsOfFile: stateDir() + "/data/.api-token", encoding: .utf8) {
+            req.setValue("Bearer " + token.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "Authorization")
+        }
         URLSession.shared.dataTask(with: req) { _, resp, _ in
             ok = (resp as? HTTPURLResponse)?.statusCode == 200
             sem.signal()
@@ -330,8 +333,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     func showUI() {
         // Skip the web cache: after an update a cached copy of the old page would hide new features.
-        webView.load(URLRequest(url: uiURL, cachePolicy: .reloadIgnoringLocalCacheData))
-        window.contentView = webView
+        let load = {
+            self.webView.load(URLRequest(url: uiURL, cachePolicy: .reloadIgnoringLocalCacheData))
+            self.window.contentView = self.webView
+        }
+        if let token = try? String(contentsOfFile: stateDir() + "/data/.api-token", encoding: .utf8),
+           let cookie = HTTPCookie(properties: [
+               .domain: "127.0.0.1", .path: "/", .name: "local_studio_token_7860",
+               .value: token.trimmingCharacters(in: .whitespacesAndNewlines),
+               HTTPCookiePropertyKey("HttpOnly"): "TRUE", .sameSitePolicy: HTTPCookieStringPolicy.sameSiteStrict
+           ]) {
+            webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie, completionHandler: load)
+        } else { load() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }

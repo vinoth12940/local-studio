@@ -5,6 +5,7 @@ Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
 
 import asyncio
 import json
+import threading
 import queue
 import time
 import uuid
@@ -23,6 +24,7 @@ from studio.config import AGENT_BUSY_MSG, agent_engine, agent_lock, ENGINES
 from studio.infra.harness_args import _normalize_harness_args, _parse_harness_args
 from studio.infra.sse import _sse
 from studio.infra.workspace import _chat_turn_id, _in_workspace
+from studio.security.execution import _python_network
 from studio.security.fences import _harness_path_fence
 from studio.security.harness_gate import _chat_session_perms, harness_gate
 from studio.services.agent.loop import clip_agent_context, extract_tool_call
@@ -33,12 +35,30 @@ from studio.services.harness import (
     _summarize_messages_deterministic, _with_agent_note, CHAT_ACTION_TOOLS, CHAT_READ_TOOLS, CHAT_TOOL_ROUNDS,
     CHAT_TOOLS, SLASH_COMMANDS,
 )
-from studio.services.mcp_custom import _get_mcp_chat_tools
+from studio.services.mcp_custom import _get_mcp_chat_tools, _untrusted_mcp_result
 from studio.services.models import chat_model
+from studio.security.redact import redact_obj, StreamRedactor
+from studio.storage.atomic import write_text_atomic
 from studio.storage.chats import _chat_path
+from studio.storage.flags import flag
 from studio.storage.settings import load_settings
 
 router = APIRouter()
+
+
+def _tool_output_sink(out_q):
+    """Where a running tool's output lines go before they stream to the page: redacted when security.redact is on."""
+    r = StreamRedactor() if flag("security.redact") else None
+    lock = threading.Lock()
+    def sink(chunk):
+        with lock:
+            out_q.put(r.feed(chunk) if r else chunk)
+    def flush():
+        with lock:
+            if r:
+                out_q.put(r.finish())
+    sink.flush = flush
+    return sink
 
 
 @router.post("/api/chat/sessions/{sid}/reply")
@@ -81,7 +101,7 @@ def api_compact_chat(body: dict = Body(...)):
                 c = json.loads(p.read_text())
                 c["messages"] = new_messages
                 c["updated"] = time.time()
-                p.write_text(json.dumps(c))
+                write_text_atomic(p, json.dumps(c))
             except Exception:
                 pass
     return {"ok": True, "compacted": True, "summary": summary,
@@ -132,6 +152,7 @@ async def chat(request: Request):
         workspace = str(workspace_path)
     else:
         workspace = None
+    python_network = bool(chat_id and chat_id in load_settings().get("harness", {}).get("python_network_chats", []))
     raw_messages = json.loads(json.dumps(body.get("messages", [])))
     use_files = bool(body.pop("use_files", False))
     messages, needs_vision = build_messages(body.get("messages", []))
@@ -268,6 +289,8 @@ async def chat(request: Request):
                         cand_doc = file_candidates.get(args.get("file_id"))
                         if cand_doc and cand_doc.get("name"):
                             summary = f"Reading file: {cand_doc['name']}"
+                    if flag("security.redact"):
+                        summary = redact_obj(summary)
                     key = f"{round_no}-{index}"
                     yield _sse({"x_tool": {"id": key, "name": name, "status": "running", "summary": summary}})
                     meta = None
@@ -308,14 +331,20 @@ async def chat(request: Request):
                                 if user_choice == "allow_session" and chat_id and meta.get("perm_scope"):
                                     _chat_session_perms.setdefault(chat_id, set()).add(meta["perm_scope"])
                                 out_q: queue.Queue = queue.Queue()
+                                sink = _tool_output_sink(out_q)
                                 def _run_act():
-                                    _chat_turn_id.set(turn_id)
-                                    return _in_workspace(workspace, _chat_action_tool, name, args, out_q.put)
+                                    network_token = _python_network.set(python_network)
+                                    try:
+                                        _chat_turn_id.set(turn_id)
+                                        return _in_workspace(workspace, _chat_action_tool, name, args, sink)
+                                    finally:
+                                        _python_network.reset(network_token)
                                 fut = asyncio.get_running_loop().run_in_executor(None, _run_act)
                                 while not fut.done():
                                     while not out_q.empty():
                                         yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
                                     await asyncio.sleep(0.04)
+                                sink.flush()
                                 while not out_q.empty():
                                     yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
                                 result = await fut
@@ -325,14 +354,20 @@ async def chat(request: Request):
                                           "declined": True, **({"user_feedback": feedback} if feedback else {})}
                         else:
                             out_q = queue.Queue()
+                            sink = _tool_output_sink(out_q)
                             def _run_act_safe():
-                                _chat_turn_id.set(turn_id)
-                                return _in_workspace(workspace, _chat_action_tool, name, args, out_q.put)
+                                network_token = _python_network.set(python_network)
+                                try:
+                                    _chat_turn_id.set(turn_id)
+                                    return _in_workspace(workspace, _chat_action_tool, name, args, sink)
+                                finally:
+                                    _python_network.reset(network_token)
                             fut = asyncio.get_running_loop().run_in_executor(None, _run_act_safe)
                             while not fut.done():
                                 while not out_q.empty():
                                     yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
                                 await asyncio.sleep(0.04)
+                            sink.flush()
                             while not out_q.empty():
                                 yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
                             result = await fut
@@ -341,7 +376,11 @@ async def chat(request: Request):
                     if name == "web_search" and result.get("results"): unread_web_results = True
                     if name == "read_webpage": unread_web_results = False
                     if await request.is_disconnected(): return
+                    if flag("security.redact"):
+                        result = redact_obj(result)
                     detail = _chat_tool_detail(name, args, result, meta)
+                    if flag("security.redact"):
+                        detail = redact_obj(detail)
                     yield _sse({"x_tool": {"id": key, "name": name, "status": "error" if result.get("error") else "done", "summary": summary,
                                           **({"detail": detail} if detail else {}),
                                           **({"backup_id": result["backup_id"]} if result.get("backup_id") else {}),
@@ -376,7 +415,7 @@ async def chat(request: Request):
                     if call_counts[call_key] >= 2 and name != "get_current_datetime" and isinstance(model_result, dict):
                         model_result = {**model_result, "loop_warning": "You have called this exact tool with identical arguments multiple times. Synthesize the results so far, try a different step, or answer the user."}
                     body["messages"].append({"role": "tool", "tool_call_id": call["id"], "name": name,
-                                             "content": json.dumps(model_result, ensure_ascii=False)})
+                                             "content": _untrusted_mcp_result(model_result) if name.startswith("mcp__") else json.dumps(model_result, ensure_ascii=False)})
             else:
                 yield _sse({"error": "Stopped after the tool-call limit. I could not finish verifying this request; no unsupported answer was substituted."})
                 yield "data: [DONE]\n\n"

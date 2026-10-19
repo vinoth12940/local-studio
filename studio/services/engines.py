@@ -13,7 +13,9 @@ import time
 import httpx
 
 from studio import config as studio_config
+from studio.infra.logs import open_log
 from studio.config import BIN, DSPARK_PY, ENGINES, LLAMA_SERVER, LOGS
+from studio.storage.atomic import write_text_atomic
 from studio.infra.system import _pid_alive, _read_pid
 from studio.services.models import chat_models, snapshot_file
 
@@ -53,7 +55,7 @@ def engine_state():
         # settings (they may already name the model we're about to switch to)
         st = {"mode": mode, "model_id": _infer_running_model(mode)}
         if st["model_id"]:
-            ENGINE_STATE.write_text(json.dumps(st))
+            write_text_atomic(ENGINE_STATE, json.dumps(st))
     return st
 
 
@@ -89,7 +91,7 @@ def _uses_mlx_lm(repo):
 
 
 def _start_engine(mode, m):
-    log = open(LOGS / f"{ENGINES[mode]['pid']}.log", "w")
+    log = open_log(LOGS / f"{ENGINES[mode]['pid']}.log", "w")
     if mode == "text":
         cmd = [str(BIN / "mlx-dspark"), "serve", "--model", m["repo"], "--context-window", str(studio_config.CONTEXT),
                "--host", "127.0.0.1", "--port", "8080"]
@@ -109,7 +111,7 @@ def _start_engine(mode, m):
             cmd += ["--mmproj", str(snapshot_file(m["repo"], m["mmproj"]))]
     proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     (LOGS / f"{ENGINES[mode]['pid']}.pid").write_text(str(proc.pid))
-    ENGINE_STATE.write_text(json.dumps({"mode": mode, "model_id": m["id"]}))
+    write_text_atomic(ENGINE_STATE, json.dumps({"mode": mode, "model_id": m["id"]}))
     return proc.pid
 
 

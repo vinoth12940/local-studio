@@ -29,6 +29,8 @@ xcrun swiftc -O -target arm64-apple-macos14.0 -framework AppKit -framework PDFKi
 cp "$APP/Contents/MacOS/DocumentReader" "$ROOT/build/DocumentReader"
 $UV run -q --no-project --python 3.12 --with reportlab --with pillow python "$HERE/check_document.py" "$APP/Contents/MacOS/DocumentReader"
 
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_harness_ocr.py"
+
 echo "==> Bundling code"
 for f in app.py index.html catalog.json requirements-app.txt search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh; do
   cp "$ROOT/$f" "$APP/Contents/Resources/app/"

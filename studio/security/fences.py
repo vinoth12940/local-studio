@@ -17,7 +17,7 @@ from studio.infra.workspace import _harness_root
 
 _HARNESS_SKIP_DIRS = frozenset((".git", "node_modules", "venv", ".venv", "__pycache__", "build", "dist", "target", "DerivedData", "Pods", "site-packages", ".Trash"))
 _HARNESS_SENSITIVE_NAMES = frozenset((".ssh", ".aws", ".gnupg", ".kube", ".npmrc", ".pypirc", ".netrc", "Keychains", "Passwords", "Cookies"))
-_HARNESS_SECRET_GLOBS = ("*.pem", "*.key", "*.p12", "*.pfx", "*.keychain*", "id_rsa*", "id_ed25519*", "id_ecdsa*", "credentials.json", "secrets.json")
+_HARNESS_SECRET_GLOBS = ("*.pem", "*.key", "*.p12", "*.pfx", "*.keychain*", "id_rsa*", "id_ed25519*", "id_ecdsa*", "credentials.json", "secrets.json", ".api-token", ".api-bootstrap")
 _HARNESS_ALLOWED_ENV = frozenset((".env.example", ".env.sample", ".env.template"))
 _HARNESS_SYS_PREFIXES = ("/System", "/Library", "/usr", "/bin", "/sbin", "/etc", "/var", "/private/etc", "/Applications")
 

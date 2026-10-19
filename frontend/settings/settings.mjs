@@ -37,10 +37,12 @@ $("mcpList").onclick = async (e) => {
   const tb = e.target.closest("[data-mcptest]");
   if (tb) {
     const id = tb.dataset.mcptest;
+    const server = mcpServers.find((s) => s.id === id);
+    if (!server || !await confirmBox(`Start MCP server ${id}?`, server.launch_preview || [server.command, ...(server.args || [])].join(" "), "Start server")) return;
     tb.disabled = true; tb.textContent = "Testing…";
     try {
-      const r = await jpost(`/api/mcp/servers/${encodeURIComponent(id)}/test`);
-      toast(`${id}: ${r.count || 0} tool(s) discovered`);
+      const r = await jpost(`/api/mcp/servers/${encodeURIComponent(id)}/test`, { approve_launch: server.launch_fingerprint });
+      toast(`${id}: ${r.tools_count || 0} tool(s) discovered`);
       loadMcp();
     } catch (err) { toast(err.message); tb.disabled = false; tb.textContent = "Test"; }
     return;

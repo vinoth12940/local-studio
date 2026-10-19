@@ -6,6 +6,7 @@ Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
 import json
 
 from studio.config import AGENT_DEFAULTS, CATALOG, SEARCH_DEFAULTS, SETTINGS
+from studio.storage.atomic import write_text_atomic
 
 
 def load_settings():
@@ -24,4 +25,4 @@ def load_settings():
 
 
 def save_settings(s):
-    SETTINGS.write_text(json.dumps(s, indent=2))
+    write_text_atomic(SETTINGS, json.dumps(s, indent=2))           # never a half-written settings.json (refactor P3)

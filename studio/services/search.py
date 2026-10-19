@@ -14,6 +14,7 @@ import httpx
 from fastapi import HTTPException
 
 from studio import config
+from studio.infra.logs import open_log
 from studio.services import models
 from studio.config import LOGS, ROOT, SEARCH_DEPS_OK, SEARCH_DIR, SEARCH_PORT, SEARCH_REQS, STATE, UV
 from studio.infra.system import _pid_alive, _read_pid
@@ -52,7 +53,7 @@ def _search_process():
 def _start_search():
     if _search_running() or _search_process():
         return
-    log = open(LOGS / "search.log", "a")
+    log = open_log(LOGS / "search.log", "a")
     # Relative file names with cwd=ROOT: the bundled path contains a space, which would defeat
     # stop.sh's pkill patterns.
     proc = subprocess.Popen([UV, "run", "--no-project", "--python", "3.12", "--with-requirements", SEARCH_REQS.name,
@@ -82,7 +83,7 @@ def _enable_search():
     try:
         if not search_deps_installed():
             search_job.update(step="Installing search components (about 1 GB, one time)")
-            with open(LOGS / "search-setup.log", "w") as log:
+            with open_log(LOGS / "search-setup.log", "w") as log:
                 rc = subprocess.run(["/bin/zsh", str(ROOT / "setup.sh"), "--search"], stdout=log, stderr=subprocess.STDOUT,
                                     env={**os.environ, "LOCAL_STUDIO_HOME": str(STATE)}).returncode
             if rc != 0 or not search_deps_installed():

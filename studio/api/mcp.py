@@ -9,6 +9,7 @@ from fastapi import APIRouter, Body, HTTPException
 
 from studio.services.mcp_custom import (
     _custom_mcp_clients, _custom_mcp_lock, _custom_mcp_tools_cache, _discover_server_tools, _sanitize_mcp_id,
+    _mcp_fingerprint, _mcp_launch_preview,
 )
 from studio.storage.settings import load_settings, save_settings
 
@@ -27,6 +28,8 @@ def api_get_mcp_servers():
         cli = _custom_mcp_clients.get(sid)
         out.append({
             **srv,
+            "launch_preview": _mcp_launch_preview(srv),
+            "launch_fingerprint": _mcp_fingerprint(srv),
             "running": bool(cli and cli.alive),
             "tools_count": len(cached),
             "tools": [{"name": t["name"], "description": t["description"]} for t in cached]
@@ -58,6 +61,8 @@ def api_save_mcp_server(body: dict = Body(...)):
     servers = [x for x in (s.get("mcp_servers") or []) if isinstance(x, dict)]
     idx = next((i for i, x in enumerate(servers) if x.get("id") == sid), None)
     if idx is not None:
+        if servers[idx].get("launch_approved") == _mcp_fingerprint(entry):
+            entry["launch_approved"] = servers[idx]["launch_approved"]
         servers[idx] = entry
     else:
         servers.append(entry)
@@ -89,11 +94,16 @@ def api_delete_mcp_server(server_id: str):
 
 
 @router.post("/api/mcp/servers/{server_id}/test")
-def api_test_mcp_server(server_id: str):
+def api_test_mcp_server(server_id: str, body: dict = Body(default={})):
     servers = load_settings().get("mcp_servers") or []
     srv = next((x for x in servers if isinstance(x, dict) and x.get("id") == server_id), None)
     if not srv:
         raise HTTPException(404, f"MCP server '{server_id}' not found.")
+    if body.get("approve_launch") == _mcp_fingerprint(srv):
+        srv["launch_approved"] = _mcp_fingerprint(srv)
+        s = load_settings()
+        s["mcp_servers"] = [srv if x.get("id") == server_id else x for x in s.get("mcp_servers", [])]
+        save_settings(s)
     try:
         tools = _discover_server_tools(srv, force=True)
         return {"ok": True, "server_id": server_id, "tools_count": len(tools),

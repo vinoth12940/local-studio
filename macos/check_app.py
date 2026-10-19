@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -359,6 +360,129 @@ def request_log_is_off_by_default_and_minimal_when_on():
         app.SETTINGS.unlink(missing_ok=True)
         log.unlink(missing_ok=True)
         c.delete("/api/chats/0123456789abcdef")
+
+
+def _with_settings(obj):
+    app.SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    app.SETTINGS.write_text(json.dumps(obj))
+
+
+@check
+def every_response_says_nosniff_and_csp_follows_its_flag():
+    """X-Content-Type-Options: nosniff on pages, modules, API answers, media and LocalOnly's 403s; the CSP header only when
+    the security.csp flag asks for it (off by default), report-only or enforced; violation reports land in logs/csp.log."""
+    from fastapi.testclient import TestClient
+    import studio.security.headers as headers
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    app.GALLERY.mkdir(parents=True, exist_ok=True)
+    (app.GALLERY / "n.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    for r in (c.get("/"), c.get("/frontend/main.mjs"), c.get("/api/system"), c.get("/gallery/n.png"),
+              c.get("/api/system", headers={"host": "evil.example"})):
+        assert r.headers.get("x-content-type-options") == "nosniff", (r.url, r.status_code, dict(r.headers))
+        assert not any(k.startswith("content-security-policy") for k in r.headers), "no CSP unless the flag is set"
+    g = c.get("/gallery/n.png")
+    assert g.headers["content-disposition"] == "inline" and g.headers["cache-control"] == "private, max-age=86400"
+    try:
+        _with_settings({"security": {"csp": "report-only"}})
+        r = c.get("/")
+        assert r.headers["content-security-policy-report-only"] == headers.CSP and "content-security-policy" not in r.headers
+        for needed in ("https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://cdn.jsdelivr.net", "frame-ancestors 'none'"):
+            assert needed in headers.CSP, needed
+        assert "'unsafe-inline'" not in headers.CSP.split("style-src")[0], "scripts never run inline"
+        _with_settings({"security": {"csp": "enforce"}})
+        assert c.get("/").headers["content-security-policy"] == headers.CSP
+        (app.LOGS / "csp.log").unlink(missing_ok=True)
+        assert c.post("/api/csp-report", content=b'{"csp-report":{"violated-directive":"script-src"}}',
+                      headers={"content-type": "application/csp-report"}).status_code == 204
+        assert "violated-directive" in (app.LOGS / "csp.log").read_text()
+        assert c.post("/api/csp-report", content=b"{}", headers={"origin": "https://evil.example"}).status_code == 403
+    finally:
+        app.SETTINGS.unlink(missing_ok=True)
+    ui = "\n".join(p.read_text() for p in [REPO / "index.html"] + sorted((REPO / "frontend").glob("**/*.mjs")))
+    import re
+    assert not re.search(r"<[^>]+\son[a-z]+\s*=", ui), "an inline event handler would break the enforced CSP"
+    assert "<script>" not in (REPO / "index.html").read_text(), "no inline script either"
+
+
+@check
+def uploads_are_sniffed_only_when_the_flag_is_on():
+    """security.upload_sniff: off, an upload is parsed by its extension as before; on, bytes that do not match the name
+    (an HTML file called .png, a text file called .pdf, binary called .txt) get 415. Stored names are random either way."""
+    from fastapi.testclient import TestClient
+    from studio.security.uploads import mismatch, sniff
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    assert sniff(b"\x89PNG\r\n\x1a\nxx") == "png" and sniff(b"%PDF-1.7") == "pdf" and sniff(b"PK\x03\x04") == "zip"
+    assert sniff(b"\xff\xd8\xff\xe0") == "jpeg" and sniff(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == "webp" and sniff(b"<html>") is None
+    assert mismatch(b"<html><script>alert(1)</script>", ".png") and mismatch(b"hello", ".pdf") and mismatch(b"ab\x00cd", ".txt")
+    assert mismatch(b"\x89PNG\r\n\x1a\n", ".png") is None and mismatch(b"plain text", ".md") is None
+    fake_png = ("x.png", b"<html><script>alert(1)</script></html>", "image/png")
+    assert c.post("/api/attachments", files={"file": fake_png}).status_code != 415, "off: the old behavior"
+    try:
+        _with_settings({"security": {"upload_sniff": True}})
+        r = c.post("/api/attachments", files={"file": fake_png})
+        assert r.status_code == 415 and "not PNG" in r.json()["detail"], r.text
+        assert c.post("/api/attachments", files={"file": ("n.pdf", b"just text", "application/pdf")}).status_code == 415
+        ok = c.post("/api/attachments", files={"file": ("note.md", b"# hello\nworld", "text/markdown")})
+        assert ok.status_code == 200 and re.fullmatch(r"[a-f0-9]{16}", ok.json()["id"]), ok.text
+    finally:
+        app.SETTINGS.unlink(missing_ok=True)
+
+
+@check
+def settings_and_chats_are_written_atomically():
+    """A failure while writing never leaves a half-written settings.json or chat: the old file stays until the new one is
+    complete (temp file + os.replace), and no temp file is left behind."""
+    import studio.storage.atomic as atomic
+    from fastapi.testclient import TestClient
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    app.save_settings({"chat_model": "keep-me"})
+    cid = "0a1b2c3d4e5f6071"
+    assert c.put(f"/api/chats/{cid}", json={"title": "old", "messages": []}).status_code == 200
+    real = atomic.os.replace
+    atomic.os.replace = lambda *a: (_ for _ in ()).throw(OSError("disk full"))
+    try:
+        for fn in (lambda: app.save_settings({"chat_model": "half"}),
+                   lambda: c.put(f"/api/chats/{cid}", json={"title": "new", "messages": [{"role": "user", "content": "x" * 1000}]})):
+            try:
+                fn()
+            except OSError:
+                pass
+    finally:
+        atomic.os.replace = real
+    assert json.loads(app.SETTINGS.read_text())["chat_model"] == "keep-me"
+    assert c.get(f"/api/chats/{cid}").json()["title"] == "old"
+    assert not list(app.SETTINGS.parent.glob(".*.tmp")) and not list(app.CHATS.glob(".*.tmp")), "temp files are cleaned up"
+    c.delete(f"/api/chats/{cid}")
+    app.SETTINGS.unlink(missing_ok=True)
+
+
+@check
+def secrets_in_tool_output_are_redacted_when_the_flag_is_on():
+    """security.redact: API keys, tokens and private keys in a tool's live output and step details become [redacted ...];
+    a private key split over several output chunks is redacted whole. Off (the default), output passes unchanged."""
+    import queue
+    import studio.api.chat as chat_api
+    from studio.security.redact import redact, StreamRedactor
+    secrets = {"sk-ant-api03-" + "a" * 40: "anthropic key", "sk-proj-" + "b" * 30: "api key", "AKIA" + "C" * 16: "aws access key",
+               "ghp_" + "d" * 36: "github token", "github_pat_" + "e" * 30: "github token", "xoxb-1234567890-abcdefghij": "slack token"}
+    for s, kind in secrets.items():
+        out = redact(f"token={s} done")
+        assert s not in out and f"[redacted {kind}]" in out, out
+    assert redact("sk-short and ordinary words") == "sk-short and ordinary words"
+    pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAAB3Nza\nC1yc2EAAA\n-----END OPENSSH PRIVATE KEY-----\n"
+    assert "AAAAB3Nza" not in redact("key:\n" + pem + "after") and "after" in redact("key:\n" + pem + "after")
+    r = StreamRedactor()
+    streamed = "".join(r.feed(line) for line in ["before\n"] + pem.splitlines(keepends=True) + ["after\n"])
+    assert "AAAAB3Nza" not in streamed and "C1yc2EAAA" not in streamed and "before" in streamed and "after" in streamed, streamed
+    q = queue.Queue()
+    chat_api._tool_output_sink(q)("AKIA" + "C" * 16 + "\n")
+    assert q.get_nowait() == "AKIA" + "C" * 16 + "\n", "off: unchanged"
+    try:
+        _with_settings({"security": {"redact": True}})
+        chat_api._tool_output_sink(q)("AKIA" + "C" * 16 + "\n")
+        assert q.get_nowait() == "[redacted aws access key]\n"
+    finally:
+        app.SETTINGS.unlink(missing_ok=True)
 
 
 @check
@@ -730,6 +854,96 @@ def code_root_and_version_stay_in_app_folder():
         if "APP_VERSION" in vars(mod):
             assert mod.APP_VERSION == literal, (mod.__name__, mod.APP_VERSION)
 
+
+
+@check
+def uploads_bound_reads_and_reject_escaped_media_paths():
+    from fastapi.testclient import TestClient
+    from starlette.datastructures import UploadFile
+    from unittest.mock import patch
+    import studio.api.attachments as attachments
+    class LargeUpload(UploadFile):
+        async def read(self, size=-1):
+            assert size == 60 * 2**20 + 1, "must bound the read before allocating the entire upload"
+            return b"x" * size
+    try:
+        asyncio.run(attachments.upload_attachment(LargeUpload(filename="large.txt", file=None)))
+        assert False, "oversized upload accepted"
+    except HTTPException as exc:
+        assert exc.status_code == 413
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    aid = "a" * 16
+    outside = TMP / "outside.jpg"; outside.write_bytes(b"private")
+    media = app.UPLOADS / f"{aid}-0.jpg"; media.symlink_to(outside)
+    try:
+        assert c.get(f"/api/attachments/{aid}/{media.name}").status_code == 400
+    finally:
+        media.unlink()
+    media.write_bytes(b"image")
+    result = c.get(f"/api/attachments/{aid}/{media.name}")
+    assert result.status_code == 200 and result.headers["content-disposition"].startswith("inline;")
+    assert result.headers["cache-control"].startswith("private")
+    media.unlink()
+    for name in ("active.html", "active.svg"):
+        (app.GALLERY / name).write_text("<script>alert(1)</script>")
+        assert c.get("/gallery/" + name).headers["content-disposition"] == "attachment"
+    # Metadata and engine state use the same crash-safe writer as settings/chats.
+    with patch("studio.api.attachments.write_text_atomic", side_effect=OSError("disk full")):
+        c_no_raise = TestClient(app.app, base_url="http://127.0.0.1:7860", raise_server_exceptions=False)
+        result = c_no_raise.post("/api/attachments", files={"file": ("note.txt", b"hello", "text/plain")})
+        assert result.status_code == 500 and result.headers["x-content-type-options"] == "nosniff"
+    assert not list(app.UPLOADS.glob(".*.tmp"))
+    import studio.services.engines as engines
+    with patch.object(engines, "running_mode", return_value="text"), \
+         patch.object(engines, "_infer_running_model", return_value="p3-fake-model"), \
+         patch.object(engines, "write_text_atomic", wraps=engines.write_text_atomic) as writer:
+        engines.ENGINE_STATE.unlink(missing_ok=True)
+        assert engines.engine_state()["model_id"] == "p3-fake-model"
+        assert writer.call_count == 1
+    engines.ENGINE_STATE.unlink(missing_ok=True)
+
+
+@check
+def api_token_requires_private_credentials_and_bootstrap_is_one_time():
+    import stat
+    from fastapi.testclient import TestClient
+    from studio.security.api_token import TOKEN_FILE, BOOTSTRAP_FILE
+    original = app.load_settings()
+    app.save_settings({**original, "security": {"api_token": True}})
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    try:
+        assert c.get("/api/health").status_code == 200
+        assert c.get("/api/health").json()["engine"] == {"mode": None, "model_id": None}
+        assert c.get("/api/system").status_code == 200
+        token = TOKEN_FILE.read_text()
+        ticket = BOOTSTRAP_FILE.read_text()
+        assert len(bytes.fromhex(token)) == 32 and ticket != token
+        for path in (TOKEN_FILE, BOOTSTRAP_FILE):
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        for path in ("/", "/frontend/main.mjs", "/api/chats", "/gallery/nope", "/docs"):
+            r = c.get(path)
+            assert r.status_code == 401 and r.json()["code"] == "authentication_required", (path, r.text)
+        assert c.get("/api/chats", headers={"Authorization": "Bearer wrong"}).status_code == 401
+        assert c.get("/api/chats", headers={"Authorization": "Bearer " + token}).status_code == 200
+        assert c.get("/api/chats", headers={"Authorization": "Bearer " + token, "Origin": "https://evil.example"}).status_code == 403
+        assert c.get("/?t=" + token, follow_redirects=False).status_code == 401, "the bearer is not a bootstrap ticket"
+        r = c.get("/?t=" + ticket, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/"
+        assert "httponly" in r.headers["set-cookie"].lower() and "samesite=strict" in r.headers["set-cookie"].lower()
+        assert c.get("/api/chats").status_code == 200
+        assert not BOOTSTRAP_FILE.exists()
+        assert c.get("/?t=" + ticket, follow_redirects=False).status_code == 401
+        assert c.get("/?t=%E2%98%83", follow_redirects=False).status_code == 401
+        for path in (TOKEN_FILE, BOOTSTRAP_FILE):
+            try:
+                app._harness_path_fence(str(path))
+                assert False, "model tool can read API credentials"
+            except ValueError:
+                pass
+    finally:
+        app.save_settings(original)
+        c.get("/api/system")  # disable/clear the in-process credential before later tests
+        TOKEN_FILE.unlink(missing_ok=True); BOOTSTRAP_FILE.unlink(missing_ok=True)
 
 if __name__ == "__main__":
     want = sys.argv[1:]

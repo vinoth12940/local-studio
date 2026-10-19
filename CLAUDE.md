@@ -122,9 +122,10 @@ names it had there. Imports only flow down this list (no cycles); `studio/main.p
 - `config.py`: `ROOT`/`STATE` and the paths under them, ports, `ENGINES`, `CATALOG`, `agent_lock`
 - `infra/`: `sse`, `system` (memory, pids, the clock tool), `text`, `edits` (edit matching, diff previews, post-edit
   diagnostics), `harness_args` (argument repair), `workspace` (the `_chat_workspace` ContextVar), `processes`
-  (`run_shell`/`run_python` subprocesses), `mcp_client` (stdio MCP client + the CuaDriver allowlist), `request_log`
-- `security/`: `local_only`, `fences` (path fence, shell gate, read-only allowlist), `harness_gate`, `agent_gate`
-- `storage/`: `settings`, `flags`, `memory`, `backups`, `chats`
+  (`run_shell`/`run_python` subprocesses), `logs` (opt-in redacting subprocess descriptors and Python formatters), `mcp_client` (stdio MCP client + the CuaDriver allowlist), `request_log`
+- `security/`: `local_only`, `fences` (path fence, shell gate, read-only allowlist), `harness_gate`, `agent_gate`,
+  `headers` (nosniff/CSP), `uploads` (magic signatures), `redact` (tokens and streamed PEM blocks)
+- `storage/`: `settings`, `flags`, `memory`, `backups`, `chats`, `atomic`
 - `services/`: `models`, `engines`, `attachments`, `images`, `search`, `terminal`, `web`, `mcp_custom`, `agent/{cua,views,loop}`,
   `harness` (the chat agent loop's tools, sessions, sub-agents and compaction), `updates`
 - `api/`: one `APIRouter` per area (`system`, `models`, `engines`, `chat`, `memory`, `undo`, `processes`, `terminal`, `mcp`,
@@ -151,7 +152,11 @@ must keep their order), the SSE events and their fields plus the UI's handlers (
 
 **Flags.** Behavior changes from the refactor sit behind flags in `data/settings.json` that default to the old behavior
 (`studio/storage/flags.py`, `FLAGS`): `logging.json_requests` (off) writes slow, failing and non-GET requests to
-`logs/requests.jsonl`.
+`logs/requests.jsonl`. P3 adds `security.redact` (false), `security.upload_sniff` (false),
+`security.mcp_approval` (false), `security.api_token` (false), `harness.sandbox` (false),
+`harness.rlimits` (false), and `security.csp` ("off"; opt in with "report-only").
+See [docs/security.md](docs/security.md) for every flag, configuration examples, coverage and remaining P3 work.
+The user authorized completing the plan, including isolated enforcement validation. Production defaults remain unchanged.
 
 ### Code vs. user data
 

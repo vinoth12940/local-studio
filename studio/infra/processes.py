@@ -7,10 +7,13 @@ import os
 import signal
 import subprocess
 import threading
+import tempfile
 import time
 import uuid
 from pathlib import Path
 
+from studio.infra.logs import open_log
+from studio.security.execution import sandbox_command, resource_limits, limit_child, start_rss_watchdog
 from studio.config import LOGS
 
 
@@ -18,10 +21,19 @@ _bg_processes: dict[str, dict] = {}                          # proc_id -> backgr
 _bg_lock = threading.Lock()
 
 
-def _run_streamed_subprocess(argv, cwd, env, timeout=30, on_output=None):
+def _run_streamed_subprocess(argv, cwd, env, timeout=30, on_output=None, python=False, network=False):
     """Run a child process, streaming stdout/stderr lines to on_output(chunk) if provided, up to timeout."""
-    proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, env=env, start_new_session=True, bufsize=1)
+    temp = tempfile.TemporaryDirectory(prefix='ls-exec-', dir='/tmp')
+    try:
+        argv, env = sandbox_command(argv, cwd, env, python=python, temp=temp.name, network=network)
+        limits = resource_limits()
+        proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, env=env, start_new_session=True, bufsize=1,
+                                **({'preexec_fn': limit_child(limits)} if limits else {}))
+    except BaseException:
+        temp.cleanup()
+        raise
+    watchdog = start_rss_watchdog(proc, limits['rss_bytes']) if limits else None
     out_chunks, err_chunks = [], []
 
     def _reader(pipe, target, prefix=""):
@@ -44,9 +56,16 @@ def _run_streamed_subprocess(argv, cwd, env, timeout=30, on_output=None):
             os.killpg(proc.pid, signal.SIGKILL)
         except OSError:
             proc.kill()
+        proc.wait(timeout=5)
         raise ValueError(f"Execution timed out after {timeout} seconds")
+    finally:
+        if watchdog:
+            watchdog[0].set()
+        temp.cleanup()
     t_out.join(timeout=1)
     t_err.join(timeout=1)
+    if watchdog and watchdog[1].is_set():
+        raise ValueError('Execution exceeded the RSS memory limit; process group stopped.')
     return proc.returncode, "".join(out_chunks), "".join(err_chunks)
 
 
@@ -55,9 +74,26 @@ def _start_bg_shell(cmd: str, cwd: Path, env: dict) -> dict:
     LOGS.mkdir(parents=True, exist_ok=True)
     proc_id = uuid.uuid4().hex[:10]
     log_path = LOGS / f"bg-{proc_id}.log"
-    log_file = open(log_path, "w", encoding="utf-8")
-    proc = subprocess.Popen(["/bin/zsh", "-c", cmd], cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT,
-                            text=True, env=env, start_new_session=True)
+    log_file = open_log(log_path, "w", encoding="utf-8")
+    temp = tempfile.TemporaryDirectory(prefix='ls-bg-', dir='/tmp')
+    try:
+        argv, env = sandbox_command(['/bin/zsh', '-c', cmd], cwd, env, temp=temp.name)
+        limits = resource_limits()
+        proc = subprocess.Popen(argv, cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT,
+                                text=True, env=env, start_new_session=True,
+                                **({'preexec_fn': limit_child(limits)} if limits else {}))
+    except BaseException:
+        log_file.close()
+        temp.cleanup()
+        raise
+    watchdog = start_rss_watchdog(proc, limits['rss_bytes']) if limits else None
+    def reap():
+        proc.wait()
+        if watchdog:
+            watchdog[0].set()
+        log_file.close()
+        temp.cleanup()
+    threading.Thread(target=reap, daemon=True).start()
     entry = {"process_id": proc_id, "pid": proc.pid, "command": cmd, "cwd": str(cwd),
              "started": time.time(), "log_path": str(log_path), "proc": proc, "log_file": log_file}
     with _bg_lock:
@@ -67,7 +103,8 @@ def _start_bg_shell(cmd: str, cwd: Path, env: dict) -> dict:
     rc = proc.poll()
     initial_out = ""
     try:
-        log_file.flush()
+        if not getattr(log_file, "writer", log_file).closed:
+            log_file.flush()
         initial_out = log_path.read_text(encoding="utf-8", errors="replace")[:2000]
     except OSError:
         pass

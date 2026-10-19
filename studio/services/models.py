@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from studio.infra.logs import open_log
 from studio.config import CATALOG, HF_CLI, HF_HUB, LOGS
 from studio.storage.settings import load_settings, save_settings
 
@@ -119,7 +120,7 @@ downloads: dict[str, dict] = {}
 
 def _download(mid, parts, kind=None):
     job = downloads[mid]
-    log = open(LOGS / f"download-{mid}.log", "w")
+    log = open_log(LOGS / f"download-{mid}.log", "w")
     for repo, files in parts:
         cmd = [str(HF_CLI), "download", repo] + (files or [])
         proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)

@@ -12,6 +12,7 @@ import time
 import uuid
 
 from studio.config import LOGS
+from studio.security.redact import redact_obj
 from studio.storage.flags import flag
 
 LOG = LOGS / "requests.jsonl"
@@ -29,6 +30,8 @@ def _engine():
 
 
 def _write(entry):
+    if flag("security.redact"):
+        entry = redact_obj(entry)
     line = json.dumps(entry, separators=(",", ":")) + "\n"
     with _write_lock:
         try:

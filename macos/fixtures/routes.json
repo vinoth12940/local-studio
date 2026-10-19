@@ -57,6 +57,13 @@
  },
  {
   "methods": [
+   "POST"
+  ],
+  "path": "/api/csp-report",
+  "name": "api_csp_report"
+ },
+ {
+  "methods": [
    "GET"
   ],
   "path": "/api/busy",

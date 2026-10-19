@@ -1,5 +1,6 @@
-// The page's globals, set in one place (refactor P2). Inline handlers and innerHTML templates call these by name, and
-// window.LS is a console handle for debugging (CLAUDE.md: render synthetic turns into LS.current, then LS.renderThread()).
+// The page's globals, set in one place (refactor P2). There are no inline event handlers (the CSP refuses them): use delegated
+// listeners. window.LS is a console handle for debugging (CLAUDE.md: render synthetic turns into LS.current, then
+// LS.renderThread()).
 import * as main from "./main.mjs";
 import "./modules.mjs";                                   // the modules run in their original order first
 import * as core_util from "./core/util.mjs";
@@ -24,7 +25,6 @@ import * as agent_state from "./agent/state.mjs";
 import * as agent_agent from "./agent/agent.mjs";
 import * as settings_agent from "./settings/agent.mjs";
 
-window.showView = (...args) => ui_views.showView(...args);
 const SPACES = [main, core_util, core_markdown, ui_theme, ui_views, ui_engine, chat_list, chat_thread, chat_attachments, chat_composer, chat_live, chat_computer, images_images, code_editor, code_terminal, library_library, settings_settings, search_search, agent_helpers, agent_state, agent_agent, settings_agent];
 const STORES = () => [chat_attachments.attachmentsState, chat_list.listState, chat_thread.threadState, library_library.libraryState, search_search.searchState];            // names more than one module assigns live in these
 window.LS = new Proxy({}, {
