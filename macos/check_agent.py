@@ -6079,6 +6079,253 @@ def chat_idle_heartbeat_closes_pending_source_on_stop():
         asyncio.run(exercise())
 
 
+def _verification_setup(workspace, enabled=True, configured=True):
+    """Configure only the isolated test STATE, never a model-supplied policy."""
+    import shlex
+    workspace.mkdir(exist_ok=True)
+    (workspace / 'value.py').write_text('x = 1\n')
+    (workspace / 'verify.py').write_text("from pathlib import Path\nassert Path('value.py').read_text() == 'x = 2\\n'\nprint('actual check passed')\n")
+    command = shlex.join([sys.executable, '-I', 'verify.py'])
+    settings = app.load_settings()
+    settings['harness'].update({'verification_gate': enabled, 'verification_workspaces': {
+        str(workspace.resolve()): {'commands': [{'id': 'value-check', 'command': command}]}
+    } if configured else {}})
+    app.save_settings(settings)
+    return command
+
+
+def _verification_request(e, workspace, turns):
+    from unittest.mock import patch
+    with ChatEngine(turns=turns) as engine, patch('studio.api.chat.harness_gate', return_value=('safe', None, {})):
+        response = e.c.post('/api/chat', json={'model_id': TEXT_MLX, 'workspace': str(workspace),
+                           'messages': [{'role': 'user', 'content': 'Update value.py and verify the change'}]})
+    events = sse(response.text)
+    content = ''.join((event.get('choices') or [{}])[0].get('delta', {}).get('content', '') for event in events)
+    status = [event['x_verification'] for event in events if 'x_verification' in event]
+    return response, engine, content, status
+
+
+def _verification_edit(old='1', new='2'):
+    return chat_action_deltas('edit_file', json.dumps({'path': 'value.py', 'old_text': 'x = ' + old, 'new_text': 'x = ' + new}))
+
+
+@check
+def chat_verification_gate_preserves_default_and_requires_actual_checks():
+    for enabled, configured in ((False, False), (True, False), (True, True)):
+        with Env() as e:
+            ws = TMP / f'verification-basic-{enabled}-{configured}'
+            command = _verification_setup(ws, enabled, configured)
+            turns = [_verification_edit()]
+            if configured:
+                turns.append(chat_action_deltas('run_shell', json.dumps({'command': command})))
+            turns.append([chat_delta(content='CLAIM_ALL_DONE'), {'choices': [{'delta': {}, 'finish_reason': 'stop'}]}])
+            response, engine, content, status = _verification_request(e, ws, turns)
+            assert response.status_code == 200 and (ws / 'value.py').read_text() == 'x = 2\n', response.text
+            if not enabled:
+                assert content == 'CLAIM_ALL_DONE' and not status, response.text
+            elif not configured:
+                assert 'CLAIM_ALL_DONE' not in response.text and 'No trusted verification commands' in content, response.text
+                assert status[-1]['status'] == 'unverified'
+            else:
+                assert content == 'CLAIM_ALL_DONE' and status[-1]['status'] == 'verified', response.text
+                assert status[-1]['revision'] == 1 and 'actual check passed' in response.text
+                result = json.loads(engine.seen[2]['messages'][-1]['content'])
+                assert result['returncode'] == 0 and result['command'] == command and result['cwd'] == str(ws.resolve())
+    # A read-only conversation in a configured workspace has no completion requirement.
+    with Env() as e:
+        ws = TMP / 'verification-no-mutation'; _verification_setup(ws)
+        _, _, content, status = _verification_request(e, ws, [[chat_delta(content='Explanation only')]])
+        assert content == 'Explanation only' and status[-1]['status'] == 'not_required'
+
+
+@check
+def chat_verification_gate_rejects_failed_stale_and_wrong_evidence():
+    for scenario in ('failed', 'stale', 'wrong-command', 'wrong-cwd', 'syntax', 'test-only-failure', 'allowlisted-runner'):
+        with Env() as e:
+            ws = TMP / ('verification-' + scenario)
+            command = _verification_setup(ws)
+            turns = [] if scenario == 'test-only-failure' else [_verification_edit()]
+            if scenario == 'failed':
+                (ws / 'verify.py').write_text('raise AssertionError("real failure")\n')
+            if scenario == 'syntax':
+                turns = [_verification_edit(new='(')]
+                (ws / 'verify.py').write_text('print("check cannot override edit diagnostics")\n')
+            args = {'command': 'echo success'} if scenario == 'wrong-command' else {'command': command}
+            if scenario == 'wrong-cwd':
+                other = TMP / 'verification-other-cwd'; other.mkdir(exist_ok=True)
+                (other / 'verify.py').write_text('print("unrelated passing check")\n')
+                args['cwd'] = str(other)
+            turns.append(chat_action_deltas('run_shell', json.dumps(args)))
+            if scenario == 'stale':
+                turns.append(_verification_edit('2', '3'))
+            if scenario == 'allowlisted-runner':
+                import shlex
+                from studio.security.fences import _is_safe_readonly_shell
+                (ws / 'test_mutate.py').write_text("from pathlib import Path\nimport unittest\nPath('value.py').write_text('x = 3\\n')\nclass T(unittest.TestCase):\n    def test_ok(self): pass\n")
+                unconfigured = shlex.join([sys.executable, '-m', 'unittest', 'test_mutate'])
+                assert app._in_workspace(str(ws), _is_safe_readonly_shell, unconfigured), 'regression requires approval-allowlisted test runner'
+                turns.append(chat_action_deltas('run_shell', json.dumps({'command': unconfigured})))
+            # Repeated completion claims consume two retries, then terminate.
+            turns += [[chat_delta(content='CLAIM_ALL_DONE')] for _ in range(3)]
+            response, engine, content, status = _verification_request(e, ws, turns)
+            assert 'CLAIM_ALL_DONE' not in response.text and 'Unverified:' in content, (scenario, response.text)
+            assert status[-1]['status'] == 'unverified' and len(engine.seen) == len(turns), (scenario, status)
+            if scenario == 'failed':
+                assert status[-1]['failed'] == ['value-check'] and 'real failure' in response.text
+            if scenario == 'syntax':
+                assert status[-1]['syntax_failures'] == [str((ws / 'value.py').resolve())]
+            if scenario == 'test-only-failure':
+                assert status[-1]['revision'] == 0 and status[-1]['failed'] == ['value-check']
+            if scenario == 'allowlisted-runner':
+                assert (ws / 'value.py').read_text() == 'x = 3\n' and status[-1]['revision'] == 2
+
+
+@check
+def chat_verification_gate_repairs_and_handles_reply_tool():
+    with Env() as e:
+        ws = TMP / 'verification-repair-reply'
+        command = _verification_setup(ws)
+        check_turn = chat_action_deltas('run_shell', json.dumps({'command': command}))
+        reply_turn = chat_action_deltas('reply', '{"text":"CLAIM_ALL_DONE"}')
+        turns = [_verification_edit('1', '3'), check_turn, reply_turn,
+                 _verification_edit('3', '2'), check_turn, reply_turn]
+        response, engine, content, status = _verification_request(e, ws, turns)
+        assert content == 'CLAIM_ALL_DONE' and status[-1]['status'] == 'verified' and status[-1]['revision'] == 2, response.text
+        # The withheld reply call has a matching trusted tool result before repair.
+        history = engine.seen[3]['messages']
+        assert history[-2]['role'] == 'tool' and history[-2]['name'] == 'reply' and 'Unverified' in history[-2]['content']
+        assert 'Completion is withheld' in history[-1]['content']
+        stops = [event for event in sse(response.text) if (event.get('choices') or [{}])[0].get('finish_reason') == 'stop']
+        assert len(stops) == 1, 'a premature model stop was streamed before verification'
+
+
+@check
+def chat_verification_gate_keeps_execution_approval_and_refusal():
+    import asyncio
+    import studio.api.chat as api_chat
+    ws = TMP / 'verification-refusal'
+    events = []
+    class Request:
+        async def json(self):
+            return {'model_id': TEXT_MLX, 'workspace': str(ws), 'permission_mode': 'accept_edits',
+                    'messages': [{'role': 'user', 'content': 'Edit value.py and verify'}]}
+        async def is_disconnected(self): return False
+    async def exercise():
+        response = await api_chat.chat(Request())
+        async for chunk in response.body_iterator:
+            events.append(chunk)
+            if 'x_approval' in chunk:
+                prompt = json.loads(chunk[6:])['x_approval']
+                assert prompt['name'] == 'run_shell' and prompt['perm_scope'] == 'exec'
+                api_chat.chat_session_reply(prompt['session_id'], {'id': prompt['id'], 'decision': 'deny'})
+    with Env():
+        command = _verification_setup(ws)
+        with ChatEngine(turns=[_verification_edit(), chat_action_deltas('run_shell', json.dumps({'command': command})),
+                               chat_action_deltas('reply', '{"text":"CLAIM_ALL_DONE"}')]) as engine:
+            asyncio.run(exercise())
+        joined = ''.join(events)
+        assert 'CLAIM_ALL_DONE' not in joined and 'Unverified:' in joined and 'declined or blocked' in joined, joined
+        assert joined.count('"x_approval"') == 1 and 'actual check passed' not in joined and len(engine.seen) == 2
+        assert (ws / 'value.py').read_text() == 'x = 2\n' and not api_chat._chat_sessions
+
+
+@check
+def chat_verification_gate_multiple_checks_and_timeout():
+    import shlex
+    with Env() as e:
+        ws = TMP / 'verification-multiple'
+        first = _verification_setup(ws)
+        (ws / 'verify_second.py').write_text("from pathlib import Path\nassert 'x = 2' in Path('value.py').read_text()\n")
+        second = shlex.join([sys.executable, '-I', 'verify_second.py'])
+        settings = app.load_settings()
+        settings['harness']['verification_workspaces'][str(ws.resolve())]['commands'].append({'id': 'second', 'command': second})
+        app.save_settings(settings)
+        turns = [_verification_edit(), chat_action_deltas('run_shell', json.dumps({'command': first})),
+                 chat_action_deltas('run_shell', json.dumps({'command': second})), [chat_delta(content='CLAIM_ALL_DONE')]]
+        response, _, content, status = _verification_request(e, ws, turns)
+        assert content == 'CLAIM_ALL_DONE' and status[-1]['status'] == 'verified' and status[-1]['revision'] == 1, response.text
+    with Env() as e:
+        ws = TMP / 'verification-timeout'
+        command = _verification_setup(ws)
+        (ws / 'verify.py').write_text("from pathlib import Path\nimport time\nmarker=Path('first-check')\nif marker.exists():\n    print('before configured timeout', flush=True)\n    time.sleep(30)\nmarker.write_text('passed')\n")
+        turns = [_verification_edit(), chat_action_deltas('run_shell', json.dumps({'command': command})),
+                 chat_action_deltas('run_shell', json.dumps({'command': command, 'timeout': 5}))]
+        turns += [[chat_delta(content='CLAIM_ALL_DONE')] for _ in range(3)]
+        response, _, content, status = _verification_request(e, ws, turns)
+        assert 'CLAIM_ALL_DONE' not in response.text and 'Unverified:' in content and 'timed out' in response.text, response.text
+        assert status[-1]['status'] == 'unverified' and status[-1]['revision'] == 2 and status[-1]['missing'] == ['value-check']
+
+
+@check
+def chat_verification_gate_stop_cancels_check_in_both_stream_modes():
+    import asyncio
+    import studio.api.chat as api_chat
+    import studio.services.chat_streams as streams
+    for resumable in (False, True):
+        ws = TMP / ('verification-stop-resume' if resumable else 'verification-stop-legacy')
+        marker = ws / 'should-not-finish'
+        class Request:
+            async def json(self):
+                return {'model_id': TEXT_MLX, 'workspace': str(ws), 'permission_mode': 'accept_edits',
+                        'messages': [{'role': 'user', 'content': 'Update and verify value.py'}]}
+            async def is_disconnected(self): return False
+        async def exercise():
+            response = await api_chat.chat(Request())
+            async for chunk in response.body_iterator:
+                if 'x_approval' in chunk:
+                    prompt = sse(chunk)[0]['x_approval']
+                    api_chat.chat_session_reply(prompt['session_id'], {'id': prompt['id'], 'decision': 'allow'})
+                if 'x_tool_output' in chunk and 'started-check' in chunk:
+                    if resumable:
+                        await api_chat.stop_chat_stream(response.headers['x-chat-stream-id'])
+                        stream = streams.get_stream(response.headers['x-chat-stream-id'])
+                        await asyncio.wait_for(stream.task, 3)
+                    await response.body_iterator.aclose()
+                    break
+            await asyncio.sleep(1.2)
+            assert not marker.exists(), 'Stop left a configured check child running'
+            assert app.active_chats == 0 and not api_chat._chat_sessions
+        with Env():
+            command = _verification_setup(ws)
+            child = "import time,pathlib;time.sleep(1);pathlib.Path('should-not-finish').write_text('bad')"
+            (ws / 'verify.py').write_text("import subprocess,sys,time\nsubprocess.Popen([sys.executable,'-c'," + repr(child) + "])\nprint('started-check',flush=True)\ntime.sleep(30)\n")
+            settings = app.load_settings(); settings['streams'] = {'resume': resumable}; app.save_settings(settings)
+            with ChatEngine(turns=[_verification_edit(), chat_action_deltas('run_shell', json.dumps({'command': command}))]):
+                asyncio.run(asyncio.wait_for(exercise(), 5))
+        streams._STREAMS.clear()
+
+
+@check
+def verification_evidence_is_turn_local_conservative_and_snapshotted():
+    from studio.services.verification import VerificationGate
+    ws = TMP / 'verification-observation'; ws.mkdir(exist_ok=True)
+    settings = {'harness': {'verification_workspaces': {str(ws.resolve()): {'commands': [{'id': 'a', 'command': 'trusted check'}]}}}}
+    gate = VerificationGate(True, str(ws), settings)
+    settings['harness']['verification_workspaces'][str(ws.resolve())]['commands'][0]['command'] = 'echo spoofed'
+    check_args = {'command': 'trusted check'}
+    evidence = {'command': 'trusted check', 'cwd': str(ws.resolve()), 'returncode': 0}
+    gate.observe('edit_file', {}, {'path': str(ws / 'file.py'), 'syntax_ok': True}, executed=True)
+    gate.observe('run_shell', check_args, evidence, executed=False)
+    assert gate.status()['status'] == 'unverified', 'a non-executed result was credited'
+    gate.observe('run_shell', check_args, evidence, executed=True)
+    assert gate.status()['status'] == 'verified' and gate.commands == {'a': 'trusted check'}
+    refused = VerificationGate(True, str(ws), {'harness': {'verification_workspaces': {str(ws.resolve()): {'commands': [{'id': 'a', 'command': 'trusted check'}]}}}})
+    refused.observe('run_shell', check_args, evidence, executed=True)
+    refused.observe('mcp__custom__action', {}, {'error': 'Blocked: approval required', 'verified': False}, executed=False)
+    assert refused.status()['status'] == 'unverified' and refused.completion()[1] is False
+    gate.observe('run_python', {'code': 'write_then_fail()'}, {'error': 'failed after write'}, executed=True)
+    assert gate.status()['status'] == 'unverified' and gate.status()['revision'] == 2
+    gate.observe('run_shell', check_args, evidence, executed=True)
+    gate.observe('mcp__custom__action', {}, {'error': 'possible partial side effect'}, executed=True)
+    assert gate.status()['status'] == 'unverified'
+    gate.observe('run_shell', check_args, evidence, executed=True)
+    gate.observe('run_shell', {'command': 'daemon', 'background': True}, {'process_id': 'test'}, executed=True)
+    gate.observe('run_shell', check_args, evidence, executed=True)
+    assert gate.status()['status'] == 'unverified' and gate.completion()[1] is False
+    fresh = VerificationGate(True, str(ws), {'harness': {}})
+    assert fresh.status()['status'] == 'not_required', 'evidence leaked across turns'
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

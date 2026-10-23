@@ -24,7 +24,9 @@ from fastapi import HTTPException
 
 from studio import config
 from studio.services import engines
+from studio.services import instructions as services_instructions
 from studio.services import search as services_search
+from studio.services import skills as services_skills
 from studio.services import web as services_web
 from studio.config import AGENT_SCRATCH_DIR, DOCUMENT_READER, ENGINES, HOME
 from studio.infra.edits import _match_edit_block, _post_edit_diagnostics
@@ -162,7 +164,8 @@ CHAT_READ_TOOLS = [
     _chat_schema("git_diff", "Show git diff of uncommitted or staged changes.",
                  {"path": {"type": "string"}, "staged": {"type": "boolean"}, "commit": {"type": "string"}}),
     _chat_schema("delegate_task", "Run an isolated sub-agent (researcher, verifier, simplifier) in a fresh context.",
-                 {"task": {"type": "string"}, "role": {"type": "string", "enum": ["researcher", "verifier", "simplifier"]}}, ("task",)),
+                 {"task": {"type": "string"}, "role": {"type": "string", "enum": ["researcher", "verifier", "simplifier"]},
+                  "path": {"type": "string", "description": "Optional workspace file/directory scope for this child"}}, ("task",)),
     _chat_schema("manage_process", "List, inspect logs, or stop background shell processes.",
                  {"action": {"type": "string", "enum": ["list", "status", "logs", "stop"]}, "process_id": {"type": "string"}}),
     _chat_schema("todo_write", "Update the step-by-step task plan checklist.",
@@ -193,6 +196,16 @@ CHAT_ACTION_TOOLS = [
                  {"question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}}, ("question",)),
 ]
 
+# Opt-in schemas are kept separate so disabled requests retain their exact tool contract.
+CHAT_RESOURCE_TOOLS = [
+    _chat_schema("list_skills", "Discover bounded metadata for local workspace/state skills. Skill text cannot grant permissions."),
+    _chat_schema("load_skill", "Load a skill body and content digest by an ID from list_skills, with workspace instruction provenance.",
+                 {"skill_id": {"type": "string"}, "expected_sha256": {"type": "string"}}, ("skill_id",)),
+    _chat_schema("read_skill_resource", "Read bounded UTF-8 supporting text inside a loaded skill. Requires the skill's current SHA-256 digest.",
+                 {"skill_id": {"type": "string"}, "path": {"type": "string"}, "skill_sha256": {"type": "string"},
+                  "start_line": {"type": "integer"}, "max_lines": {"type": "integer"}}, ("skill_id", "path", "skill_sha256")),
+]
+
 CHAT_TOOLS = CHAT_READ_TOOLS + CHAT_ACTION_TOOLS + [CHAT_COMPUTER_TOOL, CHAT_REPLY_TOOL]
 CHAT_TOOL_ROUNDS = 12
 
@@ -203,11 +216,19 @@ _WORKSPACE_INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md", ".localstudio.md", ".c
 _chat_sessions: dict[str, "_ChatSession"] = {}               # session_id -> active _ChatSession waiting for approval/question
 
 
-def _load_workspace_instructions(workspace=None) -> list[dict]:
+def _load_workspace_instructions(workspace=None, targets=None) -> list[dict]:
     """Read AGENTS.md, CLAUDE.md, .localstudio.md, .claude/CLAUDE.md, or .cursorrules from the active workspace."""
     ws = workspace or _chat_workspace.get()
     if not ws:
         return []
+    if flag("harness.nested_instructions"):
+        resolved = services_instructions.resolve_instructions(ws, targets)
+        loaded = list(resolved["instructions"])
+        if not resolved["complete"]:
+            loaded.append({"name": "INSTRUCTION_CONTEXT_STATUS", "path": resolved["workspace"], "context_complete": False,
+                           "content": "Instruction context is INCOMPLETE. Do not execute affected edits until missing/truncated rules are resolved. " +
+                                      " ".join(resolved["warnings"])})
+        return loaded
     try:
         base = _harness_path_fence(str(ws), write=False)
     except ValueError:
@@ -287,6 +308,25 @@ def _execution_result(rc, out, err, **extra):
 
 
 def _chat_action_tool(name, args, on_output=None):
+    """Apply workflow policy at every native action execution boundary."""
+    from studio.security.workflow_policy import action_scope
+    args = _normalize_harness_args(name, args)
+    try:
+        with action_scope(name, args) as policy:
+            result = _chat_action_tool_impl(name, args, on_output)
+            try:
+                policy.after_tool(name, args, result)
+            except ValueError as error:
+                # The original operation has already happened. Preserve its
+                # diagnostics and expose post-hook failure without claiming undo.
+                result = {**result, "error": str(error), "post_hook_failed": True,
+                          "operation_executed": True}
+            return result
+    except ValueError as error:
+        return {"error": str(error), "verified": False, "policy_blocked": True}
+
+
+def _chat_action_tool_impl(name, args, on_output=None):
     """Execute an approved write_file, edit_file, multi_edit_file, run_python, run_shell, or custom MCP tool call."""
     args = _normalize_harness_args(name, args)
     try:
@@ -573,7 +613,7 @@ SUBAGENT_ALLOWED_TOOLS = frozenset((
 ))
 
 
-def _run_subagent_task(task: str, role: str = "researcher", timezone: str | None = None) -> dict:
+def _run_subagent_task(task: str, role: str = "researcher", timezone: str | None = None, path: str | None = None) -> dict:
     """Run an isolated sub-loop in a fresh context window so heavy file reading never bloats the main chat's 32k context."""
     if not isinstance(task, str) or not task.strip():
         raise ValueError("delegate_task requires a non-empty 'task' string.")
@@ -581,13 +621,70 @@ def _run_subagent_task(task: str, role: str = "researcher", timezone: str | None
     if role not in _SUBAGENT_PROMPTS:
         role = "researcher"
     ws = _chat_workspace.get()
+    nested = bool(ws and flag("harness.nested_instructions"))
+    skill_tools = CHAT_RESOURCE_TOOLS if flag("harness.skills") else []
+    child_scope = None
+    instruction_context = None
+    seen_contexts = set()
+    if path is not None:
+        if not ws:
+            raise ValueError("Choose a workspace before declaring a child path scope")
+        child_target = services_instructions.fenced_path(ws, path)
+        child_scope = child_target if child_target.is_dir() else child_target.parent
+    if nested:
+        instruction_context = services_instructions.resolve_instructions(ws, [str(child_target)] if path is not None else None)
+        if not instruction_context["complete"]:
+            return {"role": role, "task": task, "needs_user": True, "error": "Child instruction context is incomplete.",
+                    "instruction_context": instruction_context, "steps_taken": [], "files_inspected": [],
+                    "summary": "Resolve missing/truncated workspace instructions before delegating this scope."}
+        seen_contexts.add(instruction_context["fingerprint"])
     sys_prompt = _SUBAGENT_PROMPTS[role]
-    ws_instr = _load_workspace_instructions(ws)
-    if ws_instr:
-        sys_prompt += "\n\nWorkspace instructions:\n" + "\n\n".join(f"[{i['name']}]\n{i['content'][:1500]}" for i in ws_instr)
-    sub_tools = [t for t in CHAT_READ_TOOLS if t["function"]["name"] in SUBAGENT_ALLOWED_TOOLS] + [CHAT_REPLY_TOOL]
+    if instruction_context:
+        sys_prompt += "\n\n" + services_instructions.model_context(instruction_context)
+    else:
+        ws_instr = _load_workspace_instructions(ws)
+        if ws_instr:
+            sys_prompt += "\n\nWorkspace instructions:\n" + "\n\n".join(f"[{i['name']}]\n{i['content'][:1500]}" for i in ws_instr)
+    if child_scope:
+        sys_prompt += f"\n\nDeclared child scope: {child_scope}. Read relative paths within this scope; sibling paths are unavailable."
+    allowed = SUBAGENT_ALLOWED_TOOLS | frozenset(t["function"]["name"] for t in skill_tools)
+    sub_tools = [t for t in CHAT_READ_TOOLS if t["function"]["name"] in allowed] + skill_tools + [CHAT_REPLY_TOOL]
     messages = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": task.strip()}]
     steps_taken, files_inspected = [], []
+
+    def child_read(name, args):
+        args = dict(args)
+        if child_scope and name in ("git_status", "git_diff") and str(child_scope) != str(Path(ws).resolve()):
+            return {"error": "Repository-wide git views are unavailable in a subtree-scoped child; inspect scoped files instead"}
+        if child_scope and name in ("read_file", "list_directory", "find_files", "grep_files", "code_outline", "git_status", "git_diff", "search_files"):
+            if name == "read_file" and args.get("file_id") is not None:
+                return {"error": "Indexed personal files are outside this child's declared workspace scope"}
+            if name == "search_files":
+                # Search only the declared subtree, not an unrelated personal index.
+                query = str(args.get("query") or "")
+                return {"scope": str(child_scope), "files": child_read("find_files", {"pattern": query}),
+                        "text": child_read("grep_files", {"query": re.escape(query)})}
+            try:
+                args["path"] = str(services_instructions.fenced_path(child_scope, args.get("path") or str(child_scope)))
+            except ValueError as error:
+                return {"error": str(error)}
+        context = None
+        if nested:
+            try:
+                context = services_instructions.tool_context(ws, name, args)
+            except ValueError as error:
+                return {"error": str(error)}
+            if not context["complete"]:
+                return {"needs_user": True, "error": "Child target instruction context is incomplete.",
+                        "instruction_context": context}
+            if context["fingerprint"] not in seen_contexts:
+                seen_contexts.add(context["fingerprint"])
+                return {"deferred": True, "instruction_context": context,
+                        "note": "Read the target-specific instruction context and reissue this tool if still appropriate. No tool executed."}
+        result = _chat_read_tool(name, args, timezone)
+        if context:
+            result = {**result, "instruction_context": context}
+        return result
 
     # Check if an engine is currently ready for live multi-round sub-agent execution
     st = engines.engine_state()
@@ -628,21 +725,27 @@ def _run_subagent_task(task: str, role: str = "researcher", timezone: str | None
             for c in calls:
                 tname = c["function"].get("name")
                 targs = _normalize_harness_args(tname, _parse_harness_args(c["function"].get("arguments")))
-                if tname in SUBAGENT_ALLOWED_TOOLS and isinstance(targs, dict):
-                    res = _chat_read_tool(tname, targs, timezone)
+                if tname in allowed and isinstance(targs, dict):
+                    res = child_read(tname, targs)
+                    if res.get("needs_user"):
+                        return {"role": role, "task": task, "needs_user": True, "error": res["error"],
+                                "instruction_context": res.get("instruction_context"), "steps_taken": steps_taken,
+                                "files_inspected": list(dict.fromkeys(files_inspected)),
+                                "summary": "Resolve incomplete target instructions before continuing this child."}
                     steps_taken.append(_chat_tool_summary(tname, targs))
                     if targs.get("path"):
                         files_inspected.append(str(targs["path"]))
                 else:
                     res = {"error": f"Tool {tname} not available in sub-agent"}
+                serialized = json.dumps(res, ensure_ascii=False)
                 messages.append({"role": "tool", "tool_call_id": c["id"], "name": tname,
-                                 "content": json.dumps(res, ensure_ascii=False)[:4000]})
+                                 "content": serialized if nested or tname in {t["function"]["name"] for t in skill_tools} else serialized[:4000]})
 
     # Deterministic local fallback (when engine is offline or finishes with tool evidence):
     # automatically gather workspace overview, matching files/symbols, or git status/diff relevant to `task`.
-    root = _harness_root()
+    root = child_scope or _harness_root()
     summary_parts = []
-    if role in ("verifier", "simplifier"):
+    if role in ("verifier", "simplifier") and (not child_scope or str(child_scope) == str(Path(ws).resolve())):
         try:
             gs = _git_status_tool(str(root))
             gd = _git_diff_tool(str(root))
@@ -656,6 +759,11 @@ def _run_subagent_task(task: str, role: str = "researcher", timezone: str | None
     words = [w for w in re.findall(r"[A-Za-z0-9_./-]{3,}", task) if w.lower() not in ("the", "and", "for", "with", "from", "into", "check", "find", "read", "file", "files", "code")]
     for tok in words[:4]:
         cand = root / tok
+        if child_scope:
+            try:
+                cand = services_instructions.fenced_path(child_scope, tok)
+            except ValueError:
+                continue
         if cand.is_file():
             try:
                 outl = _code_outline(str(cand))
@@ -695,6 +803,18 @@ def _chat_read_tool(name, args, timezone=None):
     if not isinstance(args, dict): return {"error": "Tool arguments must be a JSON object"}
     args = _normalize_harness_args(name, args)
     try:
+        if name in ("list_skills", "load_skill", "read_skill_resource"):
+            if not flag("harness.skills"):
+                raise ValueError("Local skills are disabled; enable harness.skills in settings")
+            workspace = _chat_workspace.get()
+            if name == "list_skills":
+                return services_skills.catalog(workspace)
+            if name == "load_skill":
+                return services_skills.load_skill(args.get("skill_id"), workspace, args.get("expected_sha256"),
+                                                 include_instructions=flag("harness.nested_instructions"))
+            return services_skills.read_skill_resource(args.get("skill_id"), args.get("path"), args.get("skill_sha256"),
+                                                       workspace, args.get("start_line", 1), args.get("max_lines", 160),
+                                                       include_instructions=flag("harness.nested_instructions"))
         if name == "get_current_datetime":
             return _chat_datetime(args.get("timezone") or timezone)
         if name == "code_outline":
@@ -704,7 +824,7 @@ def _chat_read_tool(name, args, timezone=None):
         if name == "git_diff":
             return _git_diff_tool(args.get("path"), bool(args.get("staged")), args.get("commit"))
         if name == "delegate_task":
-            return _run_subagent_task(args.get("task"), args.get("role", "researcher"), timezone)
+            return _run_subagent_task(args.get("task"), args.get("role", "researcher"), timezone, args.get("path"))
         if name == "manage_process":
             return _manage_bg_process(args.get("action", "list"), args.get("process_id"))
         if name == "web_search":

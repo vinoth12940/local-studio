@@ -6,14 +6,14 @@ import { view } from "../ui/views.mjs";
 import { poll } from "../ui/engine.mjs";
 import { chLive, listState, renderHistory, saveChat, updateWorkspaceUI } from "./list.mjs";
 import {
-  chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chToolStepsInner, drawSpark, fmtSecs, modelThinks, renderThread,
-  scrollBottom, showPerf, threadState, turnHTML
+  chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chToolStepsInner, chVerificationHTML, drawSpark, fmtSecs, modelThinks, renderThread,
+  scrollBottom, showPerf, threadState, turnHTML, verificationResult
 } from "./thread.mjs";
 import { attachmentsState, renderPending } from "./attachments.mjs";
 import {
   autosize, closeAc, compactCurrentChat, effort, permMode, thinking, updateCtx, updateSend
 } from "./composer.mjs";
-import { activeCodeWs, AG_RID, chAttachAction, CODE_MUTATING, loadCodeView, onAgentCodeMutation, searchState, sr, useFiles } from "../modules.mjs";
+import { activeCodeWs, AG_RID, chAttachAction, CODE_MUTATING, loadCodeView, onAgentCodeMutation, refreshWorkflow, searchState, sr, takeWorkflowResume, useFiles, workflowRequest } from "../modules.mjs";
 
 async function send() {
   const text = $("input").value.trim();
@@ -53,6 +53,7 @@ const liveSkeletonHTML = (i, waitingText = "Thinking…") => `<div class="turn b
     <div class="chround-note" hidden></div>
     <div class="chattoolsteps"></div>
     <div class="chhcardwrap"></div>
+    <div class="chverificationwrap"></div>
     <div class="content"><span class="shimmer">${waitingText}</span></div>
     <div class="err" hidden></div></div>`;
 async function generate(resumeBot = null) {
@@ -63,7 +64,7 @@ async function generate(resumeBot = null) {
   const savedReply = resumeBot ? structuredClone(resumeBot) : null;
   if (!resumeBot) chat.messages.push(bot);
   else {
-    for (const key of Object.keys(bot)) if (!["role", "stream_id", "stream_pending"].includes(key)) delete bot[key];
+    for (const key of Object.keys(bot)) if (!["role", "stream_id", "stream_pending", "workflow_run_id"].includes(key)) delete bot[key];
     bot.content = ""; bot.reasoning = "";
   }
   const idx = chat.messages.indexOf(bot);
@@ -71,7 +72,7 @@ async function generate(resumeBot = null) {
   // Stable DOM for the live reply: the thinking panel and answer are updated in place, so the
   // panel keeps its open/closed state and its own scroll position while tokens stream in.
   $("thread").insertAdjacentHTML("beforeend", liveSkeletonHTML(idx, listState.current.messages.some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"));
-  let el, planWrap, roundsWrap, th, tl, tb, noteEl, liveToolsEl, cardWrap, contentEl, errEl;
+  let el, planWrap, roundsWrap, th, tl, tb, noteEl, liveToolsEl, cardWrap, verificationWrap, contentEl, errEl;
   let userToggled = false;                               // a click on the header means "leave it as I set it"
   const setOpen = (v) => { th.open = v; };
   let thinkStart = 0, thinkEnd = 0, raf = 0, pendingThought = "", actionRun = null, lastCardKey = "|";
@@ -83,6 +84,7 @@ async function generate(resumeBot = null) {
     th = el.querySelector(":scope > .thought"); tl = th.querySelector(".tl"); tb = th.querySelector(".tb");
     noteEl = el.querySelector(":scope > .chround-note"); liveToolsEl = el.querySelector(":scope > .chattoolsteps");
     cardWrap = el.querySelector(".chhcardwrap"); contentEl = el.querySelector(".content"); errEl = el.querySelector(".err");
+    verificationWrap = el.querySelector(".chverificationwrap");
     th.querySelector("summary").addEventListener("click", () => { userToggled = true; });
     renderedRounds = 0; lastCardKey = "|"; pendingThought = "";
     if (bot.reasoning) {
@@ -104,6 +106,8 @@ async function generate(resumeBot = null) {
   if (s.sys) messages.push({ role: "system", content: s.sys });
   listState.current.messages.slice(0, -1).filter((m) => !(m.agent_run && !m.content)).forEach((m) => messages.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map((a) => a.id) } : {}) }));
   const body = { messages, chat_id: chat.id, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
+  try { Object.assign(body, workflowRequest(chat), takeWorkflowResume() || {}); }
+  catch (error) { bot.error = error.message; renderThread(); return; }
   if (effort && modelThinks()) body.reasoning_effort = effort;
   if (s.temp) body.temperature = +s.temp;
   if (!chat.workspace && useFiles && sr?.running && !sr.error && !searchState.noFilesOnce) body.use_files = true;
@@ -164,6 +168,7 @@ async function generate(resumeBot = null) {
       if (atEnd) tb.scrollTop = tb.scrollHeight;        // follow the thinking unless the user scrolled up in it
     }
     if (planWrap) planWrap.innerHTML = chPlanHTML(bot);
+    if (verificationWrap) verificationWrap.innerHTML = chVerificationHTML(bot);
     while (roundsWrap && renderedRounds < (bot.rounds?.length || 0)) {
       roundsWrap.insertAdjacentHTML("beforeend", chRoundItemHTML(bot.rounds[renderedRounds++]));
     }
@@ -203,7 +208,10 @@ async function generate(resumeBot = null) {
     for await (const evt of chatEvents(body, listState.streaming.signal, async (id) => {
       bot.stream_id = id; bot.stream_pending = true;
       if (!chat.deleted) await saveChat(chat);
-    }, resumeBot?.stream_id)) {
+    }, resumeBot?.stream_id, async (runId) => {
+      bot.workflow_run_id = runId;
+      if (!chat.deleted) await saveChat(chat);
+    })) {
         for (const line of evt.split("\n")) {
           if (!line.startsWith("data:")) continue;
           const data = line.slice(5).trim(); if (data === "[DONE]") continue;
@@ -215,6 +223,11 @@ async function generate(resumeBot = null) {
           if (j.x_plan) {
             bot.plan = j.x_plan;
             repaint();
+            continue;
+          }
+          if (j.x_verification) {
+            const result = verificationResult(j.x_verification);
+            if (result) { bot.verification = result; repaint(); }
             continue;
           }
           if (j.x_approval) {
@@ -333,6 +346,7 @@ async function generate(resumeBot = null) {
   }
   if (listState.current === chat) updateCtx();
   if (!chat.deleted) await saveChat(chat);
+  refreshWorkflow().catch(() => {});
   poll();
 }
 

@@ -131,6 +131,12 @@ def _stop_engine(mode):
 def ensure_engine(mode, m, timeout=300):
     """Make (mode, model) the running engine, stopping anything else; block until ready."""
     with engine_lock:
+        if os.environ.get("LOCAL_STUDIO_EVAL_ATTACH") == "1":
+            # macos/evals borrows the engine the user already loaded. It must never stop or start one: engine
+            # processes are matched machine-wide, so doing either would take the running app's model away.
+            if _engine_ready(mode):
+                return False
+            raise RuntimeError(f"Eval attach mode: no {mode} engine is ready. Load {m['name']} in Local Studio first.")
         st = engine_state()
         if st.get("mode") == mode and st.get("model_id") == m["id"] and _engine_ready(mode):
             return False

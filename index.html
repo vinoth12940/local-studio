@@ -465,6 +465,27 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .chround-note p { margin: 0 0 6px; }
 .chround-note p:last-child { margin-bottom: 0; }
 .chround-note[hidden] { display: none; }
+.chverification { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 8px 0 12px; font-size: 12px; line-height: 1.5; }
+.chverification.st-verified { color: var(--ok); }
+.chverification.st-unverified { color: var(--warn); }
+.chverification .sub { color: var(--muted); overflow-wrap: anywhere; }
+.workflowbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0 0 8px; font-size: 12px; }
+.workflowbar[hidden] { display: none; }
+.workflowbar select { max-width: 220px; color: var(--ink); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 4px; }
+.workflow-status { color: var(--muted); overflow-wrap: anywhere; }
+.workflow-modal { width: min(680px, 92vw); max-height: 84vh; overflow: auto; }
+.workflow-modal label { display: block; margin: 10px 0 4px; }
+.workflow-modal textarea { min-height: 64px; width: 100%; resize: vertical; }
+.workflow-finding { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 12px; }
+.workflow-finding pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0; font-size: 11px; }
+.workflow-trigger { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 12px; }
+.workflow-trigger .linkbtn { margin-right: 12px; }
+.chtrules { margin-top: 6px; padding: 0 12px; font-size: 11px; color: var(--muted); white-space: normal; }
+.chtrules div { margin-top: 2px; }
+.workflow-notice { border-left: 3px solid var(--brand); padding: 4px 8px; margin: 6px 0; font-size: 12px; }
+.workflow-finding input, .workflow-finding select { margin-right: 6px; max-width: 100%; }
+.workflow-features { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 8px 0; }
+.workflow-features label { margin: 0; display: inline-flex; align-items: center; gap: 5px; }
 .chattoolsteps { display: flex; flex-direction: column; gap: 1px; margin: 2px 0 12px; }
 .chattoolsteps:empty { display: none; }
 .chattoolstep { font-size: 13.5px; line-height: 1.5; }
@@ -876,6 +897,12 @@ dialog::backdrop { background: var(--overlay); }
       <div class="composer-wrap" id="composerWrap">
         <div class="workline" id="workLine" hidden><span class="wspark">✻</span><b id="workTxt">Working…</b><span id="workTime"></span><span id="workHint">· <kbd>esc</kbd> to interrupt</span></div>
         <div class="composer">
+          <div class="workflowbar" id="workflowBar" hidden>
+            <select id="workflowTaskSel" aria-label="Coding task"><option value="">No coding task</option></select>
+            <select id="workflowModeSel" aria-label="Workflow mode"><option value="plan">Plan</option><option value="act">Act</option><option value="auto">Auto</option></select>
+            <button class="linkbtn" id="workflowPause">Pause</button><button class="linkbtn" id="workflowResume">Resume</button>
+            <button class="linkbtn" id="workflowOpen">Details</button><span class="workflow-status" id="workflowStatus"></span>
+          </div>
           <div class="acmenu" id="acMenu"></div>
           <div class="atts" id="atts"></div>
           <textarea id="input" rows="1" placeholder="Message · Type @ to mention files or / for commands"></textarea>
@@ -905,6 +932,7 @@ dialog::backdrop { background: var(--overlay); }
         <label class="check" title="Run read-only commands (git status, git diff, ls, pytest, linters) without asking"><input type="checkbox" id="codeAutoReadonly" checked><span>Auto-approve read-only</span></label>
         <span class="sep-v"></span>
         <button class="btn sm" id="codeOpenMcp" title="Configure MCP tool servers">MCP</button>
+        <button class="btn sm" id="codeWorkflow" title="Coding tasks, modes, and workflow controls">Workflow</button>
         <button class="btn sm" id="codeGitRefresh" title="Refresh files and git status" aria-label="Refresh"><svg class="i"><use href="#i-redo"/></svg></button>
       </div>
 
@@ -1214,6 +1242,36 @@ dialog::backdrop { background: var(--overlay); }
 </div>
 
 <dialog id="confirmDlg"><div class="modal"><h3 id="cTitle"></h3><p id="cBody"></p><div class="btns"><button class="btn" id="cNo">Cancel</button><button class="btn danger solid" id="cYes">Delete</button></div></div></dialog>
+<dialog id="workflowDlg"><div class="modal workflow-modal"><h3>Coding workflow</h3>
+  <p>Plan inspects and updates planning artifacts. Act performs the selected task. Auto works within the task's scope and budgets. Edits and commands retain their approval requirements.</p>
+  <div class="workflow-features" id="workflowFeatures"></div>
+  <button class="btn sm" id="workflowSaveFeatures">Save feature settings</button>
+  <label for="workflowChecks">Required checks (one per line: name: command)</label><textarea id="workflowChecks" placeholder="tests: python3 -m unittest discover -s tests"></textarea>
+  <button class="btn sm" id="workflowSaveChecks">Save workspace checks</button>
+  <hr><h4>Task artifacts</h4><p class="sub" id="workflowTaskInfo">Choose a workspace to create a task.</p>
+  <label for="workflowIntent">Intent</label><textarea id="workflowIntent" placeholder="What should this task accomplish?"></textarea>
+  <label for="workflowSpec">Acceptance criteria</label><textarea id="workflowSpec" placeholder="What observable behavior proves the task is complete?"></textarea>
+  <label for="workflowPlan">Plan</label><textarea id="workflowPlan" placeholder="Steps and verification commands"></textarea>
+  <label for="workflowScope">Allowed file patterns (one per line)</label><textarea id="workflowScope">**</textarea>
+  <div class="workflowbar"><label>Maximum tools <input id="workflowSteps" type="number" value="48" min="1" max="120"></label><label>Maximum seconds <input id="workflowSeconds" type="number" value="900" min="1" max="3600"></label></div>
+  <label class="check"><input id="workflowReviewRequired" type="checkbox"> Require an independent review before completion</label>
+  <p class="err" id="workflowError" hidden></p><p class="sub" id="workflowReviewInfo"></p>
+  <div id="workflowFindings"></div>
+  <h4>Scheduled tasks</h4><p class="sub" id="workflowTriggerInfo">Schedules and external calls only queue work. Nothing runs until you start it here, and every approval still applies.</p>
+  <div id="workflowNotices"></div><div id="workflowTriggers"></div>
+  <div class="workflowbar"><input id="triggerName" placeholder="Name" maxlength="120" aria-label="Scheduled task name">
+    <select id="triggerSchedule" aria-label="Schedule type"><option value="">External calls only</option><option value="interval">Every N minutes</option><option value="daily">Daily at</option></select>
+    <input id="triggerValue" placeholder="minutes or HH:MM" size="10" aria-label="Schedule value">
+    <select id="triggerMissed" aria-label="Missed runs"><option value="skip">Skip missed runs</option><option value="queue_one">Queue one catch-up</option></select></div>
+  <textarea id="triggerPrompt" placeholder="Instruction sent when you start a queued run" aria-label="Instruction"></textarea>
+  <div class="btns"><button class="btn sm" id="triggerCreate">Create scheduled task</button></div>
+  <p class="sub" id="triggerToken" hidden></p>
+  <h4>Isolated workers</h4><p class="sub" id="workerInfo">A worker edits its own Git checkout, never your workspace. You review the exact patch before anything is applied, and nothing is committed.</p>
+  <div id="workflowWorkers"></div><div id="workerReview"></div>
+  <div class="workflowbar"><input id="workerOwner" placeholder="Owner label" maxlength="64" aria-label="Worker owner"><input id="workerScope" placeholder="Files, e.g. src/**" aria-label="Worker file scope" size="22"><button class="btn sm" id="workerCreate">Create worker</button></div>
+  <h4>Saved coding runs</h4><div id="workflowRuns"></div><div id="workflowRunDetail"></div>
+  <div class="btns"><button class="btn" id="workflowNewTask">Create task</button><button class="btn" id="workflowSaveArtifacts">Save artifact revision</button><button class="btn" id="workflowAdopt">Adopt edited artifacts</button><button class="btn" id="workflowRunReview">Review</button><button class="btn primary" id="workflowDone">Done</button></div>
+</div></dialog>
 <dialog id="settingsDlg"><div class="modal" style="width:min(520px,92vw)"><h3>Chat settings</h3>
   <div style="display:flex; flex-direction:column; gap:12px; margin:14px 0 18px">
     <label class="field">System prompt<input id="sysPrompt" placeholder="Optional instructions for every reply"></label>

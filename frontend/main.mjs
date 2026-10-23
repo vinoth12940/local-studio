@@ -2,7 +2,7 @@
 // in its original order (the refactor's P2 split, docs/refactor-progress.json).
 import "./globals.mjs";
 import {
-  $, api, loadAgent, loadChats, loadLibrary, loadSearch, poll, renderThread, showView, threadState
+  $, api, loadAgent, loadChats, loadLibrary, loadSearch, loadWorkflow, poll, renderThread, showView, threadState
 } from "./modules.mjs";
 
 // ---------------- boot
@@ -14,5 +14,6 @@ import {
   showView("chat");
   renderThread();
   await loadChats();
+  await loadWorkflow();
   poll();
 })();

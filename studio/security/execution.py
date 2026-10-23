@@ -12,19 +12,25 @@ from studio import config
 from studio.storage.flags import flag
 
 _python_network = contextvars.ContextVar('python_network', default=False)
+# A workflow can require a read-only project even when the optional general
+# sandbox is disabled. This is an execution constraint, never an approval grant.
+_readonly_workspace = contextvars.ContextVar('readonly_workspace', default=False)
 
 SANDBOX_EXEC = '/usr/bin/sandbox-exec'
 DEFAULT_LIMITS = {'cpu_seconds': 30, 'file_bytes': 64 * 2**20, 'open_files': 128, 'rss_bytes': 1024 * 2**20}
 
 
-def seatbelt_profile(workspace, temp, python=False, network=False):
+def seatbelt_profile(workspace, temp, python=False, network=False, readonly=False):
     workspace, temp = Path(workspace).resolve(), Path(temp).resolve()
     # Avoid accidentally granting writes to an entire volume if a caller selects / or ~.
     if workspace in (Path('/'), config.HOME.resolve()):
         raise ValueError('Sandbox execution requires a specific workspace folder, not / or the home directory.')
     quote = lambda p: json.dumps(str(p), ensure_ascii=False)
+    writes = f'(subpath {quote(temp)}) (literal "/dev/null")'
+    if not readonly:
+        writes = f'(subpath {quote(workspace)}) ' + writes
     lines = ['(version 1)', '(allow default)', '(deny file-write*)',
-             f'(allow file-write* (subpath {quote(workspace)}) (subpath {quote(temp)}) (literal "/dev/null"))',
+             f'(allow file-write* {writes})',
              # These regular expressions apply in any directory, including a synthetic test HOME.
              '(deny file-read* (regex #"/(\\.[sS][sS][hH]|\\.[aA][wW][sS]|\\.[gG][nN][uU][pP][gG]|\\.[kK][uU][bB][eE]|[kK][eE][yY][cC][hH][aA][iI][nN][sS]|[pP][aA][sS][sS][wW][oO][rR][dD][sS]|[cC][oO][oO][kK][iI][eE][sS])(/|$)"))',
              '(deny file-read* (regex #"/(\\.env($|\\.)|[^/]*\\.([pP][eE][mM]|[kK][eE][yY]|[pP]12|[pP][fF][xX]|[kK][eE][yY][cC][hH][aA][iI][nN])[^/]*$|id_rsa[^/]*$|id_ed25519[^/]*$|id_ecdsa[^/]*$|\\.npmrc$|\\.pypirc$|\\.netrc$|credentials\\.json$|secrets\\.json$|\\.api-token$|\\.api-bootstrap$)"))',
@@ -32,20 +38,26 @@ def seatbelt_profile(workspace, temp, python=False, network=False):
     for suffix in ('Library/Keychains', 'Library/Application Support/Google/Chrome', 'Library/Safari',
                    'Library/Cookies', 'Library/Mail', 'Library/Messages', 'Library/Passwords'):
         lines.append(f'(deny file-read* (subpath {quote(config.HOME / suffix)}))')
-    if python and not (network or _python_network.get()):
+    if readonly or (python and not (network or _python_network.get())):
         lines.append('(deny network*)')
     return '\n'.join(lines)
 
 
 def sandbox_command(argv, workspace, env, python=False, temp=None, network=False):
-    if not flag('harness.sandbox'):
+    readonly = _readonly_workspace.get()
+    if not flag('harness.sandbox') and not readonly:
         return argv, env
     if not Path(SANDBOX_EXEC).is_file() or not os.access(SANDBOX_EXEC, os.X_OK):
         raise ValueError('Sandbox requested but /usr/bin/sandbox-exec is unavailable; execution refused.')
     if temp is None:
         raise ValueError('Sandbox execution needs its own temporary directory.')
     env = {**env, 'TMPDIR': str(temp), 'TMP': str(temp), 'TEMP': str(temp)}
-    profile = seatbelt_profile(workspace, temp, python=python, network=network)
+    profile = seatbelt_profile(workspace, temp, python=python, network=network, readonly=readonly)
+    if readonly:
+        # Keep all writes in the new, private execution scratch directory. In
+        # particular, test runners cannot rewrite their own project fixtures.
+        env = {**env, 'PYTHONDONTWRITEBYTECODE': '1', 'HOME': str(temp),
+               'XDG_CACHE_HOME': str(Path(temp) / 'cache')}
     return [SANDBOX_EXEC, '-p', profile, *argv], env
 
 

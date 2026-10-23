@@ -87,6 +87,11 @@
     "id"
    ]
   ],
+  "x_verification": [
+   [
+    "<Call>"
+   ]
+  ],
   "x_web_sources": [
    [
     "<ListComp>"
@@ -94,8 +99,8 @@
   ]
  },
  "chat_other_payloads": {
-  "choices": 1,
-  "error": 10
+  "choices": 6,
+  "error": 13
  },
  "agent_run_events": {
   "answer": [

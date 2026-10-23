@@ -83,3 +83,4 @@ export {
 export {
   agGrant, agLimit, agRenderSettings, agRenderTiers, agSave, agSetTier, agTierSelect
 } from "./settings/agent.mjs";
+export { loadWorkflow, openWorkflow, refreshWorkflow, syncWorkflow, takeWorkflowResume, workflowRequest, workflowState } from "./chat/workflow.mjs";

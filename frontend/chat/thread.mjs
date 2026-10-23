@@ -7,12 +7,13 @@ import { chLive, listState, renderHistory, saveChat, updateWorkspaceUI } from ".
 import {
   activeChat, activeCodeWs, AG_RID, agLogKey, agWeb, attMeta, attThumb, autosize, cardHTML, chBind, chCardClick,
   chCardHTML, chShowSteps, codeUpdateStatus, DOC_ICON, generate, lib, liveGen, liveSkeletonHTML, loadAgent,
-  loadCodeView, loadLibrary, patchCards, searchState, send, srHome, srOpen, updateCtx, updateSend
+  loadCodeView, loadLibrary, patchCards, searchState, send, srHome, srOpen, syncWorkflow, updateCtx, updateSend
 } from "../modules.mjs";
 
 const CODE_STARTERS = [["i-book", "Explain this codebase", "Explain how this codebase is organized: the main modules, how they fit together, and where to start reading."], ["i-redo", "Fix failing tests", "Run the tests, find the first failure, and fix its root cause."], ["i-code", "Write tests for…", "Write tests for "], ["i-spark", "Add a feature…", "Add a feature that "]];
 const STARTERS = [["i-code", "Write code", "Write a Python script that finds duplicate photos in a folder"], ["i-book", "Explain", "Explain how speculative decoding keeps output identical"], ["i-pencil2", "Draft", "Draft a polite follow-up email after a job interview"], ["i-spark", "Brainstorm", "Brainstorm names for a privacy-first note-taking app"]];
 function renderThread() {
+  syncWorkflow();
   updateWorkspaceUI();
   if (view === "code") codeUpdateStatus();
   const host = chatHost();
@@ -146,16 +147,23 @@ function toolResultHTML(step) {
   if (step.name === "read_file") return `${lines.length} lines shown`;
   return esc(lines[0].slice(0, 160)) + (lines.length > 1 ? ` <span class="tmore">+${lines.length - 1} lines</span>` : "");
 }
+function rulesHTML(step) {
+  if (!Array.isArray(step.rules) || !step.rules.length) return "";
+  const rows = step.rules.filter((r) => r && Array.isArray(r.files) && r.files.length).map((r) =>
+    `<div><span class="tmore">${esc(String(r.target || "workspace"))}</span> ← ${r.files.map((f) => `${esc(String(f.name))} <span class="tmore">(${esc(String(f.scope))}${f.truncated ? ", truncated" : ""})</span>`).join(" → ")}</div>`);
+  return rows.length ? `<div class="chtrules"><b>Project rules applied</b> (nearest scope wins)${step.rules_complete === false ? ` <span class="tbad">incomplete</span>` : ""}${rows.join("")}</div>` : "";
+}
 function chToolStepsInner(steps, openIds) {
   return (steps || []).map((step) => {
     const label = toolLabel(step.name), summary = String(step.summary || "Checking a tool");
     const ci = summary.indexOf(": "), arg = label ? (ci > 0 && ci < 40 ? summary.slice(ci + 2) : summary) : "";
     const st = ["running", "waiting"].includes(step.status) ? "running" : step.status === "error" || step.error ? "error" : "done";
     const undo = step.undone ? `<span class="undo-done">Restored</span>` : step.backup_id ? `<button class="undo-btn" data-undo="${esc(step.backup_id)}" title="Revert this change">Undo</button>` : "";
-    const head = `<div class="th" title="${esc(step.error || summary)}"><span class="tdot"></span><span class="tname">${esc(label || summary)}</span>${arg ? `<span class="targ">${esc(arg)}</span>` : ""}${undo}${step.detail ? icon("i-right", "").replace('class="i"', 'class="i tchev"') : ""}</div><div class="tres">${toolResultHTML(step)}</div>`;
-    if (!step.detail) return `<div class="chattoolstep st-${st}">${head}</div>`;
+    const head = `<div class="th" title="${esc(step.error || summary)}"><span class="tdot"></span><span class="tname">${esc(label || summary)}</span>${arg ? `<span class="targ">${esc(arg)}</span>` : ""}${undo}${step.detail || step.rules?.length ? icon("i-right", "").replace('class="i"', 'class="i tchev"') : ""}</div><div class="tres">${toolResultHTML(step)}</div>`;
+    const rules = rulesHTML(step);
+    if (!step.detail && !rules) return `<div class="chattoolstep st-${st}">${head}</div>`;
     const colored = EDIT_TOOLS.includes(step.name) || step.name === "git_diff";
-    return `<details class="chattoolstep st-${st}" data-step-id="${esc(step.id || "")}"${openIds?.has(step.id) ? " open" : ""}><summary>${head}</summary><div class="chtdetail">${diffLinesHTML(step.detail, colored)}</div></details>`;
+    return `<details class="chattoolstep st-${st}" data-step-id="${esc(step.id || "")}"${openIds?.has(step.id) ? " open" : ""}><summary>${head}</summary><div class="chtdetail">${step.detail ? diffLinesHTML(step.detail, colored) : ""}${rules}</div></details>`;
   }).join("");
 }
 function chToolsHTML(message) {
@@ -179,6 +187,25 @@ function chPlanHTML(message) {
     const st = t.status || "pending";
     return `<li class="chplan-item ${esc(st)}"><span class="chplan-ico">${st === "completed" ? "✓" : ""}</span><span class="chplan-txt">${esc(t.content || t.task || "")}</span></li>`;
   }).join("")}</ul></div>`;
+}
+function verificationResult(value) {
+  if (!value || typeof value !== "object" || !["verified", "unverified", "not_required"].includes(value.status)
+      || !Number.isSafeInteger(value.revision) || value.revision < 0 || typeof value.background_started !== "boolean") return null;
+  for (const key of ["missing", "failed", "syntax_failures"]) {
+    if (!Array.isArray(value[key]) || !value[key].every((item) => typeof item === "string")) return null;
+  }
+  if (value.status === "verified" && (value.missing.length || value.failed.length || value.syntax_failures.length || value.background_started)) return null;
+  return { status: value.status, revision: value.revision, missing: [...value.missing], failed: [...value.failed],
+    syntax_failures: [...value.syntax_failures], background_started: value.background_started };
+}
+function chVerificationHTML(message) {
+  const result = verificationResult(message.verification);
+  if (!result || result.status === "not_required") return "";
+  const passed = result.status === "verified";
+  const detail = [result.missing.length ? `Missing checks: ${result.missing.join(", ")}` : "",
+    result.syntax_failures.length ? "Edit diagnostics remain unresolved" : "",
+    result.background_started ? "A background process may still write files" : ""].filter(Boolean).join(" · ");
+  return `<div class="chverification ${passed ? "st-verified" : "st-unverified"}" role="status"><span>${passed ? "Configured checks passed for this turn" : "Verification incomplete"}</span>${detail ? `<span class="sub">${esc(detail)}</span>` : ""}</div>`;
 }
 const PERM_WORDS = { edit: "file edits", exec: "commands", mcp: "this tool" };
 function chHarnessCardHTML(message) {
@@ -249,7 +276,7 @@ function turnHTML(m, i, live = false) {
   const stepsBlock = hasRounds
     ? `${chPlanHTML(m)}${chRoundsHTML(m)}${thoughtHTML(m, live)}`
     : `${thoughtHTML(m, live)}${chPlanHTML(m)}${chToolsHTML(m)}`;
-  return `<div class="turn bot" data-i="${i}">${stepsBlock}${chHarnessCardHTML(m)}<div class="content">${body}${tail}</div>${resume}${agentTail}${live ? "" : sourcesHTML(m) + chWebSourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
+  return `<div class="turn bot" data-i="${i}">${stepsBlock}${chHarnessCardHTML(m)}<div class="chverificationwrap">${chVerificationHTML(m)}</div><div class="content">${body}${tail}</div>${resume}${agentTail}${live ? "" : sourcesHTML(m) + chWebSourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
 }
 $("thread").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.classList?.contains("chhcard-inp")) {
@@ -301,6 +328,8 @@ $("thread").onclick = async (e) => {
     try {
       const res = await jpost("/api/agent/undo-turn", { turn_id: tid });
       toast(`Reverted ${res.restored_count ?? res.count ?? 0} edit(s)`);
+      if (turnMsg) delete turnMsg.verification;
+      turnEl?.querySelector(".chverification")?.remove();
       if (turnMsg?.checkpoint) turnMsg.checkpoint.undone = true;
       for (const s of turnMsg?.tool_steps || []) if (s.backup_id) { s.undone = true; delete s.backup_id; }
       for (const r of turnMsg?.rounds || []) for (const s of r.tools || []) if (s.backup_id) { s.undone = true; delete s.backup_id; }
@@ -335,6 +364,8 @@ $("thread").onclick = async (e) => {
     try {
       const res = await jpost("/api/agent/undo", { backup_id: bid });
       toast(`Restored ${res.name || "file"}`);
+      if (turnMsg) delete turnMsg.verification;
+      turnEl?.querySelector(".chverification")?.remove();
       const step = (turnMsg?.tool_steps || []).find((s) => s.backup_id === bid);
       if (step) { step.undone = true; delete step.backup_id; }
       for (const r of turnMsg?.rounds || []) {
@@ -481,7 +512,7 @@ function modelThinks() { try { const a = activeChat(); return !a || a.thinking !
 
 export {
   autoTop, chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chRoundsHTML, chToolsHTML, chToolStepsInner,
-  chWebSourcesHTML, CODE_STARTERS, diffLinesHTML, drawSpark, EDIT_TOOLS, fmtSecs, modelThinks, perfGrid, perfLine,
+  chVerificationHTML, chWebSourcesHTML, CODE_STARTERS, diffLinesHTML, drawSpark, EDIT_TOOLS, fmtSecs, modelThinks, perfGrid, perfLine,
   PERM_WORDS, renderOnboarding, renderThread, scrollBottom, showPerf, sourcesHTML, STARTERS, thoughtHTML, threadState,
-  TOOL_LABELS, toolLabel, toolResultHTML, turnHTML
+  TOOL_LABELS, toolLabel, toolResultHTML, turnHTML, verificationResult
 };

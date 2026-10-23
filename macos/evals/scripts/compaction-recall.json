@@ -1,0 +1,19 @@
+{
+  "reference": [
+    {
+      "tool": "write_file",
+      "args": {
+        "path": "CODENAME.txt",
+        "content": "OBSIDIAN-7\n"
+      }
+    },
+    {
+      "text": "The codename is OBSIDIAN-7."
+    }
+  ],
+  "negative": [
+    {
+      "text": "The codename is OBSIDIAN-1."
+    }
+  ]
+}

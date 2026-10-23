@@ -131,12 +131,17 @@ names it had there. Imports only flow down this list (no cycles); `studio/main.p
   diagnostics), `harness_args` (argument repair), `workspace` (the `_chat_workspace` ContextVar), `processes`
   (`run_shell`/`run_python` subprocesses), `logs` (opt-in redacting subprocess descriptors and Python formatters), `mcp_client` (stdio MCP client + the CuaDriver allowlist), `request_log`
 - `security/`: `local_only`, `fences` (path fence, shell gate, read-only allowlist), `harness_gate`, `agent_gate`,
-  `headers` (nosniff/CSP), `uploads` (magic signatures), `redact` (tokens and streamed PEM blocks)
+  `headers` (nosniff/CSP), `uploads` (magic signatures), `redact` (tokens and streamed PEM blocks), `workflow_policy`
+  (Plan/Act/Auto policy, hooks, test protection; opt-in)
 - `storage/`: `settings`, `flags`, `memory`, `backups`, `chats`, `atomic`
 - `services/`: `models`, `engines`, `attachments`, `images`, `search`, `terminal`, `web`, `mcp_custom`, `agent/{cua,views,loop}`,
-  `harness` (the chat agent loop's tools, sessions, sub-agents and compaction), `updates`
+  `harness` (the chat agent loop's tools, sessions, sub-agents and compaction), `updates`, and the opt-in workflow stack:
+  `instructions`, `skills`, `workflow` (durable tasks/artifacts), `workflow_runs` (restart-safe run journal), `verification`
+  (completion gate), `reviews` (fresh-context review + dispositions), `triggers` (queue-only schedules), `worktrees` (isolated
+  write workers); see [docs/workflow-automation.md](docs/workflow-automation.md)
 - `api/`: one `APIRouter` per area (`system`, `models`, `engines`, `chat`, `memory`, `undo`, `processes`, `terminal`, `mcp`,
-  `workspace`, `attachments`, `chats`, `images`, `search`, `agent`, `updates`, `storage`), included by `studio/main.py`
+  `workspace`, `attachments`, `chats`, `images`, `search`, `agent`, `updates`, `storage`, `workflow`, `workflow_runs`, `reviews`,
+  `triggers`, `worktrees`), included by `studio/main.py`
 
 Two exceptions to "down only": `security/harness_gate.py` reads custom MCP trust flags from `services/mcp_custom.py`, and
 `security`/`infra` modules use small `infra`/`storage` helpers. Keep each module's locks and global dicts in that module, and
@@ -165,6 +170,10 @@ must keep their order; the full ordered snapshot also rejects independent-route 
 See [docs/security.md](docs/security.md) for every flag, configuration examples, coverage and remaining P3 work.
 The user authorized completing the plan, including isolated enforcement validation. Production defaults remain unchanged. P4 adds `performance.isolated_io`, `performance.chat_index`, and
 `streams.resume`, and `search.incremental` (all false); see the same document for opt-in settings and replay retention/stop behavior.
+The workflow stack adds `harness.verification_gate`, `durable_runs`, `verification_fingerprints`, `nested_instructions`, `skills`,
+`hooks`, `protect_tests`, `workflow`, `review`, `triggers` and `worktrees` (all false); each is documented in
+[docs/workflow-automation.md](docs/workflow-automation.md), [docs/harness-resources.md](docs/harness-resources.md) or
+[docs/verification-gate.md](docs/verification-gate.md). `LOCAL_STUDIO_EVAL_ATTACH=1` makes `ensure_engine` attach-only (never stop or start).
 
 ### Standalone search package
 
@@ -409,6 +418,8 @@ Run all checks before reporting any task complete, and include the verification 
 - App check: `uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_app.py`
 - Agent Harness check: `TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py`
 - Document OCR check: `uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py build/DocumentReader`
+- Workflow stack: `macos/check_harness_resources.py`, `check_workflow_policy.py`, `check_workflow_runs.py`, `check_workflow_reviews.py`,
+  `check_workflow_triggers.py`, `check_workflow_worktrees.py` and `check_evals.py`, each run as the App check above (`TMPDIR=/tmp`, pinned requirements)
 - Full app build: `./macos/build.sh`
 
 If a test fails, fix the implementation code — never skip, weaken, or delete a failing test.
@@ -423,8 +434,9 @@ If a test fails, fix the implementation code — never skip, weaken, or delete a
 ## Agent Harness roadmap
 
 `docs/superpowers/plans/2026-10-17-ai-native-sdlc-agent-harness.md` is the spec and progress tracker for the
-harness features (Tier 1–3, all marked done). Ideas from
-[Anthropic's AI-Native SDLC Playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook) that are
-**not** built yet: a Plan/Act/Auto composer mode with `intent.md`/`spec.md`/`plan.md`, `PreToolUse`/`PostToolUse`
-hooks, test-file write protection, Skills discovery with a `load_skill` tool, `REVIEW.md`-driven review passes,
-declarative evals in `macos/evals/`, and `POST /api/agent/trigger`.
+harness features (Tier 1–3, all marked done). The next-stage milestones (M1–M10: verification, durable runs, evals, skills,
+hooks/test protection, Plan/Act/Auto, reviews, triggers, workers, nested instructions) are tracked in
+[docs/agent-harness-roadmap.md](docs/agent-harness-roadmap.md) with their evidence and open limits. All are implemented behind
+default-off flags. Still open: a measured model baseline (needs a real engine run of `macos/evals/run_evals.py --attach`) and
+unattended trigger execution (deliberately not built: it is a policy decision). Workers are not model-spawned. Read the roadmap
+before claiming any of these delivered.

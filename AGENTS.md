@@ -115,7 +115,9 @@ Only one heavy LLM engine process runs at a time (`ensure_engine(mode, model)` u
 
 ## Tier 1, Tier 2 & Tier 3 Implementation Plan & Progress Tracker
 
-See `docs/superpowers/plans/2026-10-17-ai-native-sdlc-agent-harness.md` for full architectural specifications, API routes, and verification tests for all Tier 1–3 Agent Harness features (all done). Not built yet: Plan/Act/Auto mode with `intent.md`/`spec.md`/`plan.md`, `PreToolUse`/`PostToolUse` hooks, test-file write protection, Skills with `load_skill`, `REVIEW.md` review passes, `macos/evals/`, and `POST /api/agent/trigger`.
+See `docs/superpowers/plans/2026-10-17-ai-native-sdlc-agent-harness.md` for full architectural specifications, API routes, and verification tests for all Tier 1–3 Agent Harness features (all done). The next-stage features (Plan/Act/Auto tasks with `intent.md`/`spec.md`/`plan.md`, hooks and test protection, skills with `load_skill`, nested instructions, durable runs, structured reviews, triggers, isolated write workers, and the `macos/evals/` kit) exist behind default-off `harness.*` flags. Reference: [docs/workflow-automation.md](docs/workflow-automation.md), [docs/harness-resources.md](docs/harness-resources.md), [docs/verification-gate.md](docs/verification-gate.md), [macos/evals/README.md](macos/evals/README.md). Triggers only **queue** work (a person starts it); workers never touch the workspace until a reviewed patch is integrated; evals never start or stop an engine.
+
+See [Agent harness roadmap](docs/agent-harness-roadmap.md) for the next-stage milestones, acceptance criteria, and progress. Its next-stage items are tracked separately from the completed Tier 1–3 baseline; consult their current status before claiming delivery.
 
 
 ## P3 security controls

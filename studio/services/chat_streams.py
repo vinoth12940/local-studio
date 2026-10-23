@@ -43,9 +43,14 @@ class ChatStream:
             self.changed.notify_all()
 
     async def produce(self):
+        terminal_sent = False
         try:
             async for frame in self.source:
+                if isinstance(frame, bytes):
+                    frame = frame.decode('utf-8', 'replace')
                 await self.append(frame)
+                terminal_sent |= any(line.startswith('data:') and line[5:].strip() == '[DONE]'
+                                     for line in frame.splitlines())
         except asyncio.CancelledError:
             await self.append(_sse({'error': 'Stopped.'}))
             await self.append('data: [DONE]\n\n')
@@ -53,6 +58,11 @@ class ChatStream:
             message = redact(str(exc)) if flag('security.redact') else str(exc)
             await self.append(_sse({'error': message}))
             await self.append('data: [DONE]\n\n')
+        else:
+            # Early error returns in relay() end normally without a terminal frame.
+            # Replay clients need that frame to distinguish completion from a lost connection.
+            if not terminal_sent:
+                await self.append('data: [DONE]\n\n')
         finally:
             try:
                 await self.source.aclose()

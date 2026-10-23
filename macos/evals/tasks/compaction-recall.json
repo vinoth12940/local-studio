@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "compaction-recall",
+  "revision": 1,
+  "category": "compaction",
+  "title": "Recall an early fact after the context was compacted",
+  "fixture": "empty",
+  "prompt": "What is the project codename I told you at the start? Write it into CODENAME.txt and state it in your reply.",
+  "approvals": "edits_only",
+  "budgets": {
+    "max_tool_calls": 8,
+    "timeout_seconds": 300
+  },
+  "flags": {
+    "coding_workflow": true
+  },
+  "outcome": [
+    {
+      "type": "file_contains",
+      "path": "CODENAME.txt",
+      "text": "OBSIDIAN-7"
+    },
+    {
+      "type": "final_text_contains",
+      "text": "OBSIDIAN-7"
+    }
+  ],
+  "history_filler": {
+    "fact": "the project codename is OBSIDIAN-7",
+    "turns": 45,
+    "chars": 3000
+  }
+}

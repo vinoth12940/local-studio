@@ -11,6 +11,17 @@ from studio.config import SETTINGS
 # flag -> (default, what turning it on does)
 FLAGS = {
     "harness.coding_workflow": (False, "Prefer direct workspace search and coach diagnosis, repair and verification after coding failures"),
+    "harness.verification_gate": (False, "Withhold coding completion until configured workspace checks pass after observed edits"),
+    "harness.durable_runs": (False, "Persist coding run events, recovery checkpoints, and unknown tool outcomes"),
+    "harness.verification_fingerprints": (False, "Bind verification evidence to bounded workspace content fingerprints"),
+    "harness.nested_instructions": (False, "Resolve scoped project instructions with precedence and provenance"),
+    "harness.skills": (False, "Discover and load fenced workspace and user skills on demand"),
+    "harness.hooks": (False, "Run configured bounded PreToolUse and PostToolUse hooks with durable audit"),
+    "harness.protect_tests": (False, "Protect test paths and refuse opaque writes; run configured checks with read-only project access"),
+    "harness.workflow": (False, "Enable durable Plan/Act/Auto tasks with versioned project artifacts"),
+    "harness.review": (False, "Require versioned independent review evidence for reviewed completion"),
+    "harness.triggers": (False, "Enable authenticated durable local triggers and schedules"),
+    "harness.worktrees": (False, "Coordinate scoped write workers in isolated recoverable Git worktrees"),
     "performance.isolated_io": (False, "Use a bounded dedicated pool for search media/render routes"),
     "performance.chat_index": (False, "Cache chat titles/timestamps while validating file signatures on every list request"),
     "search.incremental": (False, "Debounce edited-file reindexing and return 503 plus Retry-After during full index passes"),

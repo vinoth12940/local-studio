@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "coding-add-function",
+  "revision": 1,
+  "category": "coding",
+  "title": "Add a missing function so the tests pass",
+  "fixture": "calc",
+  "prompt": "calc.py is missing a multiply(a, b) function that test_calc.py needs. Add it so the tests pass. Do not change the tests.",
+  "approvals": "allow_all",
+  "budgets": {
+    "max_tool_calls": 12,
+    "timeout_seconds": 300
+  },
+  "flags": {
+    "coding_workflow": true
+  },
+  "outcome": [
+    {
+      "type": "command",
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "-q"
+      ],
+      "expect_exit": 0
+    },
+    {
+      "type": "file_unchanged",
+      "path": "test_calc.py"
+    },
+    {
+      "type": "file_contains",
+      "path": "calc.py",
+      "text": "def multiply"
+    }
+  ]
+}

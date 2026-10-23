@@ -1,5 +1,5 @@
 // One transport for legacy POST streams and opt-in server replay. Reconnection never sends another POST.
-export async function* chatEvents(body, signal, onStream, resumeId = null) {
+export async function* chatEvents(body, signal, onStream, resumeId = null, onWorkflowRun = null) {
   let streamId = resumeId, after = 0, retries = 0, complete = false;
   const stop = () => { if (streamId) fetch(`/api/chat/streams/${encodeURIComponent(streamId)}`, { method: 'DELETE', keepalive: true }).catch(() => {}); };
   signal.addEventListener('abort', stop);
@@ -16,6 +16,8 @@ export async function* chatEvents(body, signal, onStream, resumeId = null) {
           throw error;
         }
         const id = res.headers.get('X-Chat-Stream-ID');
+        const runId = res.headers.get('X-Workflow-Run-ID');
+        if (runId && /^[a-f0-9]{32}$/.test(runId) && onWorkflowRun) await onWorkflowRun(runId);
         if (id && id !== streamId) { streamId = id; await onStream(id); }
         reader = res.body.getReader();
         const decoder = new TextDecoder(); let buffer = '';

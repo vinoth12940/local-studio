@@ -1013,6 +1013,34 @@ def incremental_edits_are_debounced_and_do_not_reembed_unchanged_files():
             ix.run_once=real_run
         finally:search_extractors.extract=real
 
+@check
+def incremental_queued_edits_survive_a_disconnected_folder():
+    with tempfile.TemporaryDirectory() as d:
+        root, st, ix, cfg = _tree(d, {'volume/notes.txt': 'original indexed evidence'})
+        cfg['incremental'] = True
+        volume, disconnected = root / 'volume', Path(d) / 'disconnected'
+        cfg['roots'] = [str(volume)]  # The configured mount disappears; it was not deleted from a readable parent.
+        path = volume / 'notes.txt'
+        try:
+            ix.run_pass()
+            fid = st.db.execute("SELECT id FROM files WHERE path=?", (str(path),)).fetchone()[0]
+            original = st.text_evidence(fid)['text']
+            path.write_text('updated evidence after reconnection')
+            assert ix.poll_changes(now=10) == []
+            volume.rename(disconnected)
+            for now in (11, 12):
+                assert ix.poll_changes(now=now) == []
+                assert st.text_evidence(fid)['text'] == original
+                assert st.errors() == [], 'a disconnected folder must not invalidate queued files'
+            disconnected.rename(volume)
+            assert ix.poll_changes(now=13) == [str(path)]
+            assert 'updated evidence after reconnection' in st.text_evidence(fid)['text']
+            assert ix.poll_changes(now=14) == []
+            assert st.counts()['files_done'] == 1 and st.errors() == []
+        finally:
+            st.db.close()
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

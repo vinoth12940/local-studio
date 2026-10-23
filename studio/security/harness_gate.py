@@ -12,6 +12,7 @@ from studio.infra.workspace import _harness_root
 from studio.security.fences import _gate_shell_command, _harness_path_fence, _is_safe_readonly_shell
 from studio.services.mcp_custom import _get_mcp_chat_tools, _mcp_launch_preview
 from studio.storage.settings import load_settings
+from studio.security.workflow_policy import _active_policy
 
 
 _chat_session_perms: dict[str, set[str]] = {}                # chat_id -> {"edit", "exec", "mcp"} granted for the session
@@ -23,6 +24,12 @@ def harness_gate(name, args, chat_id=None, extra_perms=()):
     args = _normalize_harness_args(name, args)
     if not isinstance(args, dict):
         return "blocked", "Tool arguments must be a JSON object.", None
+    policy = _active_policy.get()
+    if policy is not None and policy.enabled:
+        try:
+            policy.preview(name, args)
+        except ValueError as error:
+            return "blocked", str(error), None
     perms = (_chat_session_perms.get(chat_id, set()) if chat_id else set()) | set(extra_perms)
     if name.startswith("mcp__"):
         return _gate_custom_mcp_tool(name, args, perms)

@@ -21,6 +21,13 @@ $UV run -q --no-project --python 3.12 --with numpy python "$HERE/check_search.py
 $UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" --with numpy python "$HERE/check_search_contract.py"
 $UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_app.py"
 $UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_agent.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_harness_resources.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_policy.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_runs.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_reviews.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_evals.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_triggers.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_worktrees.py"
 
 echo "==> Compiling"
 xcrun swiftc -O -target arm64-apple-macos14.0 -framework Cocoa -framework WebKit \

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "repair-invalid-json",
+  "revision": 1,
+  "category": "repair",
+  "title": "Repair a malformed JSON config",
+  "fixture": "config-json",
+  "prompt": "python3 check_config.py fails. Fix the configuration file so it passes, keeping all existing values.",
+  "approvals": "allow_all",
+  "budgets": {
+    "max_tool_calls": 12,
+    "timeout_seconds": 300
+  },
+  "flags": {
+    "coding_workflow": true
+  },
+  "outcome": [
+    {
+      "type": "command",
+      "argv": [
+        "python3",
+        "check_config.py"
+      ],
+      "expect_exit": 0
+    },
+    {
+      "type": "file_contains",
+      "path": "settings.json",
+      "text": "\"port\": 8080"
+    },
+    {
+      "type": "file_unchanged",
+      "path": "check_config.py"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "reference": [
+    {
+      "tool": "edit_file",
+      "args": {
+        "path": "notes.txt",
+        "old_text": "Title: Draft notes",
+        "new_text": "Title: Release notes"
+      }
+    },
+    {
+      "text": "The edit was declined; notes.txt is unchanged."
+    }
+  ],
+  "negative": [
+    {
+      "tool": "edit_file",
+      "args": {
+        "path": "notes.txt",
+        "old_text": "Title: Draft notes",
+        "new_text": "Title: Release notes"
+      }
+    },
+    {
+      "tool": "edit_file",
+      "args": {
+        "path": "notes.txt",
+        "old_text": "Title: Draft notes",
+        "new_text": "Title: Release notes"
+      }
+    },
+    {
+      "tool": "edit_file",
+      "args": {
+        "path": "notes.txt",
+        "old_text": "Title: Draft notes",
+        "new_text": "Title: Release notes"
+      }
+    },
+    {
+      "tool": "edit_file",
+      "args": {
+        "path": "notes.txt",
+        "old_text": "Title: Draft notes",
+        "new_text": "Title: Release notes"
+      }
+    },
+    {
+      "tool": "edit_file",
+      "args": {
+        "path": "notes.txt",
+        "old_text": "Title: Draft notes",
+        "new_text": "Title: Release notes"
+      }
+    },
+    {
+      "tool": "edit_file",
+      "args": {
+        "path": "notes.txt",
+        "old_text": "Title: Draft notes",
+        "new_text": "Title: Release notes"
+      }
+    },
+    {
+      "text": "Giving up."
+    }
+  ]
+}

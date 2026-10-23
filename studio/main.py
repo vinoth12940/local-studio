@@ -24,6 +24,11 @@ from studio.api import terminal as api_terminal
 from studio.api import undo as api_undo
 from studio.api import updates as api_updates
 from studio.api import workspace as api_workspace
+from studio.api import reviews as api_reviews
+from studio.api import triggers as api_triggers
+from studio.api import workflow as api_workflow
+from studio.api import worktrees as api_worktrees
+from studio.api import workflow_runs as api_workflow_runs
 from studio.config import GALLERY, ROOT
 from studio.infra.logs import install_log_redaction
 from studio.infra.request_log import RequestLog
@@ -56,6 +61,7 @@ MODULES = (
     "studio.storage.chats",
     "studio.storage.chat_index",
     "studio.storage.flags",
+    "studio.security.workflow_policy",
     "studio.infra.request_log",
     "studio.infra.static",
     "studio.security.local_only",
@@ -82,12 +88,25 @@ MODULES = (
     "studio.services.agent.loop",
     "studio.api.agent",
     "studio.services.harness",
+    "studio.services.instructions",
+    "studio.services.skills",
+    "studio.services.workflow",
+    "studio.services.workflow_runs",
+    "studio.services.verification",
+    "studio.services.reviews",
+    "studio.services.triggers",
+    "studio.services.worktrees",
     "studio.services.chat_streams",
     "studio.api.memory",
     "studio.api.undo",
     "studio.api.processes",
     "studio.api.mcp",
     "studio.api.workspace",
+    "studio.api.workflow",
+    "studio.api.reviews",
+    "studio.api.triggers",
+    "studio.api.worktrees",
+    "studio.api.workflow_runs",
     "studio.api.chat",
     "studio.api.chats",
     "studio.api.system",
@@ -112,7 +131,7 @@ app.add_middleware(SecurityHeaders)                          # outermost: nosnif
 for _router in (api_system.router, api_models.router, api_engines.router, api_chat.router, api_memory.router, api_undo.router,
                 api_processes.router, api_terminal.router, api_mcp.router, api_workspace.router, api_attachments.router,
                 api_chats.router, api_images.router, api_search.router, api_agent.router, api_updates.router,
-                api_storage.router):
+                api_storage.router, api_workflow.router, api_reviews.router, api_triggers.router, api_worktrees.router, api_workflow_runs.router):
     app.include_router(_router)
 
 

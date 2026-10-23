@@ -128,7 +128,8 @@ $("wsPill").onclick = async (e) => {
 async function saveChat(chat = listState.current) {
   if (!chat) return;
   const msgs = savedMessages(chat);
-  await jpost(`/api/chats/${chat.id}`, { title: chat.title, messages: msgs, ...(chat.workspace ? { workspace: chat.workspace } : {}) }, "PUT");
+  await jpost(`/api/chats/${chat.id}`, { title: chat.title, messages: msgs, ...(chat.workspace ? { workspace: chat.workspace } : {}),
+    ...(chat.workflow_task_id ? { workflow_task_id: chat.workflow_task_id } : {}), ...(chat.workflow_mode ? { workflow_mode: chat.workflow_mode } : {}) }, "PUT");
   loadChats();
 }
 

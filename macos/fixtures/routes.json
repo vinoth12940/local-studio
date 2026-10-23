@@ -698,5 +698,236 @@
   ],
   "path": "/api/uninstall",
   "name": "uninstall"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/status",
+  "name": "workflow_status"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/settings",
+  "name": "workflow_settings"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/checks",
+  "name": "workflow_checks"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/checks",
+  "name": "save_workflow_checks"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/tasks",
+  "name": "list_workflow_tasks"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/tasks",
+  "name": "create_workflow_task"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/tasks/{task_id}",
+  "name": "get_workflow_task"
+ },
+ {
+  "methods": [
+   "PATCH"
+  ],
+  "path": "/api/workflow/tasks/{task_id}",
+  "name": "update_workflow_task"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/tasks/{task_id}/review",
+  "name": "get_task_review"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/tasks/{task_id}/review",
+  "name": "create_task_review"
+ },
+ {
+  "methods": [
+   "PATCH"
+  ],
+  "path": "/api/workflow/tasks/{task_id}/review/findings/{finding_id}",
+  "name": "update_finding_disposition"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/triggers",
+  "name": "list_triggers"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/triggers",
+  "name": "create_trigger"
+ },
+ {
+  "methods": [
+   "PATCH"
+  ],
+  "path": "/api/workflow/triggers/{trigger_id}",
+  "name": "update_trigger"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/workflow/triggers/{trigger_id}",
+  "name": "delete_trigger"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/notifications",
+  "name": "trigger_notifications"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/invocations/{invocation_id}/start",
+  "name": "start_invocation"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/invocations/{invocation_id}/cancel",
+  "name": "cancel_invocation"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/invocations/{invocation_id}/ack",
+  "name": "acknowledge_invocation"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/trigger",
+  "name": "fire_trigger"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/worktrees",
+  "name": "list_workers"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/worktrees",
+  "name": "create_worker"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/worktrees/{worker_id}/integration",
+  "name": "review_integration"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/worktrees/{worker_id}/integrate",
+  "name": "integrate_worker"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/worktrees/{worker_id}/abandon",
+  "name": "abandon_worker"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/worktrees/{worker_id}/cleanup",
+  "name": "cleanup_worker"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/runs",
+  "name": "list_runs"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/runs/prune",
+  "name": "prune_runs"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/runs/{run_id}",
+  "name": "get_run"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/runs/{run_id}/events",
+  "name": "run_events"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/runs/{run_id}/reconcile",
+  "name": "reconcile_run"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/runs/{run_id}/resume",
+  "name": "resume_run"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/runs/{run_id}/cancel",
+  "name": "cancel_run"
  }
 ]

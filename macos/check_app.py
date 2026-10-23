@@ -756,9 +756,10 @@ def _backend_sources():
     return [REPO / "app.py"] + sorted((REPO / "studio").glob("**/*.py"))
 
 
-# "type" values of dict literals that are not agent-run events: tool schemas, OpenAI content parts, ASGI messages, file entries
+# "type" values of dict literals that are not agent-run events: tool schemas, OpenAI content parts, ASGI messages, file entries,
+# trigger schedule kinds
 _NOT_RUN_EVENTS = {"string", "object", "function", "integer", "boolean", "array", "number", "null", "text", "image_url",
-                   "websocket.close", "dir", "file"}
+                   "websocket.close", "dir", "file", "interval", "daily"}
 
 
 def _dict_shape(d):
@@ -1062,6 +1063,41 @@ def resumable_chat_buffers_survive_disconnect_and_pending_approval():
         assert c.get('/api/chat/streams/missing').status_code==404
         app.save_settings(original)
         assert c.get('/api/chat/streams/'+finished).status_code==404
+    finally:
+        app.save_settings(original)
+        streams._STREAMS.clear()
+
+
+@check
+def resumable_chat_early_errors_are_terminal_and_replayable():
+    from unittest.mock import patch
+    from fastapi.testclient import TestClient
+    import studio.services.chat_streams as streams
+
+    original = app.load_settings()
+    app.save_settings({**original, 'streams': {'resume': True}})
+    try:
+        # Exercise the actual early-return path without loading or starting an engine.
+        with patch('studio.services.models.model_installed', return_value=False), \
+             TestClient(app.app, base_url='http://127.0.0.1:7860') as client:
+            result = client.post('/api/chat', json={'messages': [{'role': 'user', 'content': 'Hello'}]})
+            assert result.status_code == 200
+            assert "isn't downloaded yet" in result.text
+            assert result.text.count('data: [DONE]') == 1, result.text
+            sid = result.headers['X-Chat-Stream-ID']
+            replay = client.get(f'/api/chat/streams/{sid}?after=1')
+            assert replay.status_code == 200 and replay.text == 'id: 2\ndata: [DONE]\n\n'
+
+        async def completed_sources():
+            for terminal in ('data: [DONE]\n\n', b'data: [DONE]\n\n'):
+                async def source():
+                    yield 'data: {"choices":[{"delta":{"content":"done"}}]}\n\n'
+                    yield terminal
+                stream = streams.ChatStream(source())
+                frames = ''.join([frame async for frame in stream.subscribe()])
+                await stream.task
+                assert frames.count('data: [DONE]') == 1, frames
+        asyncio.run(completed_sources())
     finally:
         app.save_settings(original)
         streams._STREAMS.clear()

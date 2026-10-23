@@ -179,7 +179,11 @@ class Indexer:
         self._snapshot = found
         if self.hold_reason(cfg):
             return []
-        ready = {path: item for path, (item, stamp) in self._changes.items() if now - stamp >= DEBOUNCE_SECONDS}
+        # A queued edit can outlive its mounted/readable folder. Keep it queued
+        # until the crawl can see it again, preserving the last indexed contents.
+        ready = {path: item for path, (item, stamp) in self._changes.items()
+                 if now - stamp >= DEBOUNCE_SECONDS
+                 and not any(_under(path, prefix) for prefix in failed)}
         if not ready:
             return []
         for path in ready:
