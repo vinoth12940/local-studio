@@ -1,0 +1,19 @@
+{
+  "reference": [
+    {
+      "tool": "write_file",
+      "args": {
+        "path": "settings.json",
+        "content": "{\n  \"name\": \"demo\",\n  \"port\": 8080,\n  \"debug\": false\n}\n"
+      }
+    },
+    {
+      "text": "Removed the trailing comma."
+    }
+  ],
+  "negative": [
+    {
+      "text": "The config looks fine to me."
+    }
+  ]
+}

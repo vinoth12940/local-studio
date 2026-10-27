@@ -16,6 +16,8 @@
 
 ## Progress Tracker
 
+This tracker covers the eleven delivered Tier 1–3 features. The [Agent harness roadmap](../../agent-harness-roadmap.md) tracks next-stage milestones, acceptance evidence, and current progress separately; those next-stage capabilities are not implied by this checklist's completion.
+
 ### Tier 1: High-Impact Features for Local Models & Coding Workflows
 - [x] **Feature 1.1**: Workspace Project Instructions (`AGENTS.md` / `CLAUDE.md` / `.localstudio.md` / `.cursorrules` Auto-Loading)
 - [x] **Feature 1.2**: `@file` and `@folder` Mentions in the Chat Composer (`GET /api/workspace/files` + UI popover + prompt expansion)

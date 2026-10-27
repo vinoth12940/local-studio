@@ -1,0 +1,12 @@
+{
+  "reference": [
+    {
+      "text": "The project codename is OBSIDIAN-7."
+    }
+  ],
+  "negative": [
+    {
+      "text": "The codename is OBSIDIAN-1."
+    }
+  ]
+}

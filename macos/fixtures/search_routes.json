@@ -1,0 +1,118 @@
+[
+ {
+  "methods": [
+   "GET",
+   "HEAD"
+  ],
+  "path": "/openapi.json",
+  "name": "openapi"
+ },
+ {
+  "methods": [
+   "GET",
+   "HEAD"
+  ],
+  "path": "/docs",
+  "name": "swagger_ui_html"
+ },
+ {
+  "methods": [
+   "GET",
+   "HEAD"
+  ],
+  "path": "/docs/oauth2-redirect",
+  "name": "swagger_ui_redirect"
+ },
+ {
+  "methods": [
+   "GET",
+   "HEAD"
+  ],
+  "path": "/redoc",
+  "name": "redoc_html"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/health",
+  "name": "health"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/status",
+  "name": "status"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/search",
+  "name": "search"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/passages",
+  "name": "passages"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/reload",
+  "name": "reload"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/errors",
+  "name": "errors"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/file/{file_id}",
+  "name": "file"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/text/{file_id}",
+  "name": "text"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/preview/{file_id}",
+  "name": "preview"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/page/{file_id}/{page}",
+  "name": "page"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/image/{file_id}",
+  "name": "image"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/thumb/{file_id}",
+  "name": "thumb"
+ }
+]

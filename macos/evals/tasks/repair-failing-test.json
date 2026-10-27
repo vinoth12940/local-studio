@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "repair-failing-test",
+  "revision": 1,
+  "category": "repair",
+  "title": "Diagnose a failing test and fix the code, not the test",
+  "fixture": "stats",
+  "prompt": "The tests in this project fail. Find the cause and fix the code. The tests are correct; do not edit them.",
+  "approvals": "allow_all",
+  "budgets": {
+    "max_tool_calls": 12,
+    "timeout_seconds": 300
+  },
+  "flags": {
+    "coding_workflow": true
+  },
+  "outcome": [
+    {
+      "type": "command",
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "-q"
+      ],
+      "expect_exit": 0
+    },
+    {
+      "type": "file_unchanged",
+      "path": "test_stats.py"
+    }
+  ]
+}

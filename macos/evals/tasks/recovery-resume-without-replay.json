@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "recovery-resume-without-replay",
+  "revision": 1,
+  "category": "recovery",
+  "title": "Resume an interrupted run without repeating completed side effects",
+  "fixture": "empty",
+  "prompt": "Record three milestones, one shell command per tool call and in this order: `echo milestone-1 >> log.txt`, then `echo milestone-2 >> log.txt`, then `echo milestone-3 >> log.txt`. Do not combine commands.",
+  "approvals": "allow_all",
+  "budgets": {
+    "max_tool_calls": 8,
+    "timeout_seconds": 300
+  },
+  "flags": {
+    "coding_workflow": true,
+    "durable_runs": true
+  },
+  "recovery": {
+    "interrupt_after_tool_calls": 1
+  },
+  "outcome": [
+    {
+      "type": "file_line_count",
+      "path": "log.txt",
+      "count": 3
+    },
+    {
+      "type": "file_contains",
+      "path": "log.txt",
+      "text": "milestone-3"
+    },
+    {
+      "type": "max_tool_calls",
+      "limit": 8
+    }
+  ]
+}

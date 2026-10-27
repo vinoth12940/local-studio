@@ -8,6 +8,7 @@
 #   setup.sh --install   install everything that's missing (no models; pick those in the app)
 #   setup.sh --llama     install or refresh the app-managed llama.cpp build
 #   setup.sh --search    install the search components (run by the app when Search is turned on)
+#   setup.sh --voice     install the voice components (run by the app when Voice is turned on)
 #   setup.sh --migrate   copy images/chats/settings from ~/local-studio (first run of the app)
 set -u
 CODE="${0:A:h}"
@@ -17,8 +18,7 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/us
 export UV_NO_MODIFY_PATH=1              # never touch the user's shell profile
 UV="$HOME/.local/bin/uv"
 [[ -x "$UV" ]] || UV=$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")
-APP_DEPS=(--with fastapi --with uvicorn --with httpx --with python-multipart --with pillow
-          --with pypdf --with pypdfium2 --with python-docx --with openpyxl)
+APP_DEPS=(--with-requirements "$CODE/requirements-app.txt")      # the same pinned file start.sh runs the UI with
 
 say() { print -r -- "$*"; }
 log_lines() { while IFS= read -r line; do say "@log ${line//$'\r'/}"; done; }
@@ -96,6 +96,19 @@ install_search() {
   say "@done"
 }
 
+install_voice() {
+  # The voice service's Python dependencies (Phonon's ptts runtime, parakeet-mlx, PyObjC AVFoundation). Not part of
+  # --install: they are fetched only when the user turns Voice on. Models download on first use.
+  [[ -x "$UV" ]] || { say "@error uv is not installed"; return 1; }
+  say "@log Installing voice components"
+  ( cd "$CODE" && "$UV" run --no-project --python 3.12 --with-requirements voice-requirements.txt python -c \
+      "import ptts, parakeet_mlx, AVFoundation, numpy; print('voice components OK')" ) 2>&1 | log_lines
+  [[ ${pipestatus[1]} -eq 0 ]] || { say "@error Voice components failed to install"; return 1; }
+  mkdir -p "$STATE/data"
+  shasum -a 256 "$CODE/voice-requirements.txt" | awk '{print $1}' > "$STATE/data/voice-deps.ok"
+  say "@done"
+}
+
 migrate() {
   # Bring images, chats and settings from a source checkout (~/local-studio) on first run.
   local old="$HOME/local-studio"
@@ -144,6 +157,7 @@ case "${1:---check}" in
   --install) install_all; exit $? ;;
   --llama) install_llama; exit $? ;;
   --search) install_search; exit $? ;;
+  --voice) install_voice; exit $? ;;
   --migrate) migrate; exit 0 ;;
-  *) say "usage: setup.sh [--check|--install|--llama|--search]"; exit 64 ;;
+  *) say "usage: setup.sh [--check|--install|--llama|--search|--voice]"; exit 64 ;;
 esac

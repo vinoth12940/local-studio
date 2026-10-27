@@ -1,0 +1,32 @@
+# Python packages the Local Studio backend (app.py) runs with, pinned to exact versions.
+# Read by start.sh (uv run --with-requirements), setup.sh (APP_DEPS), macos/build.sh and the check suites.
+# Bump only in a dedicated, tested change, never as part of a refactor commit. Audit: see docs/refactor-progress.json P6.release-audit.
+
+# direct dependencies
+fastapi==0.146.0
+httpx==0.28.1
+openpyxl==3.1.5
+pillow==13.0.0
+pypdf==6.21.1
+pypdfium2==5.14.0
+python-docx==1.2.0
+python-multipart==0.0.32
+uvicorn==0.54.0
+
+# transitive (frozen from a working environment, 2026-10-18)
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.10.18
+click==8.5.0
+et-xmlfile==2.0.0
+h11==0.16.0
+httpcore==1.0.9
+idna==3.20
+lxml==6.1.3
+opentelemetry-api==1.45.1
+pydantic==2.14.1
+pydantic-core==2.50.1
+starlette==1.9.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4

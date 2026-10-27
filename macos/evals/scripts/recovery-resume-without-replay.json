@@ -1,0 +1,62 @@
+{
+  "reference": [
+    {
+      "tool": "run_shell",
+      "args": {
+        "command": "echo milestone-1 >> log.txt"
+      }
+    },
+    {
+      "tool": "run_shell",
+      "args": {
+        "command": "echo milestone-2 >> log.txt"
+      },
+      "delay": 0.3
+    },
+    {
+      "tool": "run_shell",
+      "args": {
+        "command": "echo milestone-3 >> log.txt"
+      }
+    },
+    {
+      "text": "All three milestones are recorded."
+    }
+  ],
+  "negative": [
+    {
+      "tool": "run_shell",
+      "args": {
+        "command": "echo milestone-1 >> log.txt"
+      }
+    },
+    {
+      "tool": "run_shell",
+      "args": {
+        "command": "echo milestone-2 >> log.txt"
+      },
+      "delay": 0.3
+    },
+    {
+      "tool": "run_shell",
+      "args": {
+        "command": "echo milestone-1 >> log.txt"
+      }
+    },
+    {
+      "tool": "run_shell",
+      "args": {
+        "command": "echo milestone-2 >> log.txt"
+      }
+    },
+    {
+      "tool": "run_shell",
+      "args": {
+        "command": "echo milestone-3 >> log.txt"
+      }
+    },
+    {
+      "text": "Done (replayed everything after the resume)."
+    }
+  ]
+}

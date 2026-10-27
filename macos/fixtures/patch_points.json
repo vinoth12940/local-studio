@@ -1,0 +1,411 @@
+{
+ "points": [
+  {
+   "name": "AGENT_PROFILE",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "AGENT_RUNS",
+   "destination": "studio.config",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "AGENT_SEARCH_SECONDS",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "AGENT_SOCK",
+   "destination": "studio.config",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "AGENT_SOCK_WAIT_S",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "AGENT_TOOLS",
+   "destination": "studio.services.agent.loop",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "CONTEXT",
+   "destination": "studio.config",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "CUA_DRIVER",
+   "destination": "studio.config",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "McpClient",
+   "destination": "studio.infra.mcp_client",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "SEARCH_URL",
+   "destination": "studio.config",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "_agent_adapter",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_cli",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_client",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_current",
+   "destination": "studio.services.agent.loop",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_daemon_running",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_engine_current",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_last_use",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_model",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_now",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_profile_in_use",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_reaper_start",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_runs",
+   "destination": "studio.services.agent.loop",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_agent_sleep",
+   "destination": "studio.services.agent.loop",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_chat_read_tool",
+   "destination": "studio.services.harness",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_chat_sessions",
+   "destination": "studio.services.harness",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_cua_cache",
+   "destination": "studio.services.agent.loop",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_cua_perm",
+   "destination": "studio.services.agent.cua",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_download",
+   "destination": "studio.services.models",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "_enable_search",
+   "destination": "studio.services.search",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "_engine_ready",
+   "destination": "studio.services.engines",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_fetch_public_web",
+   "destination": "studio.services.web",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_search_process",
+   "destination": "studio.services.search",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "_search_proxy",
+   "destination": "studio.services.search",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "_search_running",
+   "destination": "studio.services.search",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "_start_search",
+   "destination": "studio.services.search",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "_stop_engine",
+   "destination": "studio.services.engines",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "agent_engine",
+   "destination": "studio.config",
+   "patched": "mutate",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "app_view",
+   "destination": "studio.services.agent.views",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "browser_view",
+   "destination": "studio.services.agent.views",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "cua_status",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "downloads",
+   "destination": "studio.services.models",
+   "patched": "mutate",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "engine_state",
+   "destination": "studio.services.engines",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py",
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "ensure_engine",
+   "destination": "studio.services.engines",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "gate",
+   "destination": "studio.security.agent_gate",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "jobs",
+   "destination": "studio.services.images",
+   "patched": "mutate",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "model_installed",
+   "destination": "studio.services.models",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py",
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "native_context",
+   "destination": "studio.services.models",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "search_job",
+   "destination": "studio.services.search",
+   "patched": "mutate",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
+   "name": "start_agent_daemon",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
+   "name": "stop_agent_daemon",
+   "destination": "studio.services.agent.cua",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  }
+ ],
+ "module_objects_patched": [
+  "httpx",
+  "socket",
+  "subprocess"
+ ]
+}

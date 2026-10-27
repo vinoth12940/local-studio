@@ -13,12 +13,23 @@ BUILD=$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 
 echo "==> Checking UI script"
-if command -v node >/dev/null 2>&1; then node "$HERE/check_ui.js" "$ROOT/index.html"; else echo "   (node not found, skipped)"; fi
-python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$ROOT/app.py" && echo "   app.py OK"
+if command -v node >/dev/null 2>&1; then node "$HERE/check_ui.js" "$ROOT/index.html" && node "$HERE/check_sanitizer.mjs" && node "$HERE/check_chat_stream.mjs" && node "$HERE/check_chat_resume.mjs"; else echo "   (node not found, skipped)"; fi
+python3 -c "import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]" "$ROOT/app.py" "$ROOT/voice.py" "$ROOT"/studio/**/*.py(N) \
+  && echo "   app.py and studio/ OK"
 UV=$(command -v uv || echo ~/.local/bin/uv)
 $UV run -q --no-project --python 3.12 --with numpy python "$HERE/check_search.py"
-$UV run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python "$HERE/check_app.py"
-$UV run -q --no-project --python 3.12 --with fastapi --with httpx --with python-multipart python "$HERE/check_agent.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" --with numpy python "$HERE/check_search_contract.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_app.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_agent.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_harness_resources.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_policy.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_runs.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_reviews.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_evals.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_triggers.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_worktrees.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_context_window.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" --with numpy python "$HERE/check_voice.py"
 
 echo "==> Compiling"
 xcrun swiftc -O -target arm64-apple-macos14.0 -framework Cocoa -framework WebKit \
@@ -28,10 +39,14 @@ xcrun swiftc -O -target arm64-apple-macos14.0 -framework AppKit -framework PDFKi
 cp "$APP/Contents/MacOS/DocumentReader" "$ROOT/build/DocumentReader"
 $UV run -q --no-project --python 3.12 --with reportlab --with pillow python "$HERE/check_document.py" "$APP/Contents/MacOS/DocumentReader"
 
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_harness_ocr.py"
+
 echo "==> Bundling code"
-for f in app.py index.html catalog.json search.py search-requirements.txt setup.sh start.sh stop.sh uninstall.sh; do
+for f in app.py index.html catalog.json requirements-app.txt search.py search-requirements.txt voice.py voice-requirements.txt setup.sh start.sh stop.sh uninstall.sh; do
   cp "$ROOT/$f" "$APP/Contents/Resources/app/"
 done
+rsync -a --exclude __pycache__ --exclude '*.pyc' "$ROOT/studio" "$APP/Contents/Resources/app/"   # the backend package
+rsync -a --include '*/' --include '*.mjs' --exclude '*' "$ROOT/frontend" "$APP/Contents/Resources/app/"   # the UI's ES modules
 chmod +x "$APP/Contents/Resources/app/"*.sh
 
 echo "==> Icon"
@@ -64,6 +79,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSDocumentsFolderUsageDescription</key><string>Local Studio indexes your files on this Mac so you can search them. Nothing leaves your computer.</string>
   <key>NSDownloadsFolderUsageDescription</key><string>Local Studio indexes your files on this Mac so you can search them. Nothing leaves your computer.</string>
   <key>NSFileProviderDomainUsageDescription</key><string>Local Studio indexes your files on this Mac so you can search them. Nothing leaves your computer.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Local Studio listens only while Voice is on, so you can talk to the assistant. Speech is recognized on this Mac and never leaves your computer.</string>
   <key>NSHumanReadableCopyright</key><string>Runs AI models locally on Apple Silicon.</string>
 </dict></plist>
 PLIST
@@ -73,8 +89,12 @@ IDS=$(security find-identity -v -p codesigning 2>/dev/null)
 IDENTITY=$(print -r -- "$IDS" | awk -F'"' '/Developer ID Application/ {print $2; exit}')
 [[ -z "$IDENTITY" ]] && IDENTITY=$(print -r -- "$IDS" | awk -F'"' '/Apple Development/ {print $2; exit}')
 TS="--timestamp=none"; [[ "$IDENTITY" == Developer\ ID* ]] && TS="--timestamp"
-codesign --force --deep --options runtime $TS --sign "${IDENTITY:--}" "$APP"
+# Hardened runtime: the microphone needs the audio-input entitlement (Voice); nothing else is granted.
+codesign --force --deep --options runtime --entitlements "$HERE/LocalStudio.entitlements" $TS --sign "${IDENTITY:--}" "$APP"
 codesign --verify --deep --strict "$APP" && echo "   signed with: ${IDENTITY:-ad-hoc}"
+# Python must never have written bytecode into the bundle: a __pycache__ there breaks the signature's resource seal.
+STRAY=$(find "$APP/Contents/Resources/app" -name __pycache__ -o -name '*.pyc')
+[[ -z "$STRAY" ]] || { print -r -- "bytecode in the bundle:"$'\n'"$STRAY"; exit 1; }
 
 if [[ "${1:-}" == "--install" ]]; then
   echo "==> Installing to /Applications"

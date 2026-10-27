@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "compaction-recall",
+  "revision": 2,
+  "category": "compaction",
+  "title": "Recall an early fact after the context was compacted",
+  "fixture": "empty",
+  "prompt": "What is the project codename I told you at the start of this conversation? Reply with it.",
+  "approvals": "allow_all",
+  "budgets": {
+    "max_tool_calls": 8,
+    "timeout_seconds": 300
+  },
+  "flags": {
+    "coding_workflow": true
+  },
+  "outcome": [
+    {
+      "type": "final_text_contains",
+      "text": "OBSIDIAN-7"
+    },
+    {
+      "type": "max_tool_calls",
+      "limit": 8
+    }
+  ],
+  "history_filler": {
+    "fact": "the project codename is OBSIDIAN-7",
+    "turns": 45,
+    "chars": 3000
+  }
+}

@@ -1,0 +1,989 @@
+[
+ {
+  "methods": [
+   "GET",
+   "HEAD"
+  ],
+  "path": "/openapi.json",
+  "name": "openapi"
+ },
+ {
+  "methods": [
+   "GET",
+   "HEAD"
+  ],
+  "path": "/docs",
+  "name": "swagger_ui_html"
+ },
+ {
+  "methods": [
+   "GET",
+   "HEAD"
+  ],
+  "path": "/docs/oauth2-redirect",
+  "name": "swagger_ui_redirect"
+ },
+ {
+  "methods": [
+   "GET",
+   "HEAD"
+  ],
+  "path": "/redoc",
+  "name": "redoc_html"
+ },
+ {
+  "kind": "Mount",
+  "path": "/gallery",
+  "name": "gallery"
+ },
+ {
+  "kind": "Mount",
+  "path": "/frontend",
+  "name": "frontend"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/system",
+  "name": "api_system"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/health",
+  "name": "api_health"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/csp-report",
+  "name": "api_csp_report"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/busy",
+  "name": "api_busy"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/",
+  "name": "index"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/models",
+  "name": "models"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/models/download",
+  "name": "download_model"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/models/cancel",
+  "name": "cancel_download"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/models",
+  "name": "delete_model"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/models/active",
+  "name": "set_active"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/hf/search",
+  "name": "hf_search"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/hf/files",
+  "name": "hf_files"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/models/custom",
+  "name": "add_custom"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/context-window",
+  "name": "context_window_get"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/context-window",
+  "name": "context_window_set"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/engine/start",
+  "name": "engine_start"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/engine/stop",
+  "name": "engine_stop"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/llm/{route:path}",
+  "name": "llm_get"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/chat/sessions/{sid}/reply",
+  "name": "chat_session_reply"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/chat/compact",
+  "name": "api_compact_chat"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/chat/commands",
+  "name": "api_get_slash_commands"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/chat",
+  "name": "chat"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/chat/streams/{stream_id}",
+  "name": "resume_chat_stream"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/chat/streams/{stream_id}",
+  "name": "stop_chat_stream"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/agent/memory",
+  "name": "api_get_memory"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/memory",
+  "name": "api_set_memory"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/agent/memory/{key}",
+  "name": "api_delete_memory"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/undo",
+  "name": "agent_undo"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/undo-turn",
+  "name": "agent_undo_turn"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/processes",
+  "name": "api_list_processes"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/processes/{proc_id}/stop",
+  "name": "api_stop_process"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/terminals",
+  "name": "api_terminals"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/terminals",
+  "name": "api_terminal_open"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/terminals/{tid}/stream",
+  "name": "api_terminal_stream"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/terminals/{tid}/input",
+  "name": "api_terminal_input"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/terminals/{tid}/resize",
+  "name": "api_terminal_resize"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/terminals/{tid}",
+  "name": "api_terminal_close"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/mcp/servers",
+  "name": "api_get_mcp_servers"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/mcp/servers",
+  "name": "api_save_mcp_server"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/mcp/servers/{server_id}",
+  "name": "api_delete_mcp_server"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/mcp/servers/{server_id}/test",
+  "name": "api_test_mcp_server"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workspace/files",
+  "name": "api_workspace_files"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workspace/info",
+  "name": "api_workspace_info"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workspace/outline",
+  "name": "api_workspace_outline"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workspace/settings",
+  "name": "api_workspace_settings"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workspace/file",
+  "name": "api_workspace_read_file"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workspace/file",
+  "name": "api_workspace_save_file"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workspace/exec",
+  "name": "api_workspace_exec"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/attachments",
+  "name": "upload_attachment"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/attachments/{aid}/{name}",
+  "name": "attachment_file"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/chats",
+  "name": "list_chats"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/chats/{cid}",
+  "name": "get_chat"
+ },
+ {
+  "methods": [
+   "PUT"
+  ],
+  "path": "/api/chats/{cid}",
+  "name": "put_chat"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/chats/{cid}",
+  "name": "delete_chat"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/image",
+  "name": "create_image"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/image/{job_id}",
+  "name": "image_status"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/image/{job_id}/cancel",
+  "name": "image_cancel"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/gallery",
+  "name": "gallery"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/gallery/{name}",
+  "name": "delete_image"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/search/status",
+  "name": "search_status"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/search",
+  "name": "search_query"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/search/enable",
+  "name": "search_enable"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/search/disable",
+  "name": "search_disable"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/search/start",
+  "name": "search_start"
+ },
+ {
+  "methods": [
+   "PUT"
+  ],
+  "path": "/api/search/settings",
+  "name": "search_settings"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/search/rebuild",
+  "name": "search_rebuild"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/search/index",
+  "name": "search_delete_index"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/search/errors",
+  "name": "search_errors"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/search/thumb/{file_id}",
+  "name": "search_thumb"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/search/preview/{file_id}",
+  "name": "search_preview"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/search/page/{file_id}/{page}",
+  "name": "search_page"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/search/image/{file_id}",
+  "name": "search_image"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/search/media/{file_id}",
+  "name": "search_media"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/search/open",
+  "name": "search_open"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/search/choose-folder",
+  "name": "search_choose_folder"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/agent/status",
+  "name": "agent_status"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/enable",
+  "name": "agent_enable"
+ },
+ {
+  "methods": [
+   "PUT"
+  ],
+  "path": "/api/agent/settings",
+  "name": "agent_settings"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/permissions",
+  "name": "agent_permissions"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/telemetry/disable",
+  "name": "agent_telemetry_disable"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/run",
+  "name": "agent_run"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/agent/runs/{rid}/events",
+  "name": "agent_events"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/runs/{rid}/reply",
+  "name": "agent_reply"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/runs/{rid}/stop",
+  "name": "agent_stop"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/runs/{rid}/takeover",
+  "name": "agent_takeover"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/runs/{rid}/resume",
+  "name": "agent_resume"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/agent/runs",
+  "name": "agent_runs"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/agent/runs/{rid}",
+  "name": "agent_run_get"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/agent/runs/{rid}/shots/{name}",
+  "name": "agent_shot"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/agent/runs/{rid}",
+  "name": "agent_run_delete"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/profile/reset",
+  "name": "agent_profile_reset"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/versions",
+  "name": "versions"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/versions/update",
+  "name": "update_engines"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/storage",
+  "name": "storage"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/storage/clear",
+  "name": "clear_storage"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/uninstall",
+  "name": "uninstall"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/status",
+  "name": "workflow_status"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/settings",
+  "name": "workflow_settings"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/checks",
+  "name": "workflow_checks"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/checks",
+  "name": "save_workflow_checks"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/tasks",
+  "name": "list_workflow_tasks"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/tasks",
+  "name": "create_workflow_task"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/tasks/{task_id}",
+  "name": "get_workflow_task"
+ },
+ {
+  "methods": [
+   "PATCH"
+  ],
+  "path": "/api/workflow/tasks/{task_id}",
+  "name": "update_workflow_task"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/tasks/{task_id}/review",
+  "name": "get_task_review"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/tasks/{task_id}/review",
+  "name": "create_task_review"
+ },
+ {
+  "methods": [
+   "PATCH"
+  ],
+  "path": "/api/workflow/tasks/{task_id}/review/findings/{finding_id}",
+  "name": "update_finding_disposition"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/triggers",
+  "name": "list_triggers"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/triggers",
+  "name": "create_trigger"
+ },
+ {
+  "methods": [
+   "PATCH"
+  ],
+  "path": "/api/workflow/triggers/{trigger_id}",
+  "name": "update_trigger"
+ },
+ {
+  "methods": [
+   "DELETE"
+  ],
+  "path": "/api/workflow/triggers/{trigger_id}",
+  "name": "delete_trigger"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/notifications",
+  "name": "trigger_notifications"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/invocations/{invocation_id}/start",
+  "name": "start_invocation"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/invocations/{invocation_id}/cancel",
+  "name": "cancel_invocation"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/invocations/{invocation_id}/ack",
+  "name": "acknowledge_invocation"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/agent/trigger",
+  "name": "fire_trigger"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/worktrees",
+  "name": "list_workers"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/worktrees",
+  "name": "create_worker"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/worktrees/{worker_id}/integration",
+  "name": "review_integration"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/worktrees/{worker_id}/integrate",
+  "name": "integrate_worker"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/worktrees/{worker_id}/abandon",
+  "name": "abandon_worker"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/worktrees/{worker_id}/cleanup",
+  "name": "cleanup_worker"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/runs",
+  "name": "list_runs"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/runs/prune",
+  "name": "prune_runs"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/runs/{run_id}",
+  "name": "get_run"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workflow/runs/{run_id}/events",
+  "name": "run_events"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/runs/{run_id}/reconcile",
+  "name": "reconcile_run"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/runs/{run_id}/resume",
+  "name": "resume_run"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/workflow/runs/{run_id}/cancel",
+  "name": "cancel_run"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/voice/status",
+  "name": "voice_status"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/enable",
+  "name": "voice_enable"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/disable",
+  "name": "voice_disable"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/voice/voices",
+  "name": "voice_voices"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/say",
+  "name": "voice_say"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/transcribe",
+  "name": "voice_transcribe"
+ }
+]

@@ -1,0 +1,19 @@
+{
+  "reference": [
+    {
+      "tool": "write_file",
+      "args": {
+        "path": "calc.py",
+        "content": "def add(a, b):\n    return a + b\n\n\ndef multiply(a, b):\n    return a * b\n"
+      }
+    },
+    {
+      "text": "Added multiply() to calc.py."
+    }
+  ],
+  "negative": [
+    {
+      "text": "Done, the tests pass now."
+    }
+  ]
+}
