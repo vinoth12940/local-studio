@@ -19,6 +19,16 @@ os.environ["HF_HUB_CACHE"] = str(TMP / "hub")
 os.environ.pop("LOCAL_STUDIO_EVAL_ATTACH", None)
 
 import evalkit  # noqa: E402
+from studio.services import engines as _engines  # noqa: E402
+
+
+def _no_engine(*args, **kwargs):
+    raise AssertionError("an eval check reached a real engine process (the engine port is shared with the running app)")
+
+
+# The docstring's promise, enforced: the engine port and process patterns are shared with the user's running app, so a
+# check that falls through to the real chat path must fail here instead of stopping their engine and starting another.
+_engines._start_engine = _engines._stop_engine = _no_engine
 
 _session = []
 
