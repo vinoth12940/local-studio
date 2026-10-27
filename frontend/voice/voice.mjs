@@ -19,7 +19,7 @@ const v = {
   acceptInput: false, turnPending: false, gen: 0, speakId: 0, pending: new Map(), chain: Promise.resolve(),
   playedMs: 0, lastSpeechEnd: 0, respondAt: 0, firstAudioAt: 0, askedAt: 0,
 };
-const turn = { active: false, done: false, buf: "", held: [], roundSpoken: 0, chunks: 0, said: "", heard: "", toolActive: false,
+const turn = { active: false, done: false, buf: "", held: [], roundSpoken: 0, chunks: 0, said: "", heard: "", heardParts: [], toolActive: false,
   filler: false, workIdx: 0, lastSpoke: 0, tick: 0, interrupted: false, question: null };
 const cap = { pre: [], chunks: [], on: false, voiced: 0, silence: 0, lastVoicedAt: 0 };
 const pend = { text: "", timer: 0 };
@@ -27,7 +27,7 @@ let tent = null, loudSince = 0, tentBlockUntil = 0;
 const WORKING = ["Let me check.", "Still looking.", "Reading a source now.", "Almost there."];
 
 const character = () => CHARACTERS.find((c) => c.id === store.get("voiceCharacter", DEFAULT_CHARACTER)) || CHARACTERS[0];
-const cleanSpeech = (s) => String(s || "").replace(/[*#`_~>|]/g, "").replace(/\[(.*?)\]\((.*?)\)/g, "$1").replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+const cleanSpeech = (s) => String(s || "").replace(/[*#`_~>|\\]/g, "").replace(/\[(.*?)\]\((.*?)\)/g, "$1").replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
 const post = (url, body) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
 
 // ---------------------------------------------------------------- the Voice view and the small bar in chat
@@ -140,7 +140,10 @@ function onEvent(ev) {
     onMicChunk(f);
   } else if (ev.t === "played") {
     const p = v.pending.get(ev.id);
-    if (p) { v.pending.delete(ev.id); v.playedMs += p.ms; turn.heard += " " + p.text; }
+    if (p) {                                             // in speaking order: a lost notice's stand-in can arrive early
+      v.pending.delete(ev.id); v.playedMs += p.ms; turn.heardParts.push([ev.id, p.text]);
+      turn.heard = turn.heardParts.sort((a, b) => a[0] - b[0]).map((x) => x[1]).join(" ");
+    }
     if (!v.pending.size && turn.done) finishTurn();
   } else if (ev.t === "mic_restart") caption("The microphone stalled and was restarted.");
   else if (ev.t === "error") caption("The voice service stopped.");
@@ -279,7 +282,7 @@ function speak(text) {
       const { seconds } = await r.json();
       if (gen !== v.gen) return;
       v.pending.set(id, { text: clean, ms: (seconds || 0) * 1000 });
-      turn.shown = (turn.shown ? turn.shown + " " : "") + clean; saying(turn.shown); trBot(turn.shown);
+      turn.shown = (turn.shown ? turn.shown + " " : "") + clean; saying(clean); trBot(turn.shown);   // the display: the sentence being said
       // If its "played" notice is ever lost (the engine restarted), count it as played a little after it should have ended.
       setTimeout(() => { if (v.pending.has(id)) onEvent({ t: "played", id }); }, (seconds || 0) * 1000 + 2500 + v.pending.size * 400);
       if (v.state !== "speaking") { setState("speaking"); if (!v.firstAudioAt) v.firstAudioAt = performance.now(); }
@@ -291,7 +294,7 @@ function speak(text) {
 function voiceRequest() {
   if (!v.turnPending) return {};
   v.turnPending = false;
-  Object.assign(turn, { active: true, done: false, buf: "", held: [], roundSpoken: 0, chunks: 0, said: "", heard: "", shown: "", toolActive: false,
+  Object.assign(turn, { active: true, done: false, buf: "", held: [], roundSpoken: 0, chunks: 0, said: "", heard: "", heardParts: [], shown: "", toolActive: false,
     filler: false, workIdx: 0, lastSpoke: performance.now(), interrupted: false });
   clearInterval(turn.tick);
   const gen = v.gen;

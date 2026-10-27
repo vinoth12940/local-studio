@@ -459,6 +459,14 @@ def chat_voice_mode_never_reaches_the_engine():
     assert [m["role"] for m in parts] == ["system", "user"] and parts[0]["content"][-1]["text"] == note
     bare = harness.with_voice_note([chat[1]], note)
     assert [m["role"] for m in bare] == ["system", "user"] and bare[0]["content"] == note
+    # The short reminder follows the latest user message only (local models ignore a rule far up a long system message).
+    convo = [chat[0], {"role": "user", "content": "first"}, {"role": "assistant", "content": "a"}, {"role": "user", "content": "LFM3?"}]
+    out = harness.with_voice_note(convo, note)
+    assert out[3]["content"].startswith("LFM3?") and out[3]["content"].endswith(harness.VOICE_TURN_REMINDER)
+    assert out[1]["content"] == "first" and convo[3]["content"] == "LFM3?", "only the latest turn, and the input is not mutated"
+    multi = harness.with_voice_note([chat[0], {"role": "user", "content": [{"type": "text", "text": "q"}]}], note)
+    assert multi[1]["content"][-1]["text"] == harness.VOICE_TURN_REMINDER
+    assert "example prompts" in harness.VOICE_NOTE
 
 
 if __name__ == "__main__":
