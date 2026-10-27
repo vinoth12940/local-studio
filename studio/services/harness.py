@@ -40,7 +40,7 @@ from studio.security.fences import (
 )
 from studio.services.attachments import _extract, TEXT_EXT
 from studio.services.mcp_custom import _call_custom_mcp_tool
-from studio.services.models import chat_model
+from studio.services.models import chat_model, effective_context
 from studio.services.web import _WebPageText, _WebSearchResults
 from studio.storage.backups import _backup_file
 from studio.storage.memory import _load_agent_memory, _save_agent_memory
@@ -199,9 +199,10 @@ CHAT_ACTION_TOOLS = [
 # Opt-in schemas are kept separate so disabled requests retain their exact tool contract.
 CHAT_RESOURCE_TOOLS = [
     _chat_schema("list_skills", "Discover bounded metadata for local workspace/state skills. Skill text cannot grant permissions."),
-    _chat_schema("load_skill", "Load a skill body and content digest by an ID from list_skills, with workspace instruction provenance.",
+    _chat_schema("load_skill", "Load a skill body by an ID from list_skills (it returns the skill's content digest as 'sha256'). "
+                 "Omit expected_sha256 on the first load; it is only for re-checking a previous load, and must then be that load's 'sha256', never the catalog's metadata_sha256.",
                  {"skill_id": {"type": "string"}, "expected_sha256": {"type": "string"}}, ("skill_id",)),
-    _chat_schema("read_skill_resource", "Read bounded UTF-8 supporting text inside a loaded skill. Requires the skill's current SHA-256 digest.",
+    _chat_schema("read_skill_resource", "Read bounded UTF-8 supporting text inside a loaded skill. skill_sha256 is the 'sha256' that load_skill returned for this skill (not metadata_sha256).",
                  {"skill_id": {"type": "string"}, "path": {"type": "string"}, "skill_sha256": {"type": "string"},
                   "start_line": {"type": "integer"}, "max_lines": {"type": "integer"}}, ("skill_id", "path", "skill_sha256")),
 ]
@@ -699,7 +700,7 @@ def _run_subagent_task(task: str, role: str = "researcher", timezone: str | None
             elif mode == "gguf":
                 body["model"] = m["id"]
             try:
-                _chat_fit_context(body)
+                _chat_fit_context(body, effective_context(m))
                 turn_state = {}
                 async def _consume():
                     async for _ in _chat_engine_turn(url, body, turn_state):
@@ -1097,7 +1098,7 @@ def _chat_tool_detail(name, args, result, meta=None):
 
 async def _chat_engine_turn(url, body, state):
     """One streamed model turn. Native calls are assembled without interpreting prose as actions."""
-    state.update(calls={}, content="", reasoning="", first=None, n_out=0, timings=None, usage=None)
+    state.update(calls={}, content="", reasoning="", first=None, n_out=0, timings=None, usage=None, finish=None)
     async with httpx.AsyncClient(timeout=None) as client:
         async with client.stream("POST", f"{url}/v1/chat/completions", json=body) as response:
             if response.status_code != 200:
@@ -1118,6 +1119,7 @@ async def _chat_engine_turn(url, body, state):
                 state["reasoning"] += delta.get("reasoning_content") or delta.get("reasoning") or ""
                 if delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning"):
                     state["first"] = state["first"] or time.time(); state["n_out"] += 1
+                state["finish"] = ((event.get("choices") or [{}])[0] or {}).get("finish_reason") or state["finish"]
                 state["timings"] = event.get("timings") or state["timings"]
                 state["usage"] = event.get("usage") or state["usage"]
                 yield event
@@ -1150,7 +1152,10 @@ def _summarize_messages_deterministic(messages: list[dict]) -> str:
                 pass
     parts = ["### Conversation Checkpoint Summary"]
     if goals:
-        parts.append("**User Goals**:\n" + "\n".join(f"- {g}" for g in list(dict.fromkeys(goals))[-6:]))
+        unique = list(dict.fromkeys(goals))
+        # The earliest goals often carry the facts everything else depends on; keep them as well as the most recent ones.
+        shown = unique if len(unique) <= 6 else unique[:2] + [f"({len(unique) - 6} more omitted)"] + unique[-4:]
+        parts.append("**User Goals**:\n" + "\n".join(f"- {g}" for g in shown))
     if files_touched:
         parts.append("**Files Inspected / Modified**:\n" + ", ".join(list(dict.fromkeys(files_touched))[-12:]))
     if outcomes:
@@ -1158,15 +1163,35 @@ def _summarize_messages_deterministic(messages: list[dict]) -> str:
     return "\n\n".join(parts)[:2400]
 
 
-def _chat_fit_context(body):
-    """Make room for tool results without losing the current request or breaking tool-call/result pairs."""
+# Tokens kept free for the reply when a conversation is fitted into the window. A thinking model spends hundreds to thousands of
+# tokens reasoning before it answers; leaving ~512 (as this once did) made long chats end with no visible answer at all.
+REPLY_RESERVE = 4096
+SUMMARY_RESERVE = 320      # eviction leaves room for the ~800-character checkpoint summary, or the summary is silently skipped
+# A tool round's reasoning is replayed to the engine on every later round of the turn. Keep its tail (the conclusions) so a long
+# agent turn cannot grow the prompt by the full reasoning of every earlier round.
+REASONING_REPLAY_CHARS = 4000
+
+
+def _replay_reasoning(text):
+    text = text or ""
+    return text if len(text) <= REASONING_REPLAY_CHARS else "\u2026" + text[-REASONING_REPLAY_CHARS:]
+
+
+def _chat_fit_context(body, window=None):
+    """Make room for tool results without losing the current request or breaking tool-call/result pairs.
+
+    `window` is the model's effective context window in tokens (see models.effective_context); it defaults to the setting."""
+    window = int(window or config.CONTEXT)
     messages = list(body["messages"])
+    reserve = min(REPLY_RESERVE, window // 4)       # a small window keeps the old 1024-token behavior
     def cost():
-        chars = len(json.dumps(body["tools"])) + sum(len(_chat_text(m)) + len(json.dumps(m.get("tool_calls", []))) for m in messages)
+        # reasoning_content is part of the prompt the engine receives, so it counts exactly like content
+        chars = len(json.dumps(body["tools"])) + sum(len(_chat_text(m)) + len(json.dumps(m.get("tool_calls", [])))
+                                                     + len(m.get("reasoning_content") or "") for m in messages)
         images = sum(1 for m in messages for p in (m.get("content") if isinstance(m.get("content"), list) else []) if isinstance(p, dict) and p.get("type") == "image_url")
         return int(chars / 3.2) + images * 1200
     evicted = []
-    while cost() > config.CONTEXT - 1024:
+    while cost() > window - reserve - (SUMMARY_RESERVE if reserve > 1024 else 0):
         last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=0)
         if last_user <= 1: break
         next_user = next((i for i in range(2, last_user + 1) if messages[i].get("role") == "user"), last_user)
@@ -1174,24 +1199,29 @@ def _chat_fit_context(body):
         del messages[1:next_user]       # remove a whole older turn, including all its tool results
     if evicted and messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
         summary = _summarize_messages_deterministic(evicted)[:800]
-        if cost() + int(len(summary) / 3.2) <= config.CONTEXT - 1024 and "### Conversation Checkpoint Summary" not in messages[0]["content"]:
+        if cost() + int(len(summary) / 3.2) <= window - reserve and "### Conversation Checkpoint Summary" not in messages[0]["content"]:
             messages[0] = {**messages[0], "content": messages[0]["content"].rstrip() + "\n\n" + summary}
-    if cost() > config.CONTEXT - 1024:
+    last_asst = max((i for i, m in enumerate(messages) if m.get("role") == "assistant" and m.get("tool_calls")), default=-1)
+    if cost() > window - reserve:
+        # Earlier rounds' reasoning is the cheapest thing to lose: the actions and their results stay, only the thinking goes.
+        for index, message in enumerate(messages):
+            if index < last_asst and message.get("reasoning_content"):
+                messages[index] = {k: v for k, v in message.items() if k != "reasoning_content"}
+    if cost() > window - reserve:
         # Observation masking: when multiple tool rounds exist in the current turn, compact older rounds first.
-        last_asst = max((i for i, m in enumerate(messages) if m.get("role") == "assistant" and m.get("tool_calls")), default=-1)
         for index, message in enumerate(messages):
             if index < last_asst and message.get("role") == "tool" and len(message.get("content", "")) > 600:
                 message = dict(message)
                 message["content"] = json.dumps({"truncated": True, "excerpt": message["content"][:600]})
                 messages[index] = message
-    if cost() > config.CONTEXT - 1024:
+    if cost() > window - reserve:
         for index, message in enumerate(messages):
             if message.get("role") == "tool" and len(message.get("content", "")) > 1500:
                 message = dict(message)
                 message["content"] = json.dumps({"truncated": True, "excerpt": message["content"][:1500]})
                 # Replace only this evidence, never drop its corresponding native tool call.
                 messages[index] = message
-    if config.CONTEXT - cost() - 512 < 512:
+    if window - cost() - 512 < 512:
         for index, message in enumerate(messages):
             if message.get("role") == "tool" and len(message.get("content", "")) > 400:
                 raw = message["content"]
@@ -1202,7 +1232,7 @@ def _chat_fit_context(body):
                 message = dict(message)
                 message["content"] = json.dumps({"truncated": True, "excerpt": str(raw)[:400]})
                 messages[index] = message
-    room = config.CONTEXT - cost() - 512
+    room = window - cost() - 512
     if room < 512: raise ValueError("This conversation is too long to fit the tool evidence. Start a new chat or shorten the request.")
     body["messages"], body["max_tokens"] = messages, min(int(body["max_tokens"]), room)
 

@@ -36,7 +36,26 @@ LLAMA_SERVER = next((p for p in (shutil.which("llama-server"), "/opt/homebrew/bi
                     "/opt/homebrew/bin/llama-server")
 BREW = shutil.which("brew") or "/opt/homebrew/bin/brew"
 DOCUMENT_READER = (ROOT.parent.parent / "MacOS" / "DocumentReader") if (ROOT.parent.parent / "MacOS" / "DocumentReader").exists() else ROOT / "build" / "DocumentReader"
-CONTEXT = 32768
+# The model's context window in tokens: what the engine is started with, and what every prompt budget is measured against.
+# Settings -> Context window changes it (data/settings.json "context_window"). Agent turns replay every tool result and the model's
+# reasoning, so a smaller window runs out within a few rounds; 100k is the floor and 128k the default. A model with a smaller native
+# limit is clamped to it (models.effective_context). LEGACY_CONTEXT is what engines started before the window was recorded used.
+DEFAULT_CONTEXT, MIN_CONTEXT, MAX_CONTEXT, LEGACY_CONTEXT = 131072, 100000, 262144, 32768
+
+
+def valid_context_window(value):
+    return type(value) is int and MIN_CONTEXT <= value <= MAX_CONTEXT
+
+
+def _configured_context():
+    try:
+        value = json.loads(SETTINGS.read_text()).get("context_window")
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_CONTEXT
+    return value if valid_context_window(value) else DEFAULT_CONTEXT
+
+
+CONTEXT = _configured_context()
 # mflux editing needs a complete checkpoint; the q4 export used here is text-to-image only.
 EDIT_MODEL = os.environ.get("EDIT_MODEL")
 # Testing: LOCAL_STUDIO_SEARCH_PORT gives a development server its own search service, so it can

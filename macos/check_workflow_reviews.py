@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import HTTPException
 
+from studio import config
 from studio.api import reviews as api_reviews
 from studio.services import reviews, workflow, workflow_runs
 from studio.services.verification import VerificationGate
@@ -284,6 +285,56 @@ def test_exhausted_repair_budget_or_unresolved_failures_block_review_and_complet
     assert workflow.complete_task(task, gate_snapshot(ws)) == 'verified_complete'
 
 
+def test_reviewer_calls_the_engines_chat_completions_endpoint():
+    """The stubbed tests never reached the network, which hid a 404 against the engine's base URL in the first real run."""
+    from studio.services import engines
+    seen, finish = {}, ["stop"]
+    class Stream:
+        def __init__(self, status=200): self.status_code = status
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def raise_for_status(self): pass
+        def iter_bytes(self):
+            yield json.dumps({"model": "m", "choices": [{"finish_reason": finish[0], "message": {"content": "{}" if finish[0] == "stop" else ""}}]}).encode()
+    class Client:
+        def __init__(self, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def stream(self, method, url, json=None, **kw):
+            seen.update(method=method, url=url, body=json); return Stream()
+    saved = (reviews.httpx.Client, engines.engine_state, engines._engine_ready)
+    reviews.httpx.Client = Client
+    engines.engine_state = lambda: {"mode": "text", "model_id": load_settings()["chat_model"]}
+    engines._engine_ready = lambda mode: True
+    try:
+        raw, meta = reviews._call_local_reviewer(None, {"x": 1})
+    finally:
+        reviews.httpx.Client, engines.engine_state, engines._engine_ready = saved
+    assert seen["method"] == "POST" and seen["url"] == "http://127.0.0.1:8080/v1/chat/completions", seen["url"]
+    assert seen["body"]["stream"] is False and seen["body"]["messages"][0]["role"] == "system" and meta["fresh_context"] is True
+    assert 4096 < seen["body"]["max_tokens"] <= reviews.MAX_REVIEW_TOKENS, "a reasoning model needs more than a small fixed cap"
+    reviews.httpx.Client = Client
+    engines.engine_state = lambda: {"mode": "text", "model_id": load_settings()["chat_model"]}
+    engines._engine_ready = lambda mode: True
+    try:
+        window = config.CONTEXT
+        config.CONTEXT = 100000
+        try:
+            reviews._call_local_reviewer(None, {"blob": "x" * 300000})
+        finally:
+            config.CONTEXT = window
+        assert 1024 <= seen["body"]["max_tokens"] <= 100000 - int(300000 / 3.2), "the budget shrinks with the prompt"
+        finish[0] = "length"
+        try:
+            reviews._call_local_reviewer(None, {"x": 1})
+        except ValueError as error:
+            assert "token budget" in str(error) and "No review was recorded" in str(error), str(error)
+        else:
+            raise AssertionError("a reply cut off by the token budget must be refused with an explicit reason")
+    finally:
+        reviews.httpx.Client, engines.engine_state, engines._engine_ready = saved
+
+
 def test_task_changing_during_review_discards_the_result():
     ws = make_workspace()
     task = new_task(ws)
@@ -310,6 +361,7 @@ if __name__ == '__main__':
                      test_review_goes_stale_when_source_artifacts_or_markdown_projection_change,
                      test_verification_evidence_must_be_current_successful_and_for_this_task,
                      test_exhausted_repair_budget_or_unresolved_failures_block_review_and_completion,
+                     test_reviewer_calls_the_engines_chat_completions_endpoint,
                      test_task_changing_during_review_discards_the_result,
                      test_unreviewed_tasks_do_not_require_a_review):
         function()

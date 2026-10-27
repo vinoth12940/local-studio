@@ -42,7 +42,8 @@ def _enabled():
 
 
 def _root():
-    root = config.STATE / "data" / "workflow" / "worktrees"
+    # Not under data/workflow: that folder is the run journal's own state and cannot be a fingerprinted workspace.
+    root = config.STATE / "data" / "worktrees"
     root.mkdir(parents=True, exist_ok=True)
     return root
 

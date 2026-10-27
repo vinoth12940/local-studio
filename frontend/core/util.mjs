@@ -11,7 +11,7 @@ const newId = () => [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.
 async function api(path, opts = {}) {
   const r = await fetch(path, opts);
   let j = null; try { j = await r.json(); } catch {}
-  if (!r.ok) throw new Error((j && (j.detail || j.error)) || `HTTP ${r.status}`);
+  if (!r.ok) { const e = new Error((j && (j.detail || j.error)) || `HTTP ${r.status}`); e.code = j?.code; e.data = j; throw e; }
   return j;
 }
 const jpost = (path, body, method = "POST") => api(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
@@ -26,6 +26,13 @@ function confirmBox(title, body, yes = "Delete") {
   });
 }
 
+// Assigning innerHTML rebuilds every <option>, which closes an open dropdown and drops its keyboard focus. A periodic refresh must
+// therefore leave the list alone unless its markup changed, and touch the selection only when it differs.
+function setOptions(el, html, value) {
+  if (el._optSig !== html) { el.innerHTML = html; el._optSig = html; }
+  if (value !== undefined && el.value !== value) el.value = value;
+}
+
 export {
-  $, api, confirmBox, DEFAULT_MAX_TOKENS, esc, gib, human, icon, jpost, newId, store, toast
+  $, api, confirmBox, DEFAULT_MAX_TOKENS, esc, gib, human, icon, jpost, newId, setOptions, store, toast
 };

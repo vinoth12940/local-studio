@@ -3,13 +3,30 @@ import { $, api, confirmBox, esc, human, jpost, toast } from "../core/util.mjs";
 import { listState, loadChats } from "../chat/list.mjs";
 import { chDetach } from "../chat/computer.mjs";
 import { lib, loadLibrary } from "../library/library.mjs";
-import { loadAgent, loadSearch } from "../modules.mjs";
+import { loadAgent, loadSearch, refreshContextWindow } from "../modules.mjs";
 
 // ---------------- settings
-async function loadManage() { loadStorage(); loadVersions(); loadSearch(); loadAgent(); loadMcp(); loadLibrary().then(() => {
+async function loadManage() { loadStorage(); loadVersions(); loadSearch(); loadAgent(); loadMcp(); loadContext(); loadLibrary().then(() => {
   const inst = lib.chat.concat(lib.image).filter((m) => m.installed);
   $("modelsSum").textContent = `${inst.length} downloaded · ${human(inst.reduce((a, m) => a + m.size_bytes, 0))} on disk · ${human(lib.disk_free_bytes)} free`;
 }); }
+// Maximum context window. The engine keeps the window it started with, so a change applies on the next engine start.
+async function loadContext() {
+  let r; try { r = await api("/api/context-window"); } catch { return; }
+  const sizes = [...new Set([...r.presets, r.value])].sort((a, b) => a - b);
+  $("ctxSelect").innerHTML = sizes.map((v) => `<option value="${v}" ${v === r.value ? "selected" : ""}>${v.toLocaleString()} tokens${v === r.default ? " (default)" : ""}</option>`).join("") + `<option value="custom">Custom…</option>`;
+  $("ctxCustom").hidden = true; $("ctxCustom").value = r.value;
+  const live = r.engine.started_with;
+  $("ctxSetSum").textContent = `${r.value.toLocaleString()} tokens` + (r.effective !== r.value ? ` · ${r.effective.toLocaleString()} for the active model` : "") + (live ? (r.restart_required ? ` · the running engine still uses ${live.toLocaleString()}; it restarts with the new size on your next message` : ` · the running engine uses this size`) : " · applies when the engine next starts");
+  $("ctxNotes").innerHTML = (r.notes || []).map((n) => `<div class="row"><div class="grow"><div class="sub">${esc(n)}</div></div></div>`).join("");
+}
+$("ctxSelect").onchange = () => { $("ctxCustom").hidden = $("ctxSelect").value !== "custom"; };
+async function saveContext(value) {
+  try { const r = await jpost("/api/context-window", { value }); toast(`Context window set to ${r.value.toLocaleString()} tokens`); await loadContext(); refreshContextWindow(); }
+  catch (err) { toast(err.message); }
+}
+$("ctxSave").onclick = () => saveContext($("ctxSelect").value === "custom" ? Number($("ctxCustom").value) : Number($("ctxSelect").value));
+$("ctxReset").onclick = () => saveContext(null);
 let mcpServers = [];
 async function loadMcp() {
   let r; try { r = await api("/api/mcp/servers"); } catch { return; }

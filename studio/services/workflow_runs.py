@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import time
 import uuid
 from contextlib import contextmanager
@@ -43,11 +44,35 @@ def task_identity(task):
     return {key: task.get(key) for key in ("id", "version", "mode", "scope", "budgets", "artifacts", "review_required")} if task else None
 
 
+# Build and tool output that is never source. Used only when the workspace is not a git checkout (a checkout's own .gitignore decides
+# there); a Python virtualenv is recognised by its pyvenv.cfg rather than by its name.
+FINGERPRINT_SKIP_DIRS = frozenset({"node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".gradle", ".idea"})
+FINGERPRINT_SKIP_FILES = frozenset({".DS_Store"})
+
+
+def _git_listed_files(root, scopes):
+    """Tracked plus untracked-but-not-ignored paths under `scopes`, honoring .gitignore, or None when git cannot answer."""
+    if not (root / ".git").exists():
+        return None
+    try:
+        result = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *scopes],
+                                capture_output=True, timeout=30, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(Path.home()),
+                                                                      "LC_ALL": "C"})
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return sorted({entry.decode("utf-8", "surrogateescape") for entry in result.stdout.split(b"\0") if entry})
+
+
 def workspace_fingerprint(workspace, paths=None, max_files=20000, max_bytes=256_000_000, excludes=None):
     """Bounded content identity; incomplete scans fail closed instead of certifying.
 
     .git is metadata, not source. Scope can be narrowed only by trusted settings.
-    Symlinks are rejected because their targets can escape or change independently.
+    In a git checkout the files are the tracked and not-ignored ones, so dependency folders and build output the project already
+    ignores never count; elsewhere a fixed list of well-known build directories is skipped. A symlink is part of the workspace as
+    its target path (it is never followed), and one that resolves outside the workspace fails closed so the error names it for a
+    trusted exclusion. Sockets, pipes and devices hold no source and are skipped. Blocking: call it off the event loop.
     """
     root = Path(workspace).resolve()
     if not root.is_dir():
@@ -59,8 +84,8 @@ def workspace_fingerprint(workspace, paths=None, max_files=20000, max_bytes=256_
         return {"digest": None, "error": "Invalid trusted fingerprint_excludes"}
     excluded = []
     for raw in excludes or []:
-        candidate = root / raw
-        if not candidate.resolve().is_relative_to(root) or candidate.resolve() == root:
+        candidate = Path(os.path.normpath(root / raw))      # lexical: excluding a symlink must not require following it out
+        if not candidate.is_relative_to(root) or candidate == root:
             return {"digest": None, "error": "Fingerprint exclusion escapes or excludes the whole workspace"}
         excluded.append(candidate)
     digest = hashlib.sha256()
@@ -70,6 +95,57 @@ def workspace_fingerprint(workspace, paths=None, max_files=20000, max_bytes=256_
     internal += [(config.STATE / "data" / "settings.json").resolve()]
     if any(root == p or root.is_relative_to(p) for p in internal):
         return {"digest": None, "error": "Application state cannot be a coding fingerprint workspace"}
+    skipped = internal + excluded
+
+    def hash_file(path, relative):
+        nonlocal files, total
+        files += 1
+        before = path.stat()
+        if files > max_files or total + before.st_size > max_bytes:
+            raise ValueError("Workspace fingerprint budget exceeded; configure a bounded source scope")
+        digest.update(relative.encode("utf-8", "surrogateescape") + b"\0" + str(before.st_mode & 0o777).encode() + b"\0")
+        with path.open("rb") as stream:
+            while chunk := stream.read(1_048_576):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError("Workspace fingerprint byte budget exceeded")
+                digest.update(chunk)
+        after = path.stat()
+        if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns):
+            raise ValueError("Workspace changed during fingerprinting")
+        digest.update(b"\0")
+
+    def visit(path, listed):
+        """Hash one path; `listed` is True when git named it (so its ignore rules already applied)."""
+        if path.name == ".git" or any(path == p or path.is_relative_to(p) for p in skipped):
+            return
+        relative = str(path.relative_to(root))
+        if relative in seen:
+            return
+        seen.add(relative)
+        if len(seen) > max_files * 2:
+            raise ValueError("Workspace fingerprint entry budget exceeded")
+        if path.is_symlink():
+            target = Path(os.path.normpath(path.parent / os.readlink(path)))
+            if not (path.resolve().is_relative_to(root) and target.is_relative_to(root)):
+                raise ValueError(f"Fingerprint scope contains a symlink to outside the workspace: {relative} (exclude it in trusted fingerprint_excludes)")
+            digest.update(b"link:" + relative.encode("utf-8", "surrogateescape") + b"\0" + os.readlink(path).encode("utf-8", "surrogateescape") + b"\0")
+            return
+        if path.is_dir():
+            if not listed and (path.name in FINGERPRINT_SKIP_DIRS or (path / "pyvenv.cfg").exists()):
+                return
+            before_dir = path.stat()
+            directory_stats[path] = (before_dir.st_ino, before_dir.st_mtime_ns)
+            digest.update(b"dir:" + relative.encode("utf-8", "surrogateescape") + b"\0")
+            for child in sorted(path.iterdir(), reverse=True):
+                visit(child, False)          # a directory git lists whole (a nested repo or submodule) has no ignore rules of ours
+            return
+        if not path.is_file():
+            return                           # socket, pipe or device: no source content
+        if not listed and path.name in FINGERPRINT_SKIP_FILES:
+            return
+        hash_file(path, relative)
+
     try:
         for scope in sorted(candidates):
             base = root / scope
@@ -77,43 +153,18 @@ def workspace_fingerprint(workspace, paths=None, max_files=20000, max_bytes=256_
                 raise ValueError("Fingerprint scope escapes workspace or is a symlink")
             if not base.exists():
                 digest.update(f"missing:{scope}\0".encode())
-                continue
-            pending = [base]
-            while pending:
-                path = pending.pop()
-                if path.name == ".git" or any(path == p or path.is_relative_to(p) for p in internal + excluded):
+        existing = [scope for scope in sorted(candidates) if (root / scope).exists()]
+        listed = _git_listed_files(root, existing) if existing else None
+        if listed is not None:
+            for relative in listed:
+                path = root / relative
+                if not path.exists() and not path.is_symlink():
+                    digest.update(b"deleted:" + relative.encode("utf-8", "surrogateescape") + b"\0")     # tracked but gone: a change
                     continue
-                relative = str(path.relative_to(root))
-                if relative in seen:
-                    continue
-                seen.add(relative)
-                if len(seen) > max_files * 2:
-                    raise ValueError("Workspace fingerprint entry budget exceeded")
-                if path.is_symlink():
-                    raise ValueError(f"Fingerprint scope contains symlink: {relative}")
-                if path.is_dir():
-                    before_dir = path.stat()
-                    directory_stats[path] = (before_dir.st_ino, before_dir.st_mtime_ns)
-                    digest.update(b"dir:" + relative.encode() + b"\0")
-                    pending.extend(sorted(path.iterdir(), reverse=True))
-                    continue
-                if not path.is_file():
-                    raise ValueError(f"Fingerprint scope contains special file: {relative}")
-                files += 1
-                before = path.stat()
-                if files > max_files or total + before.st_size > max_bytes:
-                    raise ValueError("Workspace fingerprint budget exceeded; configure a bounded source scope")
-                digest.update(relative.encode() + b"\0" + str(before.st_mode & 0o777).encode() + b"\0")
-                with path.open("rb") as stream:
-                    while chunk := stream.read(1_048_576):
-                        total += len(chunk)
-                        if total > max_bytes:
-                            raise ValueError("Workspace fingerprint byte budget exceeded")
-                        digest.update(chunk)
-                after = path.stat()
-                if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns):
-                    raise ValueError("Workspace changed during fingerprinting")
-                digest.update(b"\0")
+                visit(path, True)
+        else:
+            for scope in existing:
+                visit(root / scope, False)
         for directory, before_dir in directory_stats.items():
             after_dir = directory.stat()
             if before_dir != (after_dir.st_ino, after_dir.st_mtime_ns):
@@ -127,6 +178,7 @@ class RunStore:
     def __init__(self, root=None):
         self.root = Path(root) if root else config.STATE / "data" / "workflow" / "runs"
         self._leases = {}
+        self._cancelled = set()      # run ids cancelled in this process: the executing turn polls this instead of re-reading the record
 
     def _path(self, run_id):
         if not isinstance(run_id, str) or not re.fullmatch(r"[a-f0-9]{32}", run_id):
@@ -381,6 +433,7 @@ class RunStore:
             record["resume_digest"] = hashlib.sha256(token.encode()).hexdigest()
             self._event(record, "resume_prepared", {"approvals_expired": True, "verification_expired": True})
         record = self._mutate(run_id, change, expected_seq)
+        self._cancelled.discard(run_id)      # a resumed run starts uncancelled, as its persisted flag does
         return record, token
 
     def continuation_messages(self, record):
@@ -404,7 +457,12 @@ class RunStore:
         def change(record):
             record["cancel_requested"] = True
             self._event(record, "cancel_requested", {})
-        return self._mutate(run_id, change)
+        record = self._mutate(run_id, change)
+        self._cancelled.add(run_id)
+        return record
+
+    def is_cancelled(self, run_id):
+        return run_id in self._cancelled
 
     def events(self, run_id, after=0):
         record = self.get(run_id)

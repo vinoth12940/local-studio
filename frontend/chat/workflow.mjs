@@ -1,5 +1,5 @@
 // Explicit task controls. Mode/permission state is always validated by the server.
-import { $, api, esc, jpost, newId, toast } from "../core/util.mjs";
+import { $, api, esc, jpost, newId, setOptions, toast } from "../core/util.mjs";
 import { listState, saveChat } from "./list.mjs";
 import { activeCodeWs, generate, renderThread } from "../modules.mjs";
 
@@ -14,8 +14,7 @@ function showError(error) { const el = $("workflowError"); el.hidden = !error; e
 function syncWorkflow() {
   const ws = workspace(), task = selectedTask();
   $("workflowBar").hidden = !workflowState.enabled || !ws;
-  $("workflowTaskSel").innerHTML = `<option value="">No coding task</option>` + workflowState.tasks.map((t) => `<option value="${esc(t.id)}">${esc((t.artifacts?.["intent.md"]?.version ? "Task " : "") + t.id.slice(0, 8))} · ${esc(t.state)}</option>`).join("");
-  $("workflowTaskSel").value = task?.id || "";
+  setOptions($("workflowTaskSel"), `<option value="">No coding task</option>` + workflowState.tasks.map((t) => `<option value="${esc(t.id)}">${esc((t.artifacts?.["intent.md"]?.version ? "Task " : "") + t.id.slice(0, 8))} · ${esc(t.state)}</option>`).join(""), task?.id || "");
   $("workflowModeSel").value = task?.mode || listState.current?.workflow_mode || workflowState.mode;
   $("workflowModeSel").disabled = !!listState.streaming;
   $("workflowPause").hidden = !task || task.state !== "running";

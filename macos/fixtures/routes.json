@@ -134,6 +134,20 @@
  },
  {
   "methods": [
+   "GET"
+  ],
+  "path": "/api/context-window",
+  "name": "context_window_get"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/context-window",
+  "name": "context_window_set"
+ },
+ {
+  "methods": [
    "POST"
   ],
   "path": "/api/engine/start",

@@ -201,7 +201,7 @@ async def chat(request: Request):
                 raise workflow_runs.RunConflict("Task version, artifacts, mode, scope or budgets changed; start a fresh run")
             if durable_record["workspace"] != workspace or durable_record["policy_digest"] != workflow_runs.policy_fingerprint(settings_snapshot, workspace):
                 raise workflow_runs.RunConflict("Resume workspace or trusted configuration changed")
-            fingerprint = verification.fingerprint() or workflow_runs.workspace_fingerprint(workspace)
+            fingerprint = await asyncio.to_thread(lambda: verification.fingerprint() or workflow_runs.workspace_fingerprint(workspace))
             if not fingerprint.get("digest") or fingerprint.get("digest") != durable_record["fingerprint"].get("digest"):
                 raise workflow_runs.RunConflict("Workspace changed after resume authorization")
             body["messages"] = workflow_runs.store.continuation_messages(durable_record)
@@ -246,7 +246,8 @@ async def chat(request: Request):
             images += sum(1 for p in c if p.get("type") == "image_url")
         else:
             prompt_chars += len(c or "")
-    room = config.CONTEXT - int(prompt_chars / 3.2) - images * 1200 - 512
+    window = models.effective_context(m)
+    room = window - int(prompt_chars / 3.2) - images * 1200 - 512
     body["max_tokens"] = max(512, min(int(body.get("max_tokens") or 16384), room))
     body["stream"] = True
     body.setdefault("stream_options", {"include_usage": True})
@@ -255,7 +256,7 @@ async def chat(request: Request):
     durable_attempt = 0
     if durable_enabled:
         try:
-            fingerprint = verification.fingerprint() or workflow_runs.workspace_fingerprint(workspace)
+            fingerprint = await asyncio.to_thread(lambda: verification.fingerprint() or workflow_runs.workspace_fingerprint(workspace))
             if not fingerprint.get("digest"):
                 raise workflow_runs.RunConflict(fingerprint.get("error") or "Workspace fingerprint unavailable")
             if not durable_record:
@@ -283,7 +284,8 @@ async def chat(request: Request):
             yield _sse({"error": f"{m['name']} isn't downloaded yet. Get it from the Model library."})
             return
         st = await asyncio.to_thread(engines.engine_state)
-        if st.get("mode") != mode or st.get("model_id") != m["id"] or not await asyncio.to_thread(engines._engine_ready, mode):
+        if (st.get("mode") != mode or st.get("model_id") != m["id"] or st.get("context_window", config.LEGACY_CONTEXT) != window
+                or not await asyncio.to_thread(engines._engine_ready, mode)):
             yield _sse({"x_engine": {"status": "switching", "mode": mode, "model": m["name"]}})
             try:
                 await asyncio.to_thread(engines.ensure_engine, mode, m)
@@ -326,21 +328,21 @@ async def chat(request: Request):
                 if await request.is_disconnected(): return
                 instruction_fingerprints.update(pending_instruction_fingerprints)
                 pending_instruction_fingerprints.clear()
-                if durable_id and workflow_runs.store.get(durable_id, recover=False).get("cancel_requested"):
+                if durable_id and await asyncio.to_thread(lambda: workflow_runs.store.get(durable_id, recover=False).get("cancel_requested")):
                     execution_cancel.set()
                     policy.cancel.set()
                     yield _sse({"error": "Workflow run cancelled."})
                     return
                 if verification.exhausted():
-                    _, _, explanation = verification.completion()
-                    yield _sse({"x_verification": verification.status()})
+                    _, _, explanation = await asyncio.to_thread(verification.completion)
+                    yield _sse({"x_verification": (await asyncio.to_thread(verification.status))})
                     yield _sse({"choices": [{"delta": {"content": explanation}, "finish_reason": "stop"}]})
                     return
                 try:
                     # The model still chooses the source. Temporarily remove another search until
                     # it has tried reading the URLs it already found, avoiding endless reworded queries.
                     body["tools"] = [t for t in all_chat_tools if not unread_web_results or t["function"]["name"] != "web_search"]
-                    _chat_fit_context(body)
+                    _chat_fit_context(body, window)
                     async for event in _chat_engine_turn(url, body, state):
                         if (verification.enabled or policy.enabled) and event.get("choices"):
                             # Content can claim completion before native calls are known.
@@ -355,6 +357,11 @@ async def chat(request: Request):
                 except (httpx.HTTPError, RuntimeError, ValueError) as error:
                     yield _sse({"error": str(error)})
                     return
+                if not state["calls"] and not state["content"].strip() and state.get("finish") == "length":
+                    note = ("The reply was cut off before it produced any text: the conversation nearly fills the model's context window "
+                            "and the model used its remaining budget thinking. Use /compact or start a new chat.")
+                    state["content"] = note
+                    yield _sse({"choices": [{"delta": {"content": note}, "finish_reason": None}]})
                 calls = list(state["calls"].values())
                 for index, call in enumerate(calls):
                     call["id"] = call["id"] or f"chat-{round_no}-{index}"
@@ -365,7 +372,7 @@ async def chat(request: Request):
                 final_reply = bool(selected and selected[0] == "reply" and isinstance(selected[1], dict)
                                    and isinstance(selected[1].get("text"), str))
                 if (verification.enabled or policy.enabled) and (not calls or final_reply or (selected and selected[0] == "use_computer")):
-                    allowed, retry, explanation = verification.completion()
+                    allowed, retry, explanation = await asyncio.to_thread(verification.completion)
                     if not allowed:
                         if retry and not (selected and selected[0] == "use_computer"):
                             if calls:
@@ -376,12 +383,12 @@ async def chat(request: Request):
                                 body["messages"].append({"role": "assistant", "content": state["content"]})
                             body["messages"].append({"role": "system", "content": verification.guidance(explanation)})
                             continue
-                        yield _sse({"x_verification": verification.status()})
+                        yield _sse({"x_verification": (await asyncio.to_thread(verification.status))})
                         yield _sse({"choices": [{"delta": {"content": explanation}, "finish_reason": "stop"}]})
                         yield "data: [DONE]\n\n"
                         return
                     if not calls or final_reply:
-                        yield _sse({"x_verification": verification.status()})
+                        yield _sse({"x_verification": (await asyncio.to_thread(verification.status))})
                         answer = selected[1]["text"] if final_reply else state["content"]
                         yield _sse({"choices": [{"delta": {"content": answer}, "finish_reason": "stop"}]})
                         break
@@ -418,9 +425,9 @@ async def chat(request: Request):
                 # Feed each real tool result back to the SAME model before it answers.
                 # The native tool channel is the only executable channel; prose/code stays prose.
                 body["messages"] = body["messages"] + [{"role": "assistant", "content": state["content"],
-                                                         "reasoning_content": state["reasoning"], "tool_calls": calls}]
+                                                         "reasoning_content": harness._replay_reasoning(state["reasoning"]), "tool_calls": calls}]
                 if durable_id:
-                    workflow_runs.store.checkpoint(durable_id, body["messages"], verification.snapshot())
+                    await asyncio.to_thread(lambda: workflow_runs.store.checkpoint(durable_id, body["messages"], verification.snapshot()))
                 for index, call in enumerate(calls):
                     if await request.is_disconnected(): return
                     name = call["function"]["name"]
@@ -566,7 +573,7 @@ async def chat(request: Request):
                                 active_future = fut
                                 while not fut.done():
                                     if await request.is_disconnected(): return
-                                    if durable_id and workflow_runs.store.get(durable_id, recover=False).get("cancel_requested"):
+                                    if durable_id and workflow_runs.store.is_cancelled(durable_id):
                                         execution_cancel.set()
                                     while not out_q.empty():
                                         yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
@@ -579,7 +586,8 @@ async def chat(request: Request):
                                 result = {**reply_payload, "verified": False}
                             else:
                                 feedback = str(reply_payload.get("feedback") or "").strip()[:2000]
-                                result = {"error": "The user declined this action." + (f" Do this instead: {feedback}" if feedback else ""),
+                                result = {"error": "The user declined this action. Do not retry it or work around it with another tool or command; briefly say what you could not do, then stop."
+                                                   + (f" Do this instead: {feedback}" if feedback else ""),
                                           "declined": True, **({"user_feedback": feedback} if feedback else {})}
                         else:
                             executed = True
@@ -612,7 +620,7 @@ async def chat(request: Request):
                             active_future = fut
                             while not fut.done():
                                 if await request.is_disconnected(): return
-                                if durable_id and workflow_runs.store.get(durable_id, recover=False).get("cancel_requested"):
+                                if durable_id and workflow_runs.store.is_cancelled(durable_id):
                                     execution_cancel.set()
                                 while not out_q.empty():
                                     yield _sse({"x_tool_output": {"id": key, "chunk": out_q.get_nowait()}})
@@ -625,10 +633,11 @@ async def chat(request: Request):
                         result = {"error": "Use a known read-only or workspace tool, or call reply/use_computer by itself after reading the results."}
                     if instruction_context and instruction_result is None:
                         result = {**result, "applicable_instructions": instruction_context}
+                    # observe and the post-step fingerprint hash the workspace: keep that off the event loop that streams the reply
                     if key not in observed_steps:
-                        verification.observe(name, args, result, executed=executed)
+                        await asyncio.to_thread(lambda: verification.observe(name, args, result, executed=executed))
                     if durable_id:
-                        workflow_runs.store.checkpoint(durable_id, body["messages"], verification.snapshot(), verification.fingerprint() or fingerprint)
+                        await asyncio.to_thread(lambda: workflow_runs.store.checkpoint(durable_id, body["messages"], verification.snapshot(), verification.fingerprint() or fingerprint))
                     if name == "web_search" and result.get("results"): unread_web_results = True
                     if name == "read_webpage": unread_web_results = False
                     if await request.is_disconnected(): return
@@ -643,11 +652,11 @@ async def chat(request: Request):
                                           **({"backup_id": result["backup_id"]} if result.get("backup_id") else {}),
                                           **({"syntax_check": result["syntax_check"], "syntax_ok": result.get("syntax_ok", True)} if result.get("syntax_check") else {}),
                                           **({"error": result["error"]} if result.get("error") else {})}})
-                    if verification.enabled and verification.declined and verification.status()["status"] == "unverified":
+                    if verification.enabled and verification.declined and (await asyncio.to_thread(verification.status))["status"] == "unverified":
                         # Do not give the model another chance to repeat an action
                         # whose approval was refused, blocked or left unanswered.
-                        _, _, explanation = verification.completion()
-                        yield _sse({"x_verification": verification.status()})
+                        _, _, explanation = await asyncio.to_thread(verification.completion)
+                        yield _sse({"x_verification": (await asyncio.to_thread(verification.status))})
                         yield _sse({"choices": [{"delta": {"content": explanation}, "finish_reason": "stop"}]})
                         yield "data: [DONE]\n\n"
                         return
@@ -688,9 +697,9 @@ async def chat(request: Request):
                     body["messages"].append({"role": "tool", "tool_call_id": call["id"], "name": name,
                                              "content": _untrusted_mcp_result(model_result) if name.startswith("mcp__") else json.dumps(model_result, ensure_ascii=False)})
             else:
-                if verification.enabled and verification.status()["status"] == "unverified":
-                    _, _, explanation = verification.completion()
-                    yield _sse({"x_verification": verification.status()})
+                if verification.enabled and (await asyncio.to_thread(verification.status))["status"] == "unverified":
+                    _, _, explanation = await asyncio.to_thread(verification.completion)
+                    yield _sse({"x_verification": (await asyncio.to_thread(verification.status))})
                     yield _sse({"choices": [{"delta": {"content": explanation + " The tool-call limit was reached."}, "finish_reason": "stop"}]})
                 yield _sse({"error": "Stopped after the tool-call limit. I could not finish verifying this request; no unsupported answer was substituted."})
                 yield "data: [DONE]\n\n"
@@ -755,16 +764,16 @@ async def chat(request: Request):
                         outcome = "needs_user" if "cancel" not in str(event["error"]).lower() else "cancelled"
                     choice = ((event or {}).get("choices") or [{}])[0]
                     if choice.get("finish_reason") in ("stop", "length") and not finalized:
-                        status = verification.status()
+                        status = await asyncio.to_thread(verification.status)
                         if status["status"] == "unverified":
                             outcome = "needs_user" if verification.declined else "incomplete"
-                            _, _, explanation = verification.completion()
+                            _, _, explanation = await asyncio.to_thread(verification.completion)
                             event = {"choices": [{"delta": {"content": explanation}, "finish_reason": "stop"}]}
                             chunk = _sse(event)
                             status_override = status
                         else:
                             try:
-                                outcome = policy.finalize(verification.snapshot())
+                                outcome = policy.finalize(await asyncio.to_thread(verification.snapshot))
                             except ValueError as error:
                                 outcome = "needs_user"
                                 event = {"choices": [{"delta": {"content": "Incomplete: " + str(error)}, "finish_reason": "stop"}]}
@@ -772,7 +781,7 @@ async def chat(request: Request):
                         finalized = True
                     if chunk == "data: [DONE]\n\n" and not finalized and outcome == "interrupted":
                         try:
-                            outcome = policy.finalize(verification.snapshot())
+                            outcome = policy.finalize(await asyncio.to_thread(verification.snapshot))
                         except ValueError:
                             outcome = "needs_user"
                         finalized = True
@@ -780,12 +789,12 @@ async def chat(request: Request):
                         if event and (event.get("x_approval") or event.get("x_question")):
                             workflow_runs.store.approval(durable_id, event.get("x_approval") or event["x_question"])
                         if finalized and not durable_finished:
-                            snapshot = verification.snapshot()
+                            snapshot = await asyncio.to_thread(verification.snapshot)
                             if outcome == "verified_complete" and snapshot["status"] != "verified":
                                 outcome = "incomplete"
                                 event = {"choices": [{"delta": {"content": "Incomplete: verification became stale before completion was recorded."}, "finish_reason": "stop"}]}
                                 chunk = _sse(event)
-                                status_override = verification.status()
+                                status_override = await asyncio.to_thread(verification.status)
                             workflow_runs.store.checkpoint(durable_id, body["messages"], snapshot, snapshot.get("fingerprint") or fingerprint)
                             workflow_runs.store.finish(durable_id, outcome, snapshot)
                             durable_finished = True
@@ -814,9 +823,10 @@ async def chat(request: Request):
                     await source.aclose()
                 finally:
                     if durable_id and run_claimed and not durable_finished:
-                        status = verification.snapshot()
+                        status = None
                         try:
-                            workflow_runs.store.checkpoint(durable_id, body["messages"], status, verification.fingerprint() or fingerprint)
+                            status = await asyncio.to_thread(verification.snapshot)
+                            await asyncio.to_thread(lambda: workflow_runs.store.checkpoint(durable_id, body["messages"], status, verification.fingerprint() or fingerprint))
                         finally:
                             workflow_runs.store.finish(durable_id, outcome, status)
             finally:

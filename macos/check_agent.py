@@ -4836,16 +4836,19 @@ def run_rejects_bad_context_and_chat_id():
 
 class ChatEngine:
     """A streaming model transport; action execution still uses Env's real routes and gates."""
-    def __init__(self, *events, turns=None):
-        self.events, self.seen = events, []
+    def __init__(self, *events, turns=None, started_window=None):
+        self.events, self.seen, self.started_window = events, [], started_window
         self.turns = iter(turns) if turns is not None else None
 
     def __enter__(self):
         self.saved = {k: getattr(app, k) for k in ("engine_state", "_engine_ready")}
         self.client = app.httpx.AsyncClient
-        studio.services.engines.engine_state = lambda: {"mode": "text", "model_id": TEXT_MLX}
+        # The engine records the window it started with; unless a test says otherwise it is the one this model gets right now.
+        studio.services.engines.engine_state = lambda: {"mode": "text", "model_id": TEXT_MLX, "context_window": outer_window()}
         studio.services.engines._engine_ready = lambda mode: True
         outer = self
+        def outer_window():
+            return outer.started_window or studio.services.models.effective_context(studio.services.models.chat_model(TEXT_MLX))
         class Response:
             status_code = 200
             def __init__(self, events): self.events = events
@@ -4877,6 +4880,22 @@ def chat_delta(**delta):
 def chat_action_deltas(name="use_computer", args="{}"):
     return [chat_delta(tool_calls=[{"index": 0, "function": {"name": name[:4], "arguments": args[:1]}}]),
             chat_delta(tool_calls=[{"index": 0, "function": {"name": name[4:], "arguments": args[1:]}}])]
+
+
+@check
+def chat_restarts_the_engine_when_the_context_window_setting_changed():
+    """The engine keeps the window it started with: a changed setting must trigger ensure_engine, an unchanged one must not."""
+    context, native = app.CONTEXT, studio.services.models.native_context
+    studio.services.models.native_context = lambda m: None          # the model's own limit is tested in check_context_window.py
+    try:
+        for window, expect_restart in ((131072, False), (150000, True)):
+            studio.config.CONTEXT = window
+            with Env() as e, ChatEngine(chat_delta(content="ok"), started_window=131072):
+                result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "hi"}]})
+                events = sse(result.text)
+                assert any("choices" in ev for ev in events), result.text
+                assert bool(e.engines) == expect_restart, (window, e.engines)
+    finally: studio.config.CONTEXT, studio.services.models.native_context = context, native
 
 
 @check
@@ -4948,6 +4967,89 @@ def natural_chat_rejects_unknown_tools_and_never_executes_examples():
                 assert not handoff and not e.sessions, "JSON or code in an ordinary answer is never an action"
                 assert events[0]["choices"][0]["delta"]["content"] == sample
 
+
+
+@check
+def chat_fit_leaves_a_real_reply_budget_and_reports_an_empty_length_cutoff():
+    """A first real-model baseline: the replay of a window-filling chat ended with only reasoning and no answer, because fitting
+    left ~512 tokens for a thinking model."""
+    context = app.CONTEXT
+    studio.config.CONTEXT = 32768
+    try:
+        turns = []
+        for index in range(60):
+            turns += [{"role": "user", "content": f"note {index}: " + "filler " * 700}, {"role": "assistant", "content": "ok"}]
+        b = {"messages": [{"role": "system", "content": "system"}] + turns + [{"role": "user", "content": "what was the first note?"}],
+             "tools": app.CHAT_TOOLS, "max_tokens": 16384}
+        app._chat_fit_context(b)
+        assert b["max_tokens"] >= 3500, b["max_tokens"]
+        assert b["messages"][-1]["content"] == "what was the first note?", "the current request is always kept"
+        small = {"messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "x" * 3000}], "tools": [], "max_tokens": 900}
+        studio.config.CONTEXT = 4096
+        app._chat_fit_context(small)
+        assert small["max_tokens"] == 900, "a small window keeps its old behavior"
+    finally: studio.config.CONTEXT = context
+    thinking_only = [chat_delta(reasoning_content="thinking about notes"), {"choices": [{"delta": {}, "finish_reason": "length"}]}]
+    with Env() as e, ChatEngine(*thinking_only):
+        result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "hello"}]})
+        text = "".join((ev.get("choices") or [{}])[0].get("delta", {}).get("content", "") for ev in sse(result.text))
+        assert "cut off before it produced any text" in text and "/compact" in text, result.text
+    with Env() as e, ChatEngine(chat_delta(content="a real answer"), {"choices": [{"delta": {}, "finish_reason": "length"}]}):
+        result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "hello"}]})
+        assert "cut off before" not in result.text and "a real answer" in result.text, "only an empty reply gets the notice"
+
+
+@check
+def chat_eviction_keeps_a_checkpoint_with_the_earliest_facts():
+    """The compaction eval found that eviction stopped exactly at the limit, so the checkpoint summary never fit and an early fact
+    vanished without a trace."""
+    context = app.CONTEXT
+    studio.config.CONTEXT = 32768
+    try:
+        turns = [{"role": "user", "content": "Remember this for later: the project codename is OBSIDIAN-7. Acknowledge in one short sentence."},
+                 {"role": "assistant", "content": "Noted."}]
+        for index in range(45):
+            turns += [{"role": "user", "content": f"Background note {index}: " + "filler " * 430}, {"role": "assistant", "content": f"Read note {index}."}]
+        b = {"messages": [{"role": "system", "content": "system"}] + turns + [{"role": "user", "content": "What is the project codename?"}], "tools": [], "max_tokens": 4096}
+        app._chat_fit_context(b)
+        system = b["messages"][0]["content"]
+        assert len(b["messages"]) < len(turns), "the conversation really did overflow"
+        assert "### Conversation Checkpoint Summary" in system, "the summary must fit and be kept"
+        assert "OBSIDIAN-7" in system, "the earliest goal survives the summary"
+        assert b["messages"][-1]["content"] == "What is the project codename?" and b["max_tokens"] >= 3000
+        goals = app._summarize_messages_deterministic([m for m in turns if m["role"] in ("user", "assistant")])
+        assert "OBSIDIAN-7" in goals and "40 more omitted" in goals, goals
+    finally: studio.config.CONTEXT = context
+
+
+@check
+def chat_fit_counts_replayed_reasoning_so_a_long_thinking_turn_fits_the_window():
+    """Measured: nine tool rounds of ~12,000 characters of reasoning each came to ~41.7k real prompt tokens on a 32,768 window,
+    while the fitter (which ignored reasoning_content) reported that it fit and granted 16,384 reply tokens."""
+    context = app.CONTEXT
+    studio.config.CONTEXT = 32768
+    try:
+        messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "fix the failing test"}]
+        for index in range(9):
+            call = {"id": f"c{index}", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"a.py"}'}}
+            messages += [{"role": "assistant", "content": "", "reasoning_content": f"round {index} " + "think " * 2000, "tool_calls": [call]},
+                         {"role": "tool", "tool_call_id": f"c{index}", "content": "evidence " * 40}]
+        b = {"messages": messages, "tools": app.CHAT_TOOLS, "max_tokens": 16384}
+        before = int(sum(len(m.get("reasoning_content") or "") for m in messages) / 3.2)
+        assert before > 30000, before
+        app._chat_fit_context(b)
+        reasoning = [m for m in b["messages"] if m.get("reasoning_content")]
+        used = int((len(json.dumps(b["tools"])) + sum(len(app._chat_text(m)) + len(json.dumps(m.get("tool_calls", []))) + len(m.get("reasoning_content") or "") for m in b["messages"])) / 3.2)
+        assert used + b["max_tokens"] <= 32768, (used, b["max_tokens"])
+        assert reasoning and reasoning[-1] is b["messages"][max(i for i, m in enumerate(b["messages"]) if m.get("tool_calls"))], "the latest round keeps its thinking"
+        assert len(reasoning) < 9, "older rounds' thinking is dropped first"
+        assert [m.get("tool_call_id") for m in b["messages"] if m.get("role") == "tool"] == [f"c{i}" for i in range(9)], "no tool evidence is lost"
+        assert len(app._replay_reasoning("x" * 20000)) == app.REASONING_REPLAY_CHARS + 1 and app._replay_reasoning("short") == "short"
+        assert app._replay_reasoning("a" * 10000 + "TAIL").endswith("TAIL"), "the conclusions at the end are what is kept"
+        window = {"messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "x" * 3000}], "tools": [], "max_tokens": 90000}
+        app._chat_fit_context(window, 100000)
+        assert window["max_tokens"] > 32768, "an explicit window overrides the setting"
+    finally: studio.config.CONTEXT = context
 
 
 @check
@@ -5622,6 +5724,40 @@ def harness_subagent_compaction_and_slash_commands():
 
 
 @check
+def harness_accept_edits_never_approves_writes_outside_the_workspace():
+    """Found by the first real-model eval: a model wrote one folder above its workspace and accept-edits approved it silently."""
+    ws = TMP / "accept_confined"; ws.mkdir(exist_ok=True)
+    outside_dir = TMP / "accept_confined_outside"; outside_dir.mkdir(exist_ok=True)
+    (outside_dir / "existing.py").write_text("x = 1\n"); (ws / "inside.py").write_text("x = 1\n")
+    (ws / "escape").symlink_to(outside_dir, target_is_directory=True)
+    gate = lambda name, args, chat=None, perms=("edit",): app._in_workspace(str(ws), app.harness_gate, name, args, chat, perms)
+    # inside the workspace: auto-approved, relative or absolute
+    assert gate("write_file", {"path": "new.py", "content": "x"})[0] == "safe"
+    assert gate("write_file", {"path": str(ws / "sub" / "new.py"), "content": "x"})[0] == "safe"
+    assert gate("edit_file", {"path": "inside.py", "old_text": "x = 1", "new_text": "x = 2"})[0] == "safe"
+    assert gate("multi_edit_file", {"path": "inside.py", "edits": [{"old_text": "x = 1", "new_text": "x = 3"}]})[0] == "safe"
+    # outside the workspace: must ask, and say why
+    for args in ({"path": "../accept_confined_outside/new.py", "content": "x"}, {"path": str(outside_dir / "new.py"), "content": "x"},
+                 {"path": "escape/new.py", "content": "x"}):
+        verdict, reason, _ = gate("write_file", args)
+        assert verdict == "risky" and "outside the workspace" in reason, (args, verdict, reason)
+    verdict, reason, _ = gate("edit_file", {"path": str(outside_dir / "existing.py"), "old_text": "x = 1", "new_text": "x = 2"})
+    assert verdict == "risky" and "outside the workspace" in reason, (verdict, reason)
+    verdict, reason, _ = gate("multi_edit_file", {"path": str(outside_dir / "existing.py"), "edits": [{"old_text": "x = 1", "new_text": "x = 2"}]})
+    assert verdict == "risky" and "outside the workspace" in reason, (verdict, reason)
+    # without accept-edits, nothing is auto-approved anywhere, and the reason has no accept-edits note
+    verdict, reason, _ = gate("write_file", {"path": str(outside_dir / "new.py"), "content": "x"}, perms=())
+    assert verdict == "risky" and "Accept edits" not in reason
+    # an explicit "allow edits for this chat" from the user is their own decision and still applies
+    import studio.security.harness_gate as gate_module
+    gate_module._chat_session_perms["confined-chat"] = {"edit"}
+    try:
+        assert gate("write_file", {"path": str(outside_dir / "new.py"), "content": "x"}, chat="confined-chat", perms=())[0] == "safe"
+    finally: gate_module._chat_session_perms.pop("confined-chat", None)
+    assert gate("run_shell", {"command": "touch y"})[0] == "risky", "accept-edits still never covers commands"
+
+
+@check
 def harness_accept_edits_mode_and_terminal():
     ws = TMP / "term_ws"
     ws.mkdir(exist_ok=True)
@@ -6052,6 +6188,7 @@ def chat_write_approval_allow_deny_timeout_and_stop():
             assert len(engine.seen) == 1 and '[DONE]' in joined, 'timeout retried the unapproved action'
         elif outcome == 'deny':
             assert 'The user declined this action.' in joined
+            assert 'Do not retry it or work around it' in joined, 'a declined action must tell the model to stop, not to retry'
 
 
 @check

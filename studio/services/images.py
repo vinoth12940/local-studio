@@ -10,6 +10,7 @@ import threading
 import time
 
 from studio.config import GALLERY
+from studio.infra.system import system_memory
 
 
 # ---------------------------------------------------------------- image jobs
@@ -19,6 +20,37 @@ image_lock = threading.Lock()
 STEP_RE = re.compile(r"(\d+)/(\d+) \[")
 PEAK_RE = re.compile(r"(\d+)\s+peak memory footprint")
 TIME_STAT_RE = re.compile(r"^\d+(\.\d+)?\s+[a-z ]+$|\breal\b.*\buser\b.*\bsys\b")   # /usr/bin/time -l noise
+
+
+# mflux with --low-ram measured ~10.4 GB at peak (Qwen-Image 4-bit, Apple Silicon). Past that the job swaps and takes the chat down with it.
+DEFAULT_PEAK_BYTES = 12 * 2**30
+MEMORY_HEADROOM = 0.85          # leave the rest of the Mac for the system and the app itself
+
+
+def expected_peak_bytes(repo):
+    """What this model's job is likely to need: the largest peak recorded in the gallery for it (with a margin), else a safe default."""
+    peaks = []
+    sidecars = sorted(GALLERY.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:50]
+    for path in sidecars:
+        try:
+            meta = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(meta, dict) and meta.get("model") == repo and type(meta.get("peak_bytes")) is int and meta["peak_bytes"] > 0:
+            peaks.append(meta["peak_bytes"])
+    return int(max(peaks) * 1.1) if peaks else DEFAULT_PEAK_BYTES
+
+
+def memory_plan(repo):
+    """Whether a job for `repo` fits next to what is already running. An unreadable memory report never blocks a job."""
+    needed = expected_peak_bytes(repo)
+    try:
+        memory = system_memory()
+        total, used = memory["total_bytes"], memory["used_bytes"]
+    except (OSError, ValueError, AttributeError, KeyError, subprocess.SubprocessError):
+        return {"needed_bytes": needed, "used_bytes": None, "total_bytes": None, "enough": True}
+    return {"needed_bytes": needed, "used_bytes": used, "total_bytes": total,
+            "enough": not total or used + needed <= total * MEMORY_HEADROOM}
 
 
 def run_image_job(job_id, cmd, meta):

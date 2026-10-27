@@ -10,6 +10,7 @@ import json
 import time
 from pathlib import Path
 
+from studio.security.workflow_policy import canonical_command
 from studio.services.workflow_runs import workspace_fingerprint
 
 class VerificationGate:
@@ -58,6 +59,9 @@ class VerificationGate:
         self.approval_timeout = False
         self.completion_retries = 0
 
+    def _canonical(self, command):
+        return canonical_command(self.workspace, command)
+
     def _requested_ids(self, name, args):
         if name != "run_shell" or args.get("background"):
             return []
@@ -69,7 +73,8 @@ class VerificationGate:
                 return []
         except (TypeError, ValueError, OSError):
             return []
-        return [key for key, command in self.commands.items() if command == args.get("command")]
+        wanted = self._canonical(args.get("command"))
+        return [key for key, command in self.commands.items() if command == wanted]
 
     def _configured_ids(self, name, args, result):
         try:
@@ -134,7 +139,7 @@ class VerificationGate:
             return
         args = args if isinstance(args, dict) else {}
         requested_ids = self._requested_ids(name, args)
-        if name == "run_shell" and args.get("command") in self.commands.values():
+        if name == "run_shell" and self._canonical(args.get("command")) in self.commands.values():
             self.checked = True
         refused_action = name in ("run_shell", "run_python", "write_file", "edit_file", "multi_edit_file") or name.startswith("mcp__")
         if result.get("declined") or (not executed and result.get("error") and refused_action):
@@ -243,5 +248,6 @@ class VerificationGate:
         return (explanation + " Completion is withheld by the backend verification gate. "
                 "Repair the issue and run every missing configured command with run_shell, foreground, "
                 f"in workspace {self.workspace}. Existing execution approval still applies. "
+                "Pass the command exactly as configured and do not prefix it with cd: the shell already starts in the workspace. "
                 "Do not replace a configured command with an echo or another command. "
                 f"Trusted checks: {self.commands!r}")

@@ -1,10 +1,17 @@
 // ui/engine.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
-import { $, gib, jpost, toast } from "../core/util.mjs";
+import { $, api, gib, jpost, toast } from "../core/util.mjs";
 import { closeMenus } from "./views.mjs";
 import { activeChat, libraryState, listState, updateHeader, updateSend } from "../modules.mjs";
 
 // ---------------- engine status
 let health = null, metrics = null, engineState = "down";
+// The window the next reply is budgeted against while no engine reports one: the setting clamped to the active model's own limit.
+let ctxEffective = null;
+function applyCtxWindow(tokens) { listState.ctxWindow = tokens; $("ctxMax").textContent = `${Math.round(tokens / 1024)}k`; }
+async function refreshContextWindow() {
+  try { ctxEffective = (await api("/api/context-window")).effective; } catch { return; }
+  if (engineState !== "ready" && ctxEffective) applyCtxWindow(ctxEffective);
+}
 async function poll() {
   try { health = await (await fetch("/api/llm/health")).json(); } catch { health = null; }
   const st = health?.status;
@@ -33,9 +40,10 @@ async function poll() {
   if (health && engineState === "ready") {
     $("eDr").textContent = (health.drafter || "none").split("/").pop(); $("eMode").textContent = emode === "gguf" ? "llama.cpp" : (health.mode || "–");
     $("eCap").textContent = health.max_draft ?? "–"; $("eKv").textContent = health.kv_bits ? `${health.kv_bits}-bit` : "bf16";
-    listState.ctxWindow = health.context_window || listState.ctxWindow; $("ctxMax").textContent = `${Math.round(listState.ctxWindow / 1024)}k`;
+    applyCtxWindow(health.context_window || listState.ctxWindow);
     $("eWarn").textContent = (health.warnings || []).map((w) => w.message || w).join(" ");
   }
+  else if (ctxEffective) applyCtxWindow(ctxEffective);
   if (metrics) {
     const m = metrics.memory || {}, s = metrics.system || {};
     $("eRes").textContent = m.active_bytes ? `${gib(m.active_bytes)} GB` : "–"; $("ePeak").textContent = m.peak_bytes ? `${gib(m.peak_bytes)} GB` : "–";
@@ -51,6 +59,7 @@ async function poll() {
   updateSend();
 }
 setInterval(poll, 4000);
+refreshContextWindow();
 async function toggleEngine() {
   try {
     if (engineState === "down") { await jpost("/api/engine/start"); toast("Starting engine…"); }
@@ -62,5 +71,5 @@ $("mmEngine").onclick = () => { closeMenus(); toggleEngine(); };
 $("engToggle").onclick = toggleEngine;
 
 export {
-  engineState, health, metrics, poll, toggleEngine
+  engineState, health, metrics, poll, refreshContextWindow, toggleEngine
 };

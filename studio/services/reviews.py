@@ -18,9 +18,10 @@ from pathlib import Path
 
 import httpx
 
+from studio import config
 from studio.config import ENGINES
 from studio.services import engines, instructions, workflow, workflow_runs
-from studio.services.models import chat_model
+from studio.services.models import chat_model, effective_context
 from studio.services.verification import VerificationGate
 from studio.storage.atomic import write_text_atomic
 from studio.storage.flags import flag
@@ -28,6 +29,7 @@ from studio.storage.settings import load_settings
 
 
 MAX_CONTEXT_CHARS = 64000
+MAX_REVIEW_TOKENS = 14000
 MAX_DIFF_BYTES = 96000
 MAX_SOURCE_BYTES = 32000
 MAX_RESPONSE_BYTES = 200000
@@ -202,16 +204,19 @@ def _call_local_reviewer(model_id, context):
         if not selected or state.get('model_id') != selected or mode not in ENGINES or not engines._engine_ready(mode):
             raise ValueError('The selected local model is not running; load it before starting review. No fallback review was substituted.')
         model = chat_model(selected)
-        body = {'messages': [{'role': 'system', 'content': REVIEW_PROMPT},
-                             {'role': 'user', 'content': json.dumps(context, ensure_ascii=False)}],
-                'max_tokens': 4096, 'temperature': 0, 'stream': False}
+        prompt = json.dumps(context, ensure_ascii=False)
+        # The model reasons before it answers, and a reasoning model can spend thousands of tokens first. Give it all the context
+        # window leaves instead of a fixed small cap, so a normal review is not cut off before its JSON begins.
+        room = effective_context(model) - int((len(prompt) + len(REVIEW_PROMPT)) / 3.2) - 768
+        body = {'messages': [{'role': 'system', 'content': REVIEW_PROMPT}, {'role': 'user', 'content': prompt}],
+                'max_tokens': max(1024, min(MAX_REVIEW_TOKENS, room)), 'temperature': 0, 'stream': False}
         if mode == 'vision':
             body['model'] = model['repo']
         elif mode == 'gguf':
             body['model'] = model['id']
         payload = bytearray()
-        with httpx.Client(timeout=httpx.Timeout(120, connect=5), trust_env=False) as client:
-            with client.stream('POST', ENGINES[mode]['url'], json=body) as response:
+        with httpx.Client(timeout=httpx.Timeout(300, connect=5), trust_env=False) as client:
+            with client.stream('POST', ENGINES[mode]['url'] + '/v1/chat/completions', json=body) as response:
                 response.raise_for_status()
                 for chunk in response.iter_bytes():
                     payload.extend(chunk)
@@ -220,6 +225,9 @@ def _call_local_reviewer(model_id, context):
         envelope = json.loads(payload)
         choice = envelope.get('choices', [])[0]
         raw = choice.get('message', {}).get('content')
+        if choice.get('finish_reason') == 'length':
+            raise ValueError(f"The reviewer ran out of its {body['max_tokens']}-token budget before it finished (reasoning models spend tokens "
+                             "thinking first). No review was recorded; split the task so there is less to review, or use a faster model.")
         if (not isinstance(raw, str) or len(raw) > MAX_RAW_CHARS or choice.get('finish_reason') != 'stop'
                 or choice.get('message', {}).get('tool_calls')):
             raise ValueError('Local reviewer returned a missing, truncated, oversized, or tool-call response.')

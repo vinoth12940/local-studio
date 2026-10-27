@@ -77,6 +77,27 @@ def test_protection_enforces_every_native_and_opaque_path():
     settings(workspace_policies={})
 
 
+def test_plain_chat_without_a_workspace_is_not_governed_by_a_coding_policy():
+    """With protect_tests or hooks on, a chat that has no workspace used to be treated as if the checkout (or home) were one: every
+    write elsewhere was refused as 'outside the workspace' and a file called test_plan.py was refused as a protected test."""
+    settings(protect_tests=True, hooks=True, workspace_policies={})
+    try:
+        target = TMP / 'no-workspace' / 'test_plan.py'; target.parent.mkdir()
+        token = policy._active_policy.set(None)
+        try:
+            result = harness._chat_action_tool('write_file', {'path': str(target), 'content': 'x = 1\n'}, None)
+            with policy.action_scope('write_file', {'path': str(target)}) as session:
+                assert not session.enabled and session.workspace is None
+        finally:
+            policy._active_policy.reset(token)
+        assert result.get('status') == 'written' and not result.get('policy_blocked'), result
+        assert target.read_text() == 'x = 1\n'
+        ws = TMP / 'still-protected'; (ws / 'tests').mkdir(parents=True); (ws / 'tests' / 'test_a.py').write_text('x = 1\n')
+        assert act(ws, 'write_file', {'path': 'tests/test_a.py', 'content': 'bad'}).get('policy_blocked'), 'a real workspace stays protected'
+    finally:
+        settings(protect_tests=False, hooks=False, workspace_policies={})
+
+
 def test_configured_verifier_is_really_readonly():
     ws = TMP / 'readonly'; ws.mkdir()
     (ws / 'source.py').write_text('original')
@@ -99,6 +120,14 @@ print(json.dumps(blocked))
     else:
         assert 'unavailable' in result.get('error', ''), result
     assert (ws / 'source.py').read_text() == 'original'
+    assert sorted(p.name for p in ws.iterdir()) == ['source.py']
+    # Models habitually write `cd <workspace> && <check>`: that is the same command in the same directory, so it is accepted;
+    # anything else around the configured command is not.
+    prefixed = act(ws, 'run_shell', {'command': f'cd {ws} && {command}'})
+    if Path(SANDBOX_EXEC).is_file():
+        assert prefixed.get('returncode') == 0 and json.loads(prefixed['stdout']) == ['existing', 'new', 'rename', 'link'], prefixed
+    for bad in (f'cd /tmp && {command}', f'cd {ws} && {command}; echo extra', f'cd {ws}; {command}', f'echo hi && cd {ws} && {command}'):
+        assert act(ws, 'run_shell', {'command': bad}).get('policy_blocked'), bad
     assert sorted(p.name for p in ws.iterdir()) == ['source.py']
 
 
@@ -180,6 +209,9 @@ def test_modes_versioning_scope_and_artifact_changes():
                        ('delegate_write', {}), ('manage_process', {'action':'stop'})]:
         fails(lambda:session.before_tool(name,args), 'Plan mode')
     session.before_tool('read_file', {'path':'src/value.py'})
+    hint = session.guidance()
+    assert 'PLAN MODE' in hint and 'plan' in hint.lower() and 'cannot edit files' in hint, hint
+    fails(lambda:session.before_tool('write_file',{'path':'src/value.py','content':'x'}), 'write your plan as the final answer')
     fails(lambda:workflow.update_task(task['id'],task['version'],{'mode':'act'}), 'Pause')
     workflow.release_session(session, 'planned')
     task=workflow.update_task(task['id'],task['version'],{'mode':'act','state':'ready'})
@@ -248,6 +280,7 @@ def test_durable_task_budgets_leases_and_cancel():
 
 if __name__ == '__main__':
     for function in (test_protection_enforces_every_native_and_opaque_path,
+                     test_plain_chat_without_a_workspace_is_not_governed_by_a_coding_policy,
                      test_configured_verifier_is_really_readonly,
                      test_hooks_deny_timeout_and_preserve_executed_results,
                      test_hooks_run_in_declared_order_stop_at_first_denial_and_never_widen_authority,

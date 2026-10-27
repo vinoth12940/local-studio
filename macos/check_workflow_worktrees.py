@@ -91,6 +91,8 @@ def test_worker_gets_an_isolated_checkout_and_the_parent_is_untouched():
     worker = worktrees.create_worker(task["id"], "frontend", ["src/**"], {"max_steps": 10, "max_seconds": 120})
     assert worker["state"] == "active" and worker["branch"].startswith("localstudio/") and worker["base_commit"] == git(repo, "rev-parse", "HEAD").strip()
     assert tree(worker).is_dir() and (tree(worker) / "src" / "a.py").read_text() == "A = 1\n"
+    fingerprint = workflow_runs.workspace_fingerprint(tree(worker))
+    assert fingerprint.get("digest") and not fingerprint.get("error"), fingerprint          # a worker chat must be able to start a durable run there
     (tree(worker) / "src" / "a.py").write_text("A = 2\n")
     assert (repo / "src" / "a.py").read_text() == "A = 1\n", "the parent's file must not change"
     assert [l for l in git(repo, "status", "--porcelain").splitlines() if ".localstudio" not in l] == [], "the parent checkout stays clean"

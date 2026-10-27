@@ -12,7 +12,16 @@ $("imgGo").onclick = async () => {
   const [w, h] = $("imgAspect").value.split("x"), fd = new FormData();
   Object.entries({ prompt, model_id: $("imgModel").value, width: w, height: h, steps: $("imgSteps").value, seed: $("imgSeed").value, guidance: $("imgGuidance").value, negative_prompt: $("imgNeg").value, step_cache: $("imgCache").value, mode: "generate" }).forEach(([k, v]) => fd.append(k, v));
   $("imgGo").disabled = true;
-  try { const j = await api("/api/image", { method: "POST", body: fd }); activeJob = j.job; $("job").classList.add("on"); $("jobTitle").textContent = "Starting…"; $("jobSub").textContent = prompt; $("jobBar").style.width = "0"; $("jobPct").textContent = ""; track(j.job); }
+  try {
+    let j;
+    try { j = await api("/api/image", { method: "POST", body: fd }); }
+    catch (e) {
+      // The loaded chat model holds the memory this job needs. Stopping it is the user's call, never done silently.
+      if (e.code !== "memory" || !(await confirmBox("Free memory for this image?", e.message, "Stop model and generate"))) throw e.code === "memory" ? new Error("Cancelled: the chat model is still loaded.") : e;
+      fd.set("stop_engine", "1");
+      j = await api("/api/image", { method: "POST", body: fd });
+    }
+    activeJob = j.job; $("job").classList.add("on"); $("jobTitle").textContent = "Starting…"; $("jobSub").textContent = prompt; $("jobBar").style.width = "0"; $("jobPct").textContent = ""; track(j.job); }
   catch (e) { toast(e.message); $("imgGo").disabled = false; }
 };
 $("jobCancel").onclick = async () => { if (activeJob) { try { await jpost(`/api/image/${activeJob}/cancel`); toast("Cancelling…"); } catch (e) { toast(e.message); } } };

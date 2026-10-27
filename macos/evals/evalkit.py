@@ -31,6 +31,7 @@ CHECKS = {"command": {"argv", "expect_exit"}, "file_contains": {"path", "text"},
           "file_unchanged": {"path"}, "file_exists": {"path"}, "file_absent": {"path"},
           "final_text_contains": {"text"}, "final_text_excludes": {"text"}, "max_tool_calls": {"limit"},
           "tool_never_succeeded": {"name"}, "approval_requested": {"min"}, "file_line_count": {"path", "count"}}
+TOOL_LIMIT_MARKER = "Stopped after the tool-call limit"           # the model kept calling tools until the harness stopped it
 REPLAY_MARKER = "cannot be automatically replayed"          # the harness refused to re-dispatch an executed action
 BLOCKED_MARKERS = ("Eval attach mode", "did not become ready", "failed to start", "not installed", "isn't downloaded", "Local engine")
 
@@ -543,6 +544,10 @@ def run_task(task, session, workroot, scripted_turns=None):
         record.update(status="failed", reason="attempted to replay a completed side effect after resume (refused by the harness)")
         record["checks"] = score(task, workspace, summary)
         return record
+    if summary["error"] and TOOL_LIMIT_MARKER in summary["error"]:
+        record.update(status="failed", reason="kept calling tools until the harness's tool-call limit stopped it", tool_limit_stop=True)
+        record["checks"] = score(task, workspace, summary)
+        return record
     if summary["error"]:
         # An error event means the turn did not run to a normal end: nothing here may be scored as an agent result.
         blocked = any(m in summary["error"] for m in BLOCKED_MARKERS)
@@ -601,6 +606,9 @@ def compare(report, baseline, max_drop=0.15):
         if before["pass_rate"] is None:
             continue
         now = report["summary"]["tasks"].get(task_id)
+        if now is not None and None not in (now.get("revision"), before.get("revision")) and now["revision"] != before["revision"]:
+            problems.append(f"{task_id}: task revision {before.get('revision')} in the baseline vs {now.get('revision')} now; not comparable, re-measure the baseline")
+            continue
         if now is None or now["pass_rate"] is None:
             problems.append(f"{task_id}: no measured runs (baseline {before['pass_rate']:.2f})")
         elif before["pass_rate"] - now["pass_rate"] > max_drop:

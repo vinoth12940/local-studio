@@ -3,6 +3,7 @@
 Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
 """
 
+import json
 import shutil
 import subprocess
 import threading
@@ -12,6 +13,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from studio.infra.logs import open_log
+from studio import config
 from studio.config import CATALOG, HF_CLI, HF_HUB, LOGS
 from studio.storage.settings import load_settings, save_settings
 
@@ -72,6 +74,35 @@ def snapshot_file(repo, name):
         if p.exists():
             return p
     return None
+
+
+def native_context(m):
+    """The longest window the model itself supports (tokens), or None when unknown.
+
+    A catalog/custom `context` wins; otherwise `max_position_embeddings` from the model's cached config.json (a vision model keeps
+    it under `text_config`). A GGUF repo usually ships no config.json, so it stays None and is not clamped."""
+    declared = m.get("context")
+    if type(declared) is int and declared > 0:
+        return declared
+    cfg = snapshot_file(m["repo"], "config.json") if m.get("repo") else None
+    try:
+        data = json.loads(cfg.read_text()) if cfg else {}
+    except (OSError, ValueError):
+        return None
+    for section in (data.get("text_config"), data):
+        value = section.get("max_position_embeddings") if isinstance(section, dict) else None
+        if type(value) is int and value > 0:
+            return value
+    return None
+
+
+def effective_context(m):
+    """The window to start this model with and budget its prompts against: the setting, never beyond what the model supports.
+
+    The setting is a ceiling for every model (default 128k), so a model whose native limit is lower runs at its own limit instead
+    of being fed prompts it will silently truncate."""
+    native = native_context(m)
+    return min(config.CONTEXT, native) if native else config.CONTEXT
 
 
 def _repo_bytes(repo):

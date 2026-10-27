@@ -149,6 +149,19 @@ class ResourceChecks(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     skills.load_skill("workspace:example", self.workspace)
 
+    def test_models_that_pass_the_catalog_hash_get_an_actionable_error(self):
+        """A real model passed a hash it had been shown as expected_sha256 on its first load and gave up on a misleading error."""
+        from studio.services import harness
+        self.skill(body="Body")
+        catalog_hash = skills.catalog(self.workspace)["skills"][0]["metadata_sha256"]
+        with self.assertRaisesRegex(ValueError, "omit expected_sha256.*metadata_sha256|metadata_sha256"):
+            skills.load_skill("workspace:example", self.workspace, expected_sha256=catalog_hash)
+        text = {t["function"]["name"]: t["function"]["description"] for t in harness.CHAT_RESOURCE_TOOLS}
+        self.assertIn("Omit expected_sha256 on the first load", text["load_skill"])
+        self.assertIn("never the catalog's metadata_sha256", text["load_skill"])
+        self.assertIn("not metadata_sha256", text["read_skill_resource"])
+        self.assertEqual(skills.load_skill("workspace:example", self.workspace)["content"], "Body")
+
     def test_skill_load_and_resource_hash_pin_refresh_and_scope(self):
         source = self.skill(body="Read references/guide.md")
         self.write(self.workspace / "AGENTS.md", "root rules")

@@ -6,6 +6,7 @@ Chat cases reuse the isolated STATE and synthetic engine fixture from check_agen
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -152,10 +153,17 @@ os._exit(34)
         with self.assertRaises(runs.RunConflict):
             self.store.prepare_resume(record["id"], record["seq"] - 1, record["fingerprint"], self.policy)
         self.store.claim(record["id"])
+        self.assertFalse(self.store.is_cancelled(record["id"]))
         self.store.cancel(record["id"])
+        self.assertTrue(self.store.is_cancelled(record["id"]), "the executing turn polls this in memory instead of re-reading the record")
         with self.assertRaises(runs.RunConflict):
             self.store.dispatch(record["id"], "1-0", "run_shell", {"command": "must not execute"})
         self.store.finish(record["id"], "cancelled")
+        record, _ = self.store.prepare_resume(record["id"], self.store.get(record["id"])["seq"], record["fingerprint"], self.policy)
+        self.assertFalse(self.store.is_cancelled(record["id"]), "a resumed run starts uncancelled")
+        with self.assertRaises(FileNotFoundError):
+            self.store.cancel("f" * 32)
+        self.assertFalse(self.store.is_cancelled("f" * 32), "a failed cancel is not remembered")
         with patch.object(runs, "MAX_EVENTS", 3):
             for _ in range(5): self.store.append(record["id"], "test", {})
         with self.assertRaises(runs.RunConflict): self.store.events(record["id"], 0)
@@ -236,8 +244,145 @@ class FingerprintedVerification(unittest.TestCase):
         self.now = 11
         self.assertTrue(self.gate.exhausted())
         self.assertFalse(runs.workspace_fingerprint(self.workspace, max_bytes=1)["digest"])
-        (self.workspace / "link").symlink_to("source.py")
-        self.assertFalse(runs.workspace_fingerprint(self.workspace)["digest"])
+        outside = Path(tempfile.mkdtemp(prefix="ls-out-", dir="/tmp")) / "outside.txt"; outside.write_text("elsewhere")
+        self.addCleanup(shutil.rmtree, outside.parent)
+        (self.workspace / "link").symlink_to(outside)
+        failure = runs.workspace_fingerprint(self.workspace)
+        self.assertFalse(failure["digest"])
+        self.assertIn("link", failure["error"], "a symlink out of the workspace still fails closed, and the error names it")
+
+
+class FingerprintScope(unittest.TestCase):
+    """The workspace identity must cover the project's source and nothing else: this repo's own checkout used to fail closed
+    because of an ignored build/ folder holding a socket, so durable runs and the verification gate never worked on it."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir="/tmp", prefix="ls-fp-")
+        self.root = Path(self.temp.name).resolve()
+        self.workspace = self.root / "ws"; self.workspace.mkdir()
+        (self.workspace / "main.py").write_text("x = 1\n")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def digest(self, **kwargs):
+        result = runs.workspace_fingerprint(self.workspace, **kwargs)
+        self.assertIsNone(result["error"], result)
+        return result["digest"]
+
+    def git(self, *args):
+        subprocess.run(["git", "-C", str(self.workspace), "-c", "user.email=t@t", "-c", "user.name=t", *args], check=True, capture_output=True)
+
+    def test_a_git_checkout_follows_its_gitignore_and_survives_special_files(self):
+        self.git("init", "-q")
+        (self.workspace / ".gitignore").write_text("build/\n*.log\n")
+        (self.workspace / "build").mkdir()
+        os.mkfifo(self.workspace / "build" / "cua.sock")                 # the real failure: a socket under an ignored folder
+        (self.workspace / "build" / "output.bin").write_bytes(b"x" * 1000)
+        self.git("add", "."); self.git("commit", "-qm", "init")
+        base = self.digest()
+        (self.workspace / "build" / "output.bin").write_bytes(b"y" * 2000)
+        (self.workspace / "debug.log").write_text("noise")
+        self.assertEqual(self.digest(), base, "ignored files are not part of the identity")
+        (self.workspace / "main.py").write_text("x = 2\n")
+        changed = self.digest()
+        self.assertNotEqual(changed, base)
+        (self.workspace / "new.py").write_text("untracked source\n")
+        with_new = self.digest()
+        self.assertNotEqual(with_new, changed, "an untracked file that is not ignored counts")
+        (self.workspace / "main.py").unlink()
+        self.assertNotEqual(self.digest(), with_new, "deleting a tracked file is a change")
+        os.mkfifo(self.workspace / "pipe")
+        self.assertIsNone(runs.workspace_fingerprint(self.workspace)["error"], "a special file outside .gitignore is skipped, not fatal")
+
+    def test_without_git_well_known_build_folders_and_virtualenvs_are_skipped(self):
+        for name in ("node_modules", "__pycache__", ".pytest_cache", "myenv"):
+            (self.workspace / name).mkdir()
+            (self.workspace / name / "f.txt").write_text("a")
+        (self.workspace / "myenv" / "pyvenv.cfg").write_text("home = /usr/bin")
+        (self.workspace / ".DS_Store").write_text("a")
+        base = self.digest()
+        for name in ("node_modules", "__pycache__", ".pytest_cache", "myenv"):
+            (self.workspace / name / "f.txt").write_text("changed")
+        (self.workspace / ".DS_Store").write_text("changed")
+        self.assertEqual(self.digest(), base)
+        (self.workspace / "src").mkdir(); (self.workspace / "src" / "a.py").write_text("1")
+        with_src = self.digest()
+        self.assertNotEqual(with_src, base)
+        (self.workspace / "src" / "a.py").write_text("2")
+        self.assertNotEqual(self.digest(), with_src, "ordinary folders are hashed")
+        os.mkfifo(self.workspace / "pipe")
+        self.assertEqual(self.digest(), runs.workspace_fingerprint(self.workspace)["digest"])
+
+    def test_symlinks_inside_the_workspace_hash_by_target_and_outside_ones_fail_closed(self):
+        (self.workspace / "alias.py").symlink_to("main.py")
+        first = self.digest()
+        (self.workspace / "alias.py").unlink(); (self.workspace / "alias.py").symlink_to("./main.py")
+        self.assertNotEqual(self.digest(), first, "retargeting a link changes the identity")
+        (self.workspace / "main.py").write_text("x = 3\n")
+        outside = self.root / "secret.txt"; outside.write_text("elsewhere")
+        (self.workspace / "escape").symlink_to(outside)
+        failed = runs.workspace_fingerprint(self.workspace)
+        self.assertIsNone(failed["digest"])
+        self.assertIn("escape", failed["error"]); self.assertIn("fingerprint_excludes", failed["error"])
+        self.assertTrue(runs.workspace_fingerprint(self.workspace, excludes=["escape"])["digest"], "a trusted exclusion is the way out")
+        (self.workspace / "escape").unlink(); (self.workspace / "escape").symlink_to(self.workspace / "main.py")
+        self.assertIsNone(runs.workspace_fingerprint(self.workspace)["error"], "an absolute link that stays inside is fine")
+
+    def test_budgets_still_fail_closed(self):
+        for index in range(5):
+            (self.workspace / f"f{index}.txt").write_text("data")
+        self.assertIsNone(runs.workspace_fingerprint(self.workspace)["error"])
+        self.assertIn("budget", runs.workspace_fingerprint(self.workspace, max_files=2)["error"])
+        self.assertIn("budget", runs.workspace_fingerprint(self.workspace, max_bytes=3)["error"])
+
+
+class OffTheEventLoop(unittest.TestCase):
+    def test_workspace_hashing_during_a_durable_chat_never_runs_on_the_event_loop(self):
+        import asyncio
+        real = runs.workspace_fingerprint
+        on_loop = []
+        def watched(*args, **kwargs):
+            try:
+                asyncio.get_running_loop(); on_loop.append(True)
+            except RuntimeError:
+                on_loop.append(False)
+            return real(*args, **kwargs)
+        with fixture.Env() as env:
+            workspace = fixture.TMP / "durable-offloop"; command = fixture._verification_setup(workspace)
+            settings = fixture.app.load_settings(); settings["harness"]["durable_runs"] = True; fixture.app.save_settings(settings)
+            turns = [fixture._verification_edit(), fixture.chat_action_deltas("run_shell", json.dumps({"command": command})),
+                     [fixture.chat_delta(content="done")]]
+            with patch.object(runs, "workspace_fingerprint", watched), patch("studio.services.verification.workspace_fingerprint", watched):
+                response, _, _, _ = fixture._verification_request(env, workspace, turns)
+            self.assertEqual(response.status_code, 200, response.text)
+        self.assertGreaterEqual(len(on_loop), 3, on_loop)
+        self.assertFalse(any(on_loop), "hashing a large workspace must not freeze every other request and stream")
+
+
+class ConfiguredCommandMatching(unittest.TestCase):
+    def test_cd_into_this_workspace_counts_but_nothing_else_does(self):
+        from studio.services.verification import VerificationGate
+        with tempfile.TemporaryDirectory(dir="/tmp", prefix="ls-cmd-") as raw:
+            ws = Path(raw).resolve(); (ws / "sub").mkdir()
+            settings = {"harness": {"verification_workspaces": {str(ws): {"commands": [{"id": "t", "command": "python3 verify.py"}]}}}}
+            gate = VerificationGate(True, str(ws), settings)
+            ids = lambda command, **extra: gate._requested_ids("run_shell", {"command": command, **extra})
+            self.assertEqual(ids("python3 verify.py"), ["t"])
+            for good in (f"cd {ws} && python3 verify.py", f"cd '{ws}' && python3 verify.py", f'cd "{ws}"   &&   python3 verify.py'):
+                self.assertEqual(ids(good), ["t"], good)
+            for bad in (f"cd {ws}/sub && python3 verify.py", "cd /tmp && python3 verify.py", f"cd {ws} && python3 verify.py; echo extra",
+                        f"cd {ws} && python3 verify.py && rm -rf x", f"cd {ws}; python3 verify.py", f"cd {ws} || python3 verify.py",
+                        f"cd $(echo {ws}) && python3 verify.py", f"echo hi && cd {ws} && python3 verify.py", f"cd {ws} && python3 other.py"):
+                self.assertEqual(ids(bad), [], bad)
+            self.assertEqual(ids(f"cd {ws} && python3 verify.py", background=True), [], "background work never certifies")
+            # The executed result still has to be that command, in that directory, exiting 0.
+            args = {"command": f"cd {ws} && python3 verify.py"}
+            gate.observe("run_shell", args, {"command": args["command"], "cwd": str(ws), "returncode": 0, "stdout": "ok", "stderr": ""}, executed=True)
+            self.assertEqual(gate.status()["status"], "verified")
+            gate2 = VerificationGate(True, str(ws), settings)
+            gate2.observe("run_shell", args, {"command": args["command"], "cwd": str(ws / "sub"), "returncode": 0}, executed=True)
+            self.assertNotEqual(gate2.status()["status"], "verified", "a different reported cwd must not count")
 
 
 class DurableChat(unittest.TestCase):

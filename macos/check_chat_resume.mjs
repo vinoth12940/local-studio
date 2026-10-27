@@ -182,3 +182,43 @@ console.log('   ok chat_verification_rejects_inconsistent_success_events');
   assert(!empty.includes('Project rules applied'));
   console.log('   ok tool_step_shows_applied_rules_and_escapes_repository_text');
 }
+
+// A failure while preparing the request (an Auto task that does not exist) used to leave the live registration behind, so the
+// thread drew a permanent "Thinking…" skeleton and the chat looked busy forever.
+{
+  const live = await import('../frontend/chat/live.mjs');
+  const { workflowState } = await import('../frontend/chat/workflow.mjs');
+  const { turnHTML } = await import('../frontend/chat/thread.mjs');
+  Object.assign(workflowState, { enabled: true, mode: 'auto', tasks: [] });
+  const chat = { id: 'prepare-error', title: 'Prepare error', workspace: '/tmp/ws', messages: [{ role: 'user', content: 'Run it' }] };
+  listState.current = chat;
+  globalThis.fetch = async () => new Response('{}');
+  await live.generate();
+  const bot = chat.messages[1];
+  assert.match(bot.error, /Create a scoped task/);
+  assert.equal(live.liveGen, null, 'a request that never started must not stay registered as live');
+  assert.equal(listState.streaming, null);
+  const html = turnHTML(bot, 1);
+  assert(!html.includes('data-live="1"') && !html.includes('Thinking…'), 'the failed turn is drawn as a finished turn, not a skeleton');
+  Object.assign(workflowState, { enabled: false, mode: 'act' });
+  console.log('   ok chat_request_preparation_error_clears_the_live_skeleton');
+}
+
+// A periodic refresh must not rebuild an open <select>: assigning innerHTML closes the dropdown.
+{
+  const { setOptions } = await import('../frontend/core/util.mjs');
+  let htmlWrites = 0, valueWrites = 0, html = '', value = '';
+  const select = { get innerHTML() { return html; }, set innerHTML(v) { htmlWrites++; html = v; }, get value() { return value; }, set value(v) { valueWrites++; value = v; } };
+  setOptions(select, '<option value="a">A</option>', 'a');
+  setOptions(select, '<option value="a">A</option>', 'a');
+  setOptions(select, '<option value="a">A</option>', 'a');
+  assert.equal(htmlWrites, 1, 'identical markup is written once');
+  assert.equal(valueWrites, 1, 'an unchanged selection is not reassigned');
+  setOptions(select, '<option value="a">A</option><option value="b">B</option>', 'a');
+  assert.equal(htmlWrites, 2, 'changed markup is rewritten');
+  setOptions(select, '<option value="a">A</option><option value="b">B</option>', 'b');
+  assert.equal(htmlWrites, 2); assert.equal(value, 'b');
+  setOptions(select, '<option value="a">A</option><option value="b">B</option>');
+  assert.equal(valueWrites, 2, 'no value argument leaves the selection alone');
+  console.log('   ok option_lists_are_rewritten_only_when_their_markup_changes');
+}

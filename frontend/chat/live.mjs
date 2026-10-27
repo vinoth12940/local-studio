@@ -107,7 +107,7 @@ async function generate(resumeBot = null) {
   listState.current.messages.slice(0, -1).filter((m) => !(m.agent_run && !m.content)).forEach((m) => messages.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map((a) => a.id) } : {}) }));
   const body = { messages, chat_id: chat.id, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
   try { Object.assign(body, workflowRequest(chat), takeWorkflowResume() || {}); }
-  catch (error) { bot.error = error.message; renderThread(); return; }
+  catch (error) { bot.error = error.message; liveGen = null; renderThread(); renderHistory(); return; }     // nothing is streaming: no permanent skeleton
   if (effort && modelThinks()) body.reasoning_effort = effort;
   if (s.temp) body.temperature = +s.temp;
   if (!chat.workspace && useFiles && sr?.running && !sr.error && !searchState.noFilesOnce) body.use_files = true;

@@ -310,7 +310,7 @@ read images directly on llama.cpp, with no switch. Models without vision show a 
 
 Documents are converted to text when you attach them (PDF via pypdf, Word via python-docx, Excel via
 openpyxl, text and code as-is) and added to your message. Each document is capped at about 20k
-tokens so the 32k context keeps room for the answer; longer files are marked "truncated". Images are
+tokens so the context window (128k by default, 100k minimum; change it in Settings → Context window) keeps room for the answer; longer files are marked "truncated". Images are
 downscaled to 1536 px. Scanned PDFs (no text layer) send their first 4 pages to the vision engine.
 Files stay in `uploads/` on this Mac.
 

@@ -220,7 +220,7 @@ running it emits `{"x_engine": {...status: "switching"|"ready"}}` SSE events whi
 then proxies the OpenAI-style stream. `text` mode passes the raw mlx-dspark stream through, which
 already includes the `x_mlx_dspark` stats event. For `vision`/`gguf` the backend parses the stream
 and synthesizes an `x_mlx_dspark` stats event itself, because the UI only reads stats from that
-event. It also clamps `max_tokens` to fit the fixed 32k `CONTEXT` given the prompt size.
+event. It also clamps `max_tokens` to fit `config.CONTEXT` given the prompt size. `CONTEXT` is the context-window setting: 131072 by default, 100,000 to 262,144 (Settings → Context window, `context_window` in `data/settings.json`; an older or out-of-range value reads as the default). It is a ceiling, not a promise: `models.effective_context(m)` is `min(CONTEXT, native_context(m))`, where the native limit is the catalog/custom `context` or `max_position_embeddings` from the cached `config.json` (`text_config` first), and unknown (GGUF without a config) means no clamp. Engines are started with, budgets (`_chat_fit_context(body, window)`, the `max_tokens` clamp, reviews, sub-agents) use, and the UI meter shows the effective window. `engine.json` records it (`context_window`; absent means the old fixed `LEGACY_CONTEXT = 32768`), so `ensure_engine` and the chat route restart the engine on the next message after a change. The fitter counts replayed `reasoning_content` (each tool round's reasoning is capped to its tail by `_replay_reasoning`, and older rounds' reasoning is dropped before tool output is masked); `GET /api/context-window` adds `effective`, `native_max` and an advisory `memory_estimate_gb` note (never a limit).
 
 Engines also expose OpenAI/Anthropic-compatible APIs directly (e.g. `127.0.0.1:8080/v1`) for
 external clients. Everything binds to `127.0.0.1` only.
@@ -315,7 +315,9 @@ every route and static file) rejects requests with a non-loopback `Host`, a fore
   exit (`atexit`). The UI draws it with xterm.js 5.5 + addon-fit loaded on first use from jsDelivr with SRI
   (`XTERM_FILES`); bump the hashes with the versions.
 - **Permission prompts.** `permission_mode: "accept_edits"` in the `/api/chat` body grants the `edit` scope for that
-  request only (`harness_gate(..., extra_perms)`); commands still ask. The UI never persists that mode: every load starts
+  request only (`harness_gate(..., extra_perms)`) and **only for files inside the workspace**: a write outside it (`../x`, an absolute path,
+  a symlink out) still asks, with the reason "outside the workspace, so Accept edits does not apply". Commands still ask, and an explicit
+  "allow edits for this chat" from the user still applies everywhere. The UI never persists that mode: every load starts
   in "Ask before edits". A declined approval may carry `feedback`,
   which goes back to the model in the tool result. The UI shows numbered options (1/2/3 keys, Esc declines),
   Shift+Tab toggles the mode, and Esc stops a running reply.
@@ -437,6 +439,5 @@ If a test fails, fix the implementation code — never skip, weaken, or delete a
 harness features (Tier 1–3, all marked done). The next-stage milestones (M1–M10: verification, durable runs, evals, skills,
 hooks/test protection, Plan/Act/Auto, reviews, triggers, workers, nested instructions) are tracked in
 [docs/agent-harness-roadmap.md](docs/agent-harness-roadmap.md) with their evidence and open limits. All are implemented behind
-default-off flags. Still open: a measured model baseline (needs a real engine run of `macos/evals/run_evals.py --attach`) and
-unattended trigger execution (deliberately not built: it is a policy decision). Workers are not model-spawned. Read the roadmap
+default-off flags. A first real baseline exists (`macos/evals/baselines/`, LFM2.5 24B-A2B 20/24); its thresholds are not agreed. Still open: unattended trigger execution (deliberately not built: it is a policy decision). Workers are not model-spawned. Read the roadmap
 before claiming any of these delivered.

@@ -1180,6 +1180,16 @@ dialog::backdrop { background: var(--overlay); }
             <button class="btn sm danger" id="srDelete">Delete index</button></div>
         </div>
 
+        <div class="section" id="ctxSet">
+          <div class="sh"><div><h3>Context window</h3><p id="ctxSetSum">–</p></div></div>
+          <div class="row"><div class="grow"><div class="ttl">Maximum context window</div>
+            <div class="sub">How many tokens the model holds at once: your messages, files, tool results and its reply. A larger window remembers more but uses more memory. The engine restarts with the new size on your next message; nothing is interrupted now.</div></div>
+            <div class="sel sm"><select id="ctxSelect" aria-label="Maximum context window"></select></div>
+            <input class="agnum" id="ctxCustom" type="number" min="100000" max="262144" step="1024" hidden aria-label="Custom context window in tokens">
+            <button class="btn sm" id="ctxSave">Save</button><button class="btn sm" id="ctxReset">Reset</button></div>
+          <div id="ctxNotes"></div>
+        </div>
+
         <div class="section" id="agSet">
           <div class="sh"><div><h3>Computer access</h3><p id="agSetSum">–</p></div>
             <label class="switch"><input type="checkbox" id="agEnable"><span></span></label></div>

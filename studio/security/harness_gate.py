@@ -5,6 +5,7 @@ Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
 
 import json
 import re
+from pathlib import Path
 
 from studio.infra.edits import _make_diff_preview, _match_edit_block
 from studio.infra.harness_args import _normalize_harness_args
@@ -16,6 +17,25 @@ from studio.security.workflow_policy import _active_policy
 
 
 _chat_session_perms: dict[str, set[str]] = {}                # chat_id -> {"edit", "exec", "mcp"} granted for the session
+
+
+def _edit_auto_approved(target, session_perms, extra_perms):
+    """An edit skips the prompt when the user granted edits for this chat, or when "Accept edits" is on AND the file is inside the
+    workspace. The mode is a convenience for the project being worked on, so it never approves a write somewhere else."""
+    if "edit" in session_perms:
+        return True
+    if "edit" in extra_perms:
+        try:
+            return Path(target).resolve().is_relative_to(Path(_harness_root()).resolve())
+        except (OSError, ValueError):
+            return False
+    return False
+
+
+def _outside_note(target, extra_perms, session_perms):
+    if "edit" in extra_perms and "edit" not in session_perms and not _edit_auto_approved(target, session_perms, extra_perms):
+        return " (outside the workspace, so Accept edits does not apply)"
+    return ""
 
 
 def harness_gate(name, args, chat_id=None, extra_perms=()):
@@ -30,7 +50,9 @@ def harness_gate(name, args, chat_id=None, extra_perms=()):
             policy.preview(name, args)
         except ValueError as error:
             return "blocked", str(error), None
-    perms = (_chat_session_perms.get(chat_id, set()) if chat_id else set()) | set(extra_perms)
+    session_perms = _chat_session_perms.get(chat_id, set()) if chat_id else set()
+    extra = set(extra_perms)
+    perms = session_perms | extra
     if name.startswith("mcp__"):
         return _gate_custom_mcp_tool(name, args, perms)
     if name == "write_file":
@@ -54,9 +76,9 @@ def harness_gate(name, args, chat_id=None, extra_perms=()):
         preview = _make_diff_preview(str(target), old_text, content) if old_text else "\n".join(f"+{ln}" for ln in content.splitlines()[:60])[:4000]
         action_word = "Overwrite" if target.exists() else "Create"
         meta = {"title": f"{action_word} {target.name}", "path": str(target), "preview": preview, "kind": "diff", "perm_scope": "edit"}
-        if "edit" in perms:
+        if _edit_auto_approved(target, session_perms, extra):
             return "safe", None, meta
-        return "risky", f"{action_word} local file {target}", meta
+        return "risky", f"{action_word} local file {target}{_outside_note(target, extra, session_perms)}", meta
 
     if name == "edit_file":
         try:
@@ -75,9 +97,9 @@ def harness_gate(name, args, chat_id=None, extra_perms=()):
             return "blocked", str(err), None
         preview = _make_diff_preview(str(target), current, updated)
         meta = {"title": f"Edit {target.name}", "path": str(target), "preview": preview, "kind": "diff", "perm_scope": "edit"}
-        if "edit" in perms:
+        if _edit_auto_approved(target, session_perms, extra):
             return "safe", None, meta
-        return "risky", f"Modify {target} ({count} replacement{'s' if count > 1 else ''})", meta
+        return "risky", f"Modify {target} ({count} replacement{'s' if count > 1 else ''}){_outside_note(target, extra, session_perms)}", meta
 
     if name == "multi_edit_file":
         try:
@@ -105,9 +127,9 @@ def harness_gate(name, args, chat_id=None, extra_perms=()):
             return "blocked", str(err), None
         preview = _make_diff_preview(str(target), current, updated)
         meta = {"title": f"Multi-edit {target.name} ({len(edits)} blocks)", "path": str(target), "preview": preview, "kind": "diff", "perm_scope": "edit"}
-        if "edit" in perms:
+        if _edit_auto_approved(target, session_perms, extra):
             return "safe", None, meta
-        return "risky", f"Modify {target} ({total_rep} replacement{'s' if total_rep > 1 else ''} across {len(edits)} blocks)", meta
+        return "risky", f"Modify {target} ({total_rep} replacement{'s' if total_rep > 1 else ''} across {len(edits)} blocks){_outside_note(target, extra, session_perms)}", meta
 
     if name == "run_python":
         code = args.get("code")

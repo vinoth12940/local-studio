@@ -1126,6 +1126,63 @@ def route_contract_rejects_even_independent_route_reordering():
         try:route_contract_is_unchanged();assert False,'ordered snapshot drift was accepted'
         except AssertionError as exc:assert 'Ordered route contract changed' in str(exc)
 
+@check
+def image_jobs_check_memory_and_never_stop_the_chat_model_without_consent():
+    """Measured: an image job peaks near 10.4 GB, and with a large chat model loaded the engine's own memory guard was already
+    warning. The job used to start regardless, so the Mac swapped and both the image and the chat slowed to a crawl."""
+    from fastapi.testclient import TestClient
+    import studio.api.images as api_images
+    import studio.services.images as image_service
+    im = app.image_model(None)
+    _fake_install(im["repo"])
+    for repo, files in app.model_parts(im):
+        _fake_install(repo)
+    assert app.model_installed(im), "the image model must look installed for the route to reach the memory check"
+    GIB = 2**30
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    saved = (image_service.system_memory, studio.services.engines.engine_state, studio.services.engines._stop_engine, api_images.run_image_job)
+    started, stopped = [], []
+    api_images.run_image_job = lambda job_id, cmd, meta: started.append(job_id)
+    studio.services.engines._stop_engine = lambda mode: stopped.append(mode)
+    studio.services.engines.engine_state = lambda: {"mode": "text", "model_id": app.load_settings()["chat_model"]}
+    app.GALLERY.mkdir(parents=True, exist_ok=True)
+    for old in app.GALLERY.glob("*.json"): old.unlink()
+    def post(**extra):
+        return c.post("/api/image", data={"prompt": "a lighthouse", "model_id": im["id"], **extra})
+    try:
+        image_service.system_memory = lambda: {"total_bytes": 48 * GIB, "used_bytes": 20 * GIB}
+        ok = post()
+        assert ok.status_code == 200 and "job" in ok.json() and not stopped, ok.text            # 20 + 12 fits inside 85% of 48 GB
+        image_service.system_memory = lambda: {"total_bytes": 48 * GIB, "used_bytes": 33 * GIB}
+        before = len(app.jobs)
+        refused = post()
+        body = refused.json()
+        assert refused.status_code == 409 and body["code"] == "memory", refused.text
+        assert body["needed_gb"] == 12.0 and 14.5 < body["free_gb"] < 15.5 and body["engine"] and body["engine"] in body["detail"], body
+        assert "reloads by itself" in body["detail"] and not stopped and len(app.jobs) == before, "no consent: nothing is stopped or started"
+        assert post(stop_engine="no").status_code == 409 and not stopped
+        agreed = post(stop_engine="1")
+        assert agreed.status_code == 200 and sorted(stopped) == sorted(app.ENGINES), (agreed.text, stopped)
+        stopped.clear()
+        studio.services.engines.engine_state = lambda: {"mode": None, "model_id": None}
+        assert post().status_code == 200 and not stopped, "nothing of ours to stop: the job runs, the user decides about other apps"
+        studio.services.engines.engine_state = lambda: {"mode": "text", "model_id": app.load_settings()["chat_model"]}
+        # the margin follows what this model really peaked at, read back from the gallery sidecars
+        (app.GALLERY / "a.json").write_text(json.dumps({"model": im["repo"], "peak_bytes": 20 * GIB}))
+        (app.GALLERY / "b.json").write_text(json.dumps({"model": "someone/else", "peak_bytes": 90 * GIB}))
+        (app.GALLERY / "c.json").write_text("{ not json")
+        assert image_service.expected_peak_bytes(im["repo"]) == int(20 * GIB * 1.1)
+        assert image_service.expected_peak_bytes("nobody/none") == image_service.DEFAULT_PEAK_BYTES
+        image_service.system_memory = lambda: {"total_bytes": 48 * GIB, "used_bytes": 20 * GIB}
+        assert post().status_code == 409, "a model that really peaked at 20 GB no longer fits next to 20 GB in use"
+        def broken(): raise OSError("vm_stat unavailable")
+        image_service.system_memory = broken
+        assert image_service.memory_plan(im["repo"])["enough"] is True, "an unreadable memory report never blocks a job"
+    finally:
+        (image_service.system_memory, studio.services.engines.engine_state, studio.services.engines._stop_engine, api_images.run_image_job) = saved
+        for sidecar in app.GALLERY.glob("*.json"): sidecar.unlink()
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:

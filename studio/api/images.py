@@ -3,6 +3,7 @@
 Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
 """
 
+import asyncio
 import json
 import re
 import secrets
@@ -13,11 +14,13 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 
-from studio.services import models
-from studio.config import AGENT_BUSY_MSG, agent_lock, BIN, EDIT_MODEL, GALLERY, UPLOADS
+from studio.services import engines, models
+from studio.services import images as image_service
+from studio.config import AGENT_BUSY_MSG, agent_lock, BIN, EDIT_MODEL, ENGINES, GALLERY, UPLOADS
 from studio.services.images import jobs, run_image_job
-from studio.services.models import image_model
+from studio.services.models import chat_model, image_model
 
 router = APIRouter()
 
@@ -26,7 +29,7 @@ router = APIRouter()
 async def create_image(prompt: str = Form(...), width: int = Form(1024), height: int = Form(1024),
                        steps: int = Form(20), seed: str = Form(""), guidance: str = Form(""),
                        negative_prompt: str = Form(""), step_cache: str = Form(""),
-                       mode: str = Form("generate"), model_id: str = Form(""),
+                       mode: str = Form("generate"), model_id: str = Form(""), stop_engine: str = Form(""),
                        images: list[UploadFile] = File(default=[])):
     if agent_lock.locked():
         raise HTTPException(409, AGENT_BUSY_MSG)
@@ -36,6 +39,24 @@ async def create_image(prompt: str = Form(...), width: int = Form(1024), height:
     im = image_model(model_id or None)
     if mode != "edit" and not models.model_installed(im):
         raise HTTPException(409, f"{im['name']} isn't downloaded. Get it from the Model library.")
+    plan = await asyncio.to_thread(image_service.memory_plan, im["repo"])
+    if not plan["enough"]:
+        # The chat model is holding the memory this job needs. Stopping it is the user's call: it drops their loaded model.
+        running = await asyncio.to_thread(engines.engine_state)
+        if running.get("mode"):
+            name = chat_model(running.get("model_id"))["name"]
+            if stop_engine.strip().lower() not in ("1", "true", "yes"):
+                free = max(0, plan["total_bytes"] - plan["used_bytes"]) / 2**30 if plan["total_bytes"] else 0
+                return JSONResponse({"code": "memory", "needed_gb": round(plan["needed_bytes"] / 2**30, 1), "free_gb": round(free, 1),
+                                     "engine": name,
+                                     "detail": f"{name} is loaded and using memory. This image needs about {plan['needed_bytes'] / 2**30:.0f} GB and only about "
+                                               f"{free:.0f} GB is free, so the Mac would start swapping and both the image and your chats would slow to a crawl. "
+                                               f"Stop {name} for now? It reloads by itself on your next chat message."}, status_code=409)
+            def stop_engines():
+                with engines.engine_lock:
+                    for engine_mode in ENGINES:
+                        engines._stop_engine(engine_mode)
+            await asyncio.to_thread(stop_engines)
     seed_val = int(seed) if seed.strip() else secrets.randbelow(2**31)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     fname = f"{stamp}-{seed_val}-{uuid.uuid4().hex[:6]}.png"      # unique even for jobs queued together

@@ -125,6 +125,10 @@ def test_baseline_comparison_flags_regressions_and_refuses_scripted_reports():
     assert evalkit.compare(report({"a": 1.0, "b": 0.8, "c": None}), baseline) == []
     assert evalkit.compare(report({"a": 0.9, "b": 0.7, "c": None}), baseline, 0.15) == []         # -0.1 each: within tolerance
     assert evalkit.compare(report({"a": 1.0, "b": 0.8, "c": 0.0}), baseline, 0.15), "an unbaselined task still drags the overall rate"
+    changed = report({"a": 1.0, "b": 0.8, "c": None})
+    changed["summary"]["tasks"]["a"]["revision"] = 2
+    for r in (baseline, changed): r["summary"]["tasks"]["a"].setdefault("revision", 1); r["summary"]["tasks"]["b"].setdefault("revision", 1)
+    assert any("task revision 1 in the baseline vs 2 now" in p for p in evalkit.compare(changed, baseline)), "different task revisions are not comparable"
     regressions = evalkit.compare(report({"a": 0.6, "b": None}), baseline, 0.15)
     assert any("a: pass rate fell" in p for p in regressions) and any("b: no measured runs" in p for p in regressions), regressions
     for bad in (lambda: evalkit.compare(report({"a": 1.0}, scripted=True), baseline), lambda: evalkit.compare(baseline, report({"a": 1.0}, scripted=True))):
@@ -214,6 +218,17 @@ def test_runtime_versions_are_read_from_the_engine_environment_or_reported_unava
     assert evalkit.environment("m", "text", {}, True)["runtime_versions"] == {} and "runtime_versions" in evalkit.environment("m", "text", {}, False, None, None, None, {"mlx": "1"})
 
 
+def test_a_model_that_keeps_retrying_after_refusals_fails_it_does_not_error():
+    """The first real baseline labelled the harness's tool-call-limit stop 'errored'; it is the behavior under test, so it is a failure."""
+    task = next(t for t in evalkit.load_tasks() if t["id"] == "approval-denied-shell")
+    turns = [{"tool": "run_shell", "args": {"command": "rm -r dist"}} for _ in range(16)] + [{"text": "Giving up."}]
+    record = evalkit.run_task(task, session(), TMP, turns)
+    assert record["status"] == "failed" and record.get("tool_limit_stop") and "tool-call limit" in record["reason"], record
+    assert (Path(record["workspace"]) / "dist" / "out.bin").exists(), "the declined command must not have run"
+    summary = evalkit.aggregate([record], [task])
+    assert summary["tasks"][task["id"]]["failed"] == 1 and summary["tasks"][task["id"]]["errored"] == 0
+
+
 def test_sessions_refuse_the_live_app_state():
     from studio import config
     saved = config.STATE
@@ -249,7 +264,7 @@ TESTS = (test_tasks_validate_and_cover_the_required_categories, test_fixtures_ar
          test_tool_budget_overruns_fail_even_when_outcomes_hold, test_engine_tasks_are_skipped_in_scripted_mode_and_never_counted_as_successes,
          test_baseline_comparison_flags_regressions_and_refuses_scripted_reports,
          test_attach_mode_never_stops_or_starts_an_engine_and_reports_blocked, test_attached_model_must_match_the_engine_or_be_flagged,
-         test_recovery_task_interrupts_a_real_run_resumes_it_and_catches_replays, test_runtime_versions_are_read_from_the_engine_environment_or_reported_unavailable, test_sessions_refuse_the_live_app_state,
+         test_recovery_task_interrupts_a_real_run_resumes_it_and_catches_replays, test_a_model_that_keeps_retrying_after_refusals_fails_it_does_not_error, test_runtime_versions_are_read_from_the_engine_environment_or_reported_unavailable, test_sessions_refuse_the_live_app_state,
          test_reports_are_reproducible_records)
 
 if __name__ == "__main__":

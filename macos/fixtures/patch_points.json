@@ -281,6 +281,14 @@
    ]
   },
   {
+   "name": "_stop_engine",
+   "destination": "studio.services.engines",
+   "patched": "rebind",
+   "suites": [
+    "check_app.py"
+   ]
+  },
+  {
    "name": "agent_engine",
    "destination": "studio.config",
    "patched": "mutate",
@@ -360,6 +368,14 @@
    "suites": [
     "check_agent.py",
     "check_app.py"
+   ]
+  },
+  {
+   "name": "native_context",
+   "destination": "studio.services.models",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
    ]
   },
   {

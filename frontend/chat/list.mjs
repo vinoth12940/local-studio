@@ -6,7 +6,7 @@ import { showView, syncChatDock, view } from "../ui/views.mjs";
 import { activeCodeWs, chDetach, chResume, liveGen, loadCodeView, renderThread, scrollBottom } from "../modules.mjs";
 
 // ---------------- chats
-let chats = []; const listState = createStore({ current: null, streaming: null, ctxWindow: 32768 });
+let chats = []; const listState = createStore({ current: null, streaming: null, ctxWindow: 131072 });
 listState.codeWorkspace = store.get("code_workspace", null);
 listState.chRun = null;          // the task this chat started in Agent mode: { chat, msg, starting, s (run state, see agFresh), el, ui }
 const chLive = () => !!(listState.chRun && (listState.chRun.starting || listState.chRun.s.live));

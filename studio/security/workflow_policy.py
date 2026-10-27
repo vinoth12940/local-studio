@@ -10,6 +10,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -17,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from studio import config
-from studio.infra.workspace import _harness_root
+from studio.infra.workspace import _chat_workspace
 from studio.security.execution import _readonly_workspace
 from studio.security.fences import _harness_path_fence
 from studio.security.redact import redact_obj
@@ -48,6 +49,23 @@ def canonical_target(workspace, value, write=False):
     if not target.is_relative_to(base):
         raise ValueError('The tool target is outside the selected workflow workspace.')
     return target
+
+
+_CD_PREFIX = re.compile(r"\s*cd\s+(?:'([^']+)'|\"([^\"]+)\"|(\S+))\s*&&\s*(.+)\Z", re.S)
+
+
+def canonical_command(workspace, command):
+    """`cd <this workspace> && <cmd>` runs <cmd> in the same directory, so it counts as <cmd>. Any other directory, an extra
+    chained command or a different separator does not match, so nothing else can ride along. Models add this prefix by habit."""
+    match = _CD_PREFIX.match(command) if isinstance(command, str) and workspace else None
+    if match:
+        target = match.group(1) or match.group(2) or match.group(3)
+        try:
+            if str(Path(target).expanduser().resolve()) == str(Path(workspace).resolve()):
+                return match.group(4).strip()
+        except (OSError, RuntimeError):
+            pass
+    return command
 
 
 def _matches(path, patterns):
@@ -159,7 +177,7 @@ class PolicySession:
                 self.charge_task_step(self.task)
         opaque = name in OPAQUE_TOOLS or name.startswith('mcp__') or name == 'delegate_write'
         if self.mode == 'plan' and (name in FILE_TOOLS or opaque or name in ('memory_store', 'manage_process')):
-            raise ValueError('Plan mode permits native inspection and designated planning-artifact API writes only.')
+            raise ValueError('Plan mode permits native inspection and designated planning-artifact API writes only. Do not retry: write your plan as the final answer.')
         if name in FILE_TOOLS:
             target = canonical_target(self.workspace, args.get('path', ''), write=True)
             rel = target.relative_to(Path(self.workspace)).as_posix()
@@ -168,12 +186,12 @@ class PolicySession:
             if self.protected and _matches(rel, self.patterns) and rel not in self.exceptions:
                 raise ValueError('Protected test file: an explicit settings exception with a reason is required.')
         if self.protected and opaque:
-            check = name == 'run_shell' and not args.get('background') and args.get('command') in self.commands
+            check = name == 'run_shell' and not args.get('background') and canonical_command(self.workspace, args.get('command')) in self.commands
             if not check:
                 raise ValueError('Test protection refuses opaque shell/Python/MCP/computer/delegated writes. Use native file tools or a configured read-only verification command.')
             if args.get('cwd') and canonical_target(self.workspace, args['cwd']) != Path(self.workspace):
                 raise ValueError('Protected verification must run in the selected workspace.')
-        if self.task and self.task.get('scope', ['**']) != ['**'] and opaque and not (self.protected and name == 'run_shell' and args.get('command') in self.commands):
+        if self.task and self.task.get('scope', ['**']) != ['**'] and opaque and not (self.protected and name == 'run_shell' and canonical_command(self.workspace, args.get('command')) in self.commands):
             raise ValueError('A path-scoped task cannot grant opaque execution outside its assigned files.')
 
     def _run_hooks(self, phase, name, args, result=None):
@@ -239,7 +257,12 @@ class PolicySession:
             self.record('result', {'tool': name, 'error': result.get('error'), 'returncode': result.get('returncode')})
 
     def guidance(self):
-        return (f'Workflow mode: {self.mode}; task: {(self.task or {}).get("id", "none")}. '
+        what = {'plan': 'PLAN MODE: you cannot edit files, run commands, run Python or call MCP tools in this mode, and every such attempt is refused. '
+                        'Read files if you need to, then give your answer as a concrete step-by-step plan (files to change, the change, how to verify). '
+                        'Do not attempt edits. Your final answer must contain the plan.',
+                'act': 'ACT MODE: make the requested changes with the file tools; each edit and command still needs approval where the app asks.',
+                'auto': 'AUTO MODE: work within the task scope and budget; the backend finishes the task only after configured checks pass.'}[self.mode]
+        return (f'Workflow mode: {self.mode}; task: {(self.task or {}).get("id", "none")}. {what} '
                 f'Budget: {self.max_steps} tools / {self.max_seconds}s. '
                 'Tool policy is enforced by the backend; approval cannot override Plan mode, assigned scope, or test protection.')
 
@@ -257,7 +280,9 @@ def action_scope(name, args):
     policy = _active_policy.get()
     own_policy = False
     if policy is None:
-        policy = PolicySession(str(_harness_root()))
+        # Coding policy (test protection, hooks) belongs to a workspace. A chat that has none is not a coding session: governing it
+        # by the checkout or home folder would block every write outside that folder, and any test-named file inside it.
+        policy = PolicySession(_chat_workspace.get())
         own_policy = True
     if _inside_action.get() or not policy.enabled:
         yield policy

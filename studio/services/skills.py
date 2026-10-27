@@ -176,7 +176,8 @@ def _check_digest(actual, expected):
     if expected is not None and (not isinstance(expected, str) or not DIGEST.fullmatch(expected)):
         raise ValueError("Expected a lowercase SHA-256 digest from load_skill")
     if expected is not None and actual != expected:
-        raise ValueError("Skill content changed; call load_skill again before using its resources")
+        raise ValueError("The digest does not match this skill's current content. On a first load omit expected_sha256; afterwards pass only the "
+                         "'sha256' returned by the latest load_skill (never the catalog's metadata_sha256). If the skill file changed, call load_skill again.")
 
 
 def load_skill(skill_id, workspace=None, expected_sha256=None, *, include_instructions=True):

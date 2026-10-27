@@ -9,16 +9,48 @@ currently has only `coding_workflow` on, so nothing below is active until you sw
 | Area | State |
 | --- | --- |
 | Tasks, Plan/Act/Auto, durable runs and recovery, verification gate, hooks and test protection, nested instructions, skills, reviews, triggers, isolated workers, eval kit | Built, behind default-off flags, suites pass, full build passes |
-| Real-model behavior of any of the above | **Not tested by me** (no engine was started). This is what Part B is for |
-| Measured eval baseline | **Pending, needs you** (Part B, B9) |
+| Real-model behavior of any of the above | **Tested once by me** against LFM2.5 24B-A2B in the installed app (results below); worth repeating by you with the model you actually use |
+| Measured eval baseline | **Measured once** (LFM2.5 24B-A2B, 3 runs per task, 20/24 pass); committed at `macos/evals/baselines/lfm2.5-24b-a2b.json`, with the 0.15 regression threshold agreed |
 | Unattended trigger execution | **Not built on purpose.** It is a policy decision |
 | Independent review of this work | **Pending**; the roadmap's accepted count is 0/30 |
 | Not committed | 56 changed files sit uncommitted on `codex/p6-search-release` |
 
+## Start here: what to test in the installed app (about 30 minutes)
+
+Everything below was already verified by me through the app's HTTP API with a real model, but **not through the app window itself**.
+These are the checks that need your eyes. Open `/Applications/Local Studio.app` normally. All new features are off until you switch
+them on; to undo anything, untick it again.
+
+Make a throwaway repo first (do not use a project you care about):
+
+```bash
+mkdir -p ~/ls-scratch && cd ~/ls-scratch && git init -q && printf 'x = 1\n' > value.py && printf "from pathlib import Path\nassert Path('value.py').read_text().strip() == 'x = 2'\nprint('check passed')\n" > verify.py && git add . && git -c user.name=t -c user.email=t@example.com commit -qm base
+```
+
+| # | Where | Do this | You should see |
+| --- | --- | --- | --- |
+| 1 | Chat | Open an existing chat and send a message | Works exactly as before; the context meter under the composer shows the default 131,072 (or the model's own limit if lower) |
+| 2 | Settings → Context window | Pick 196,608 (the minimum is 100,000), Save, then send a message | A toast, a summary saying the engine "restarts with the new size on your next message" (and "for the active model" if the model's own limit is lower), a model reload pause, then the meter shows the effective size. Reset returns it to 131,072 |
+| 3 | Code, workspace `~/ls-scratch` | Switch to **Accept edits** (Shift+Tab) and ask: "create a.txt here, and also create ../outside-test.txt" | `a.txt` is created with no prompt. The outside file asks you, saying "outside the workspace, so Accept edits does not apply". Decline it |
+| 4 | Code → Workflow | Turn on **Required checks** and **Save feature settings**; add the check `tests: python3 verify.py` and Save. Ask: "change x to 2 in value.py and run python3 verify.py" | The reply shows "Configured checks passed for this turn". Then ask for a change but decline the check: it must say **Verification incomplete**, never "done" |
+| 5 | Workflow | Turn on **Plan / Act / Auto**, create a task in **Plan**, ask for a change | You get a written plan, the file is unchanged, and the task ends "planned". Switch to **Act** and ask again |
+| 6 | Workflow | Tick "Require an independent review", run the task to verified, click **Review** | Findings or an explicit "no findings" (about 30 s with LFM2.5). You must record a reason for each blocking finding. Editing the code afterwards makes the review "not current" |
+| 7 | Workflow | Turn on **Scheduled tasks**, create an "every 1 minute" one, wait | Within about a minute the status line shows "1 scheduled ready" without opening the dialog. **Start with approvals** runs it and still asks for each approval |
+| 8 | Workflow | Turn on **Isolated write workers**, create a worker (scope `NOTES.md`), point a Code chat at its checkout path, ask for `NOTES.md`, then **Review changes** and Apply | Your repo is untouched until Apply; applied as an uncommitted file; no commit is made |
+| 9 | Workflow → Restart recovery | Start a multi-step task and force-quit the app mid-run, reopen, open "Saved coding runs" | The run shows interrupted; "Continue with fresh approvals" finishes without repeating completed steps |
+
+Optional and advanced: hooks and test protection are configured in `settings.json` (see `docs/workflow-automation.md`). To re-measure
+the model, run `macos/evals/run_evals.py` with `--baseline macos/evals/baselines/lfm2.5-24b-a2b.json` (the 0.15 threshold is agreed).
+
+Things that look odd but are expected:
+- A worker's own chat can end "Unverified: no trusted verification commands" when the global gate is on, because its checkout is not a configured workspace. It does not affect integration.
+- With a nearly full context window, a thinking model may end with "The reply was cut off before it produced any text". Raise the window or run `/compact`.
+- Part B below shows what I already ran and what it found.
+
 ## Where the build is
 
-`build/Local Studio.app` (1.5.0, build 132, signed) is current with the source. It is **not installed**; your installed app is
-untouched. Installing replaces it and is your call (`./macos/build.sh --install`).
+`build/Local Studio.app` (1.5.0, build 133, signed) is current with the source and **is installed** at `/Applications/Local Studio.app`
+(byte-identical). Reinstall any time with `./macos/build.sh --install`.
 
 ---
 
@@ -94,6 +126,37 @@ add the check under "Required checks" (`tests: python3 -m unittest -q`).
 | B7 | Hooks and test protection (`hooks`, `protect_tests`) | Configure per `docs/workflow-automation.md`; ask the model to edit a test file, then to do it via a shell command | Both refused with a clear reason; a denying hook blocks the write; the configured check still runs |
 | B8 | Scoped instructions and skills (`nested_instructions`, `skills`) | Put a different rule in `src/CLAUDE.md`; have the model edit under `src/` | The tool step has **Project rules applied** listing both files, nearest scope last. A skill under `.localstudio/skills/<name>/SKILL.md` is listed and loadable |
 | B9 | **Eval baseline** | With the model loaded and the app idle: `run_evals.py --attach --model <id> --repeat 3 --out build/evals/baseline` (see `macos/evals/README.md`) | A report with per-task pass counts. Look at which tasks fail: that is real signal on your model. Then pick thresholds |
+
+### What I ran in Part B (2026-10-23, installed build, LFM2.5 24B-A2B, scratch repos)
+
+The real model found **eight bugs that every offline suite had missed**; all are fixed, tested, and re-verified with the real model.
+
+| # | Result | What the real run showed |
+| --- | --- | --- |
+| B1 | Pass after a fix | The gate never accepted a false "done". But the model always wrote `cd <workspace> && python3 verify.py`, which the gate did not count, so it could never reach "verified". A narrow normalizer now accepts exactly that prefix (and nothing chained after it) |
+| B2 | Pass after a fix | Act and Auto reach `verified_complete`; Auto without a task is refused. Plan mode blocked every edit but the model retried ~10 times and returned an empty answer; the guidance now says what Plan mode means, and it returned a real plan with 0 blocked attempts |
+| B3 | Pass | `kill -9` mid-run, restart: run `interrupted`, resume re-asked approvals, only the remaining steps ran, no duplicates |
+| B4 | Pass after two fixes | The review called the engine's base URL (404), then ran out of its fixed token budget while reasoning. It now sizes the budget to the context window; a real review completed in about 30 s and the task reached `verified_complete` only with a current review, then went stale on a source edit |
+| B5 | Pass | The schedule fired about 60 s after creation and queued without touching the repo; Start carried no pre-approval; the run synced to `completed` with a notice |
+| B6 | Pass after a fix | Worker checkouts lived where the fingerprint guard rejects workspaces, so no chat could start in one. Moved to `data/worktrees`. Then: edit in checkout, parent untouched, integrate uncommitted, 4 steps charged, completion gated on fresh checks |
+| B7 | Pass after a fix | Protected test edits, shell writes and hook-denied names were all refused with reasons. Test protection had the same `cd` prefix problem as B1 (the model could not run its check); fixed together |
+| B8 | Pass after a fix | Rule provenance shown per tool step and the nearer rule followed. `load_skill` rejected a first-load digest with a misleading error and the model gave up; the error and tool description are now actionable and the model recovered |
+| B9 | Measured | See below |
+
+**Eval baseline (LFM2.5 24B-A2B, 8 tasks x 3 runs).** First measurement 13/24 (54%). The measurement itself exposed three harness bugs, now fixed: declining an action never told the model to stop (denied-shell went 0/3 to 3/3); a long chat left about 512 tokens for the reply so thinking models answered nothing; and eviction left no room for the checkpoint summary, so an early fact vanished without a trace (compaction went 0/3 to 3/3). Final: **20/24 (83%)**. Still failing, which is real signal about the model: `approval-edit-declined` 1/3 and `repair-invalid-json` 1/3 (it keeps calling tools instead of stopping or finishing).
+
+**Fixed afterwards: accept-edits no longer approves writes outside the workspace.** `write_file` was not confined to the workspace (`../x` and absolute paths worked) and accept-edits auto-approved them. Now accept-edits applies only to files inside the workspace (symlinks out and `../` included); anything else still asks, with the reason shown. Your explicit "allow edits for this chat" is unchanged.
+
+**New: Settings → Context window.** Choose the maximum context window (100,000 to 262,144 tokens; default 131,072). A model with a smaller native limit runs at its own limit and Settings says so. The engine restarts with the new size on your next message. To test: set 196,608, send a message, and confirm the context meter under the composer shows the effective size after the engine reloads; then Reset.
+
+**Fixed after the "tools and inference are worse" report (each has an automated regression test):**
+- Long thinking turns no longer overflow the window: replayed reasoning is counted, trimmed per round, and dropped for older rounds first. Test: in Code, ask for a multi-step task on a thinking model and confirm it finishes instead of stopping with an empty or cut-off reply.
+- Window defaults to 128k with a 100k floor and is clamped per model (a 131,072-token model is never started at 262,144).
+- Durable runs and the verification gate now work in this repo's own checkout (the fingerprint follows `.gitignore`, hashes inside symlinks by target, skips sockets) and no longer freeze the stream while hashing.
+- A request that fails before it starts (for example Auto with no task) no longer leaves a permanent "Thinking…" turn.
+- With `protect_tests`/`hooks` on, a chat that has no workspace is no longer treated as a coding session rooted at home or the checkout.
+- The Workflow task dropdown no longer closes while you are choosing (it is rewritten only when its contents change).
+- Image generation checks memory first: with a big chat model loaded it asks "Stop model and generate?" instead of swapping. To test: load a large model, open Images, generate; you should get that prompt, and declining leaves the model loaded.
 
 ### What I could not test
 - Any behavior with a real model: review quality, whether the model follows resume/Plan/Auto/rule instructions, and how often

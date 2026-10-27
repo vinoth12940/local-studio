@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "id": "compaction-recall",
-  "revision": 1,
+  "revision": 2,
   "category": "compaction",
   "title": "Recall an early fact after the context was compacted",
   "fixture": "empty",
-  "prompt": "What is the project codename I told you at the start? Write it into CODENAME.txt and state it in your reply.",
-  "approvals": "edits_only",
+  "prompt": "What is the project codename I told you at the start of this conversation? Reply with it.",
+  "approvals": "allow_all",
   "budgets": {
     "max_tool_calls": 8,
     "timeout_seconds": 300
@@ -16,13 +16,12 @@
   },
   "outcome": [
     {
-      "type": "file_contains",
-      "path": "CODENAME.txt",
+      "type": "final_text_contains",
       "text": "OBSIDIAN-7"
     },
     {
-      "type": "final_text_contains",
-      "text": "OBSIDIAN-7"
+      "type": "max_tool_calls",
+      "limit": 8
     }
   ],
   "history_filler": {

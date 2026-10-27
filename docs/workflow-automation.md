@@ -30,6 +30,11 @@ With the flag on (or whenever a chat turn belongs to a workflow task), each codi
   (`dispatched` → `completed` / `failed` / `unknown_outcome` / `reconciled`), any pending approval, the workspace
   fingerprint, the trusted-policy digest, the verification snapshot and the terminal outcome. A run's id is also its
   idempotency anchor: a `workflow_request_key` maps to exactly one run.
+- **Workspace fingerprint.** A bounded content hash. In a git checkout it covers the tracked and not-ignored files (so `.gitignore`
+  decides what is source); elsewhere it skips well-known build folders (`node_modules`, `__pycache__`, caches, virtualenvs found by
+  `pyvenv.cfg`, `.DS_Store`). Symlinks are hashed by target and never followed; one pointing outside the workspace fails closed with an
+  error that names it (exclude it with trusted `fingerprint_excludes`). Sockets, pipes and devices are skipped. Budgets still fail closed.
+  Hashing runs off the event loop, and a cancelled run is seen by the executing turn through an in-memory flag, not by re-reading its record.
 - **Limits.** A record is capped at 16 MB (past that, no further tool may execute) and keeps at most the newest 4,000 events;
   `first_seq` advances and a replay cursor older than that gets an explicit "expired" error rather than a silent gap.
 - **Recovery.** A run found `running` or `waiting_approval` with no live lease becomes `interrupted`, or
@@ -103,7 +108,7 @@ Honest boundaries:
 
 `POST /api/workflow/tasks/{id}/review` with `{expected_version, verification_run_id}` runs one review of the task's
 actual `git diff HEAD` against its intent/spec/plan, using the already-loaded local model in a fresh conversation with no
-tools. It never loads or switches a model: if the selected model is not running, the review is recorded as incomplete.
+tools. It never loads or switches a model: if the selected model is not running, the review is recorded as incomplete. The reviewer gets all the context window leaves, up to 14,000 tokens, because a reasoning model spends many of them thinking before it answers; a reply cut off by that budget is refused with an explicit reason, never recorded as a review.
 
 - **Evidence is pinned.** The review binds the source fingerprint, diff digest, instruction fingerprint and a *backend*
   verification snapshot taken from a finished run of the same task. A failed, skipped, stale or foreign verification run
@@ -158,7 +163,7 @@ Limits: no OS notification or menu-bar alert is sent; notices appear in the dial
 
 ## Isolated write workers (`harness.worktrees`)
 
-A worker is a separate Git worktree and branch of the task's repository. Your workspace is not written until you review
+A worker is a separate Git worktree and branch of the task's repository, checked out under `$LOCAL_STUDIO_HOME/data/worktrees/<id>/tree` (deliberately not under `data/workflow`, the run journal's own folder, which cannot be a fingerprinted workspace). Your workspace is not written until you review
 the exact patch and integrate it by digest. **No model tool creates or drives a worker**; the worker is an ordinary Code chat
 that you open on its checkout path, so it keeps its own approvals, fences, budgets and task scope. `delegate_write` remains
 an opaque, blocked tool under test protection.

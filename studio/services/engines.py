@@ -17,7 +17,7 @@ from studio.infra.logs import open_log
 from studio.config import BIN, DSPARK_PY, ENGINES, LLAMA_SERVER, LOGS
 from studio.storage.atomic import write_text_atomic
 from studio.infra.system import _pid_alive, _read_pid
-from studio.services.models import chat_models, snapshot_file
+from studio.services.models import chat_models, effective_context, snapshot_file
 
 
 # ---------------------------------------------------------------- engines
@@ -93,7 +93,7 @@ def _uses_mlx_lm(repo):
 def _start_engine(mode, m):
     log = open_log(LOGS / f"{ENGINES[mode]['pid']}.log", "w")
     if mode == "text":
-        cmd = [str(BIN / "mlx-dspark"), "serve", "--model", m["repo"], "--context-window", str(studio_config.CONTEXT),
+        cmd = [str(BIN / "mlx-dspark"), "serve", "--model", m["repo"], "--context-window", str(effective_context(m)),
                "--host", "127.0.0.1", "--port", "8080"]
         if m.get("drafter"):
             cmd += ["--drafter", m["drafter"], "--mode", m.get("mode", "auto")]
@@ -105,13 +105,13 @@ def _start_engine(mode, m):
             cmd += ["--draft-model", m["drafter"], "--draft-kind", "dflash"]
     else:
         model = snapshot_file(m["repo"], m["file"])
-        cmd = [LLAMA_SERVER, "-m", str(model), "-c", str(studio_config.CONTEXT), "-ngl", "999", "--jinja",
+        cmd = [LLAMA_SERVER, "-m", str(model), "-c", str(effective_context(m)), "-ngl", "999", "--jinja",
                "--host", "127.0.0.1", "--port", "8082", "-a", m["id"]]
         if m.get("mmproj") and snapshot_file(m["repo"], m["mmproj"]):
             cmd += ["--mmproj", str(snapshot_file(m["repo"], m["mmproj"]))]
     proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     (LOGS / f"{ENGINES[mode]['pid']}.pid").write_text(str(proc.pid))
-    write_text_atomic(ENGINE_STATE, json.dumps({"mode": mode, "model_id": m["id"]}))
+    write_text_atomic(ENGINE_STATE, json.dumps({"mode": mode, "model_id": m["id"], "context_window": effective_context(m)}))
     return proc.pid
 
 
@@ -138,10 +138,13 @@ def ensure_engine(mode, m, timeout=300):
                 return False
             raise RuntimeError(f"Eval attach mode: no {mode} engine is ready. Load {m['name']} in Local Studio first.")
         st = engine_state()
-        if st.get("mode") == mode and st.get("model_id") == m["id"] and _engine_ready(mode):
+        # An engine keeps the window it was started with, so a changed setting needs a restart. Engines started before the window was
+        # recorded all used the old fixed 32k.
+        window_changed = st.get("context_window", studio_config.LEGACY_CONTEXT) != effective_context(m)
+        if st.get("mode") == mode and st.get("model_id") == m["id"] and _engine_ready(mode) and not window_changed:
             return False
         for other in ENGINES:
-            if _proc_running(ENGINES[other]["pattern"]) and (other != mode or st.get("model_id") != m["id"]):
+            if _proc_running(ENGINES[other]["pattern"]) and (other != mode or st.get("model_id") != m["id"] or window_changed):
                 _stop_engine(other)
         if not _proc_running(ENGINES[mode]["pattern"]):
             _start_engine(mode, m)

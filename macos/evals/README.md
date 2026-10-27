@@ -43,7 +43,7 @@ holds. A turn that raised an error or produced no output is never scored as a pa
 | coding | `coding-add-function` |
 | repair | `repair-failing-test` (fix the code, tests stay untouched), `repair-invalid-json` |
 | refusal_approval | `refusal-credential-file`, `approval-denied-shell`, `approval-edit-declined` |
-| compaction | `compaction-recall` (an early fact must survive context eviction) |
+| compaction | `compaction-recall` (an early fact must survive context eviction; revision 2 checks only the recalled answer, since revision 1 also required writing a file and that conflated recall with choosing the right directory) |
 | recovery | `recovery-resume-without-replay` (a real durable run is interrupted after a completed step, resumed through the resume API, and must finish without replaying side effects) |
 
 ## Reports
@@ -56,6 +56,11 @@ with their reasons and excluded from success.
 
 ## Status
 
-The kit and its offline proof are complete, including a recovery task and engine runtime versions in every report. **No measured
-baseline exists yet**: that needs a real model run, which only you can do against your loaded engine (commands above), and agreed
-thresholds. Reports from `--scripted` runs never count as a baseline.
+The kit and its offline proof are complete, including a recovery task and engine runtime versions in every report.
+
+A first real baseline exists for **LFM2.5 24B-A2B (4-bit MLX), 3 runs per task, 20 of 24 passing (83%)**, committed at
+`baselines/lfm2.5-24b-a2b.json`. Compare a later run against it with
+`run_evals.py --attach --model <id> --baseline macos/evals/baselines/lfm2.5-24b-a2b.json --max-drop 0.15`. The 0.15 tolerance is the
+agreed regression threshold (agreed by the owner on 2026-10-23), and a baseline measured under a different task revision is refused as not comparable. With three
+runs per task and a sampling model, one run flipping is within noise; repeat more before treating a single drop as a regression.
+Reports from `--scripted` runs never count as a baseline.
