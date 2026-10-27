@@ -84,4 +84,4 @@ export {
   agGrant, agLimit, agRenderSettings, agRenderTiers, agSave, agSetTier, agTierSelect
 } from "./settings/agent.mjs";
 export { loadWorkflow, openWorkflow, refreshWorkflow, syncWorkflow, takeWorkflowResume, workflowRequest, workflowState } from "./chat/workflow.mjs";
-export { startVoice, stopVoice, voiceHeard, voiceOnEnd, voiceOnEvent, voiceRequest, voiceState } from "./voice/voice.mjs";
+export { startVoice, stopVoice, voiceHeard, voiceOnEnd, voiceOnEvent, voiceRequest, voiceState, voiceViewShown } from "./voice/voice.mjs";
