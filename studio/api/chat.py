@@ -219,6 +219,7 @@ async def chat(request: Request):
     python_network = bool(chat_id and chat_id in load_settings().get("harness", {}).get("python_network_chats", []))
     raw_messages = json.loads(json.dumps(body.get("messages", [])))
     use_files = bool(body.pop("use_files", False))
+    voice_note = harness.apply_voice_mode(body)          # a spoken turn: short plain sentences, no thinking
     messages, needs_vision = build_messages(body.get("messages", []))
     messages, mentioned_sources = await asyncio.to_thread(_expand_workspace_mentions, messages, workspace)
     messages = await asyncio.to_thread(_expand_slash_command, messages, workspace)
@@ -237,6 +238,8 @@ async def chat(request: Request):
     body["messages"] = messages
     if policy.enabled:
         body["messages"].append({"role": "system", "content": policy.guidance()})
+    if voice_note:
+        body["messages"].append({"role": "system", "content": voice_note})
     # Keep prompt + reply inside the context window: long documents leave less room to answer.
     prompt_chars, images = 0, 0
     for msg in messages:

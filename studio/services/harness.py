@@ -1364,6 +1364,29 @@ def _expand_slash_command(messages: list[dict], workspace: str | None = None) ->
     return messages[:-1] + [last]
 
 
+VOICE_NOTE = ("This reply will be spoken aloud on a live voice call. Answer in one to three short, natural spoken sentences "
+              "unless the user asks for more. No markdown, lists, tables, emojis, code or links. Do not narrate tool use or "
+              "say what you are about to do. Say numbers the way people say them. For anything that changes (news, prices, "
+              "scores, weather, who currently holds a role), look it up, then say the source and how recent it is; if "
+              "nothing recent turns up, say so instead of guessing. Earlier replies in this chat may have used a different "
+              "speaking style: do not copy it.")
+
+
+def apply_voice_mode(body):
+    """Take the voice fields off an /api/chat body (they must never reach the engine). For a voice turn, turn thinking
+    off and return the system note to append; otherwise None."""
+    voice = bool(body.pop("voice", False))
+    style = " ".join(str(body.pop("voice_style", "") or "").split())[:400]
+    if not voice:
+        return None
+    body["enable_thinking"] = False
+    note = VOICE_NOTE
+    if style:
+        note += (f" Speak as {style}. The character changes only your tone and word choice: keep every fact, number, "
+                 "name, date and source exact, and never refuse or dodge a request because it does not fit the character.")
+    return note
+
+
 def _with_agent_note(messages, timezone=None, use_files=False, workspace=None):
     """Computer capabilities, once, in the leading system message after the user's own system prompt (a second system
     message would break chat templates that allow only the first), or as a new first message. Never duplicated."""

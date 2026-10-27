@@ -227,6 +227,19 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .sendbtn { width: 34px; height: 34px; border-radius: 10px; border: 0; background: var(--brand); color: var(--on-brand); cursor: pointer; display: grid; place-items: center; transition: filter .15s; }
 .sendbtn:not(:disabled):hover { filter: brightness(1.08); }
 .sendbtn:disabled { opacity: .25; cursor: default; }
+.micbtn { width: 34px; height: 34px; margin-right: 6px; border: 1px solid var(--line); border-radius: 10px; }
+.micbtn svg { width: 17px; height: 17px; }
+.micbtn.on { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.voicebar { max-width: 768px; margin: 0 auto 8px; display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: var(--shadow); }
+.voicebar[hidden] { display: none; }
+.vorb { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); opacity: .9; transition: transform .08s linear, background .2s; }
+.voicebar[data-state="listening"] .vorb, .voicebar[data-state="idle"] .vorb { background: var(--brand); }
+.voicebar[data-state="speaking"] .vorb { background: var(--ink-2); }
+.voicebar[data-state="thinking"] .vorb, .voicebar[data-state="starting"] .vorb { background: var(--brand); animation: pulse 1.2s ease-in-out infinite; }
+.vtxt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.vtxt b { font-size: 13px; font-weight: 600; color: var(--ink); }
+.vtxt span { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voicebar select { font: inherit; font-size: 12.5px; color: var(--ink-2); background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; }
 .sendbtn svg { width: 18px; height: 18px; stroke-width: 2.2; }
 .atts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px -8px; }
 .atts:empty { display: none; }
@@ -784,6 +797,7 @@ dialog::backdrop { background: var(--overlay); }
   <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
   <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></symbol>
   <symbol id="i-redo" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></symbol>
@@ -896,6 +910,12 @@ dialog::backdrop { background: var(--overlay); }
       <button class="jump" id="jumpBtn" title="Jump to latest">&#8595;</button>
       <div class="composer-wrap" id="composerWrap">
         <div class="workline" id="workLine" hidden><span class="wspark">✻</span><b id="workTxt">Working…</b><span id="workTime"></span><span id="workHint">· <kbd>esc</kbd> to interrupt</span></div>
+        <div class="voicebar" id="voiceBar" data-state="off" hidden>
+          <span class="vorb" id="vOrb"></span>
+          <div class="vtxt"><b id="vState">Voice</b><span id="vCap"></span></div>
+          <select id="vChar" aria-label="Character"></select>
+          <button class="linkbtn" id="vEnd">End</button>
+        </div>
         <div class="composer">
           <div class="workflowbar" id="workflowBar" hidden>
             <select id="workflowTaskSel" aria-label="Coding task"><option value="">No coding task</option></select>
@@ -915,6 +935,7 @@ dialog::backdrop { background: var(--overlay); }
             <button class="pillbtn" id="wsPill" aria-label="Workspace folder" title="Set active workspace folder for file & shell tools"><svg class="i"><use href="#i-folder"/></svg><span class="pl" id="wsTxt">Workspace</span><span id="wsClear" style="display:none;margin-left:4px;opacity:0.6">&times;</span></button>
             <button class="pillbtn" id="compactBtn" title="Compact older conversation turns into a structured state checkpoint" style="display:none"><svg class="i"><use href="#i-spark"/></svg><span class="pl">Compact</span></button>
             <div class="grow"></div>
+            <button class="iconbtn micbtn" id="micBtn" title="Talk to the assistant (voice, on this Mac)" aria-label="Talk" hidden><svg class="i"><use href="#i-mic"/></svg></button>
             <button class="sendbtn" id="send" title="Send"><svg class="i"><use href="#i-up" id="sendIcon"/></svg></button>
           </div>
         </div>

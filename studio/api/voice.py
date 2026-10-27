@@ -4,7 +4,7 @@ import asyncio
 import threading
 
 from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from studio.services import voice as services_voice
 
@@ -72,3 +72,55 @@ async def voice_transcribe(request: Request):
         raise HTTPException(413, "Recording too long.")
     r = await asyncio.to_thread(services_voice.voice_request, "POST", "/stt", content=data, headers={"content-type": "audio/wav"})
     return r.json()
+
+
+# ---- the live conversation: the UI drives the echo-cancelling engine in voice.py through these (same token, same gate)
+
+@router.post("/api/voice/mic/open")
+def voice_mic_open():
+    _need_voice()
+    return services_voice.voice_request("POST", "/mic/open", timeout=20).json()
+
+
+@router.post("/api/voice/mic/close")
+def voice_mic_close():
+    if not services_voice._voice_running():          # nothing to close; allowed with the flag off so the mic can always be released
+        return {"ok": True}
+    return services_voice.voice_request("POST", "/mic/close", timeout=20).json()
+
+
+@router.post("/api/voice/speak")
+def voice_speak(body: dict = Body(...)):
+    """Speak one sentence through the echo-cancelling engine; a "played" event follows on /api/voice/events."""
+    _need_voice()
+    req = {"text": str(body.get("text") or "")[:2000], "voice": str(body.get("voice") or ""), "speed": body.get("speed"),
+           "id": int(body.get("id") or 0)}
+    return services_voice.voice_request("POST", "/speak", json=req).json()
+
+
+@router.post("/api/voice/stop")
+def voice_stop():
+    _need_voice()
+    return services_voice.voice_request("POST", "/stop", timeout=5).json()
+
+
+@router.post("/api/voice/pause")
+def voice_pause():
+    _need_voice()
+    return services_voice.voice_request("POST", "/pause", timeout=5).json()
+
+
+@router.post("/api/voice/resume")
+def voice_resume():
+    _need_voice()
+    return services_voice.voice_request("POST", "/resume", timeout=5).json()
+
+
+@router.get("/api/voice/events")
+async def voice_events(request: Request):
+    """The microphone and playback events of voice.py, relayed as server-sent events while the page listens."""
+    _need_voice()
+    if not await asyncio.to_thread(services_voice._voice_running):
+        raise HTTPException(503, "Voice isn't running. Turn it on first.")
+    return StreamingResponse(services_voice.voice_event_stream(request), media_type="text/event-stream",
+                             headers={"cache-control": "no-store"})

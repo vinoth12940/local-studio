@@ -4,6 +4,7 @@
     GET  /status                 what is loaded and whether the microphone is open
     GET  /voices                 Phonon's English voices
     POST /tts                    {"text", "voice", "speed"} -> audio/wav
+    POST /speak                  {"text", "voice", "speed", "id"}: synthesize and play through the engine ("played" event)
     POST /stt                    audio/wav -> {"text"}
     POST /mic/open | /mic/close  the microphone is closed until asked for, and closed again on exit
     GET  /events                 SSE: {"t":"mic","rms","pcm"} every 32 ms while open, {"t":"played","id","stopped"}
@@ -22,6 +23,7 @@ import queue
 import signal
 import sys
 import threading
+import time
 from urllib.parse import parse_qs, urlsplit
 
 import numpy as np
@@ -46,7 +48,45 @@ class Service:
             from studio.voice.bridge import VoiceIO
             io_factory = VoiceIO
         self.tts, self.stt, self.io_factory = tts, stt, io_factory
-        self.fanout, self.io, self.io_lock = Fanout(), None, threading.Lock()
+        self.fanout, self.io, self.io_lock, self.restarts = Fanout(), None, threading.Lock(), 0
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def _watch(self, period=0.5, quiet=3.0):
+        """AVAudioEngine stops itself when the audio hardware is reconfigured (voice processing does that) and then
+        delivers nothing, without an error. A stopped engine is started again in place; an open microphone whose tap
+        stays quiet anyway is rebuilt (at most every few seconds), and the page is told either way."""
+        while True:
+            time.sleep(period)
+            with self.io_lock:
+                io = self.io
+            if io is None:
+                continue
+            if hasattr(io, "running") and not io.running():
+                try:
+                    if io.kick():
+                        self.restarts += 1
+                        self.fanout.publish({"t": "mic_restart", "restarts": self.restarts})
+                except Exception as e:
+                    print(f"voice: engine restart failed: {e}", flush=True)
+                continue
+            last = getattr(io, "last_tap", None)
+            if last is None or time.monotonic() - last <= quiet:
+                continue
+            try:
+                io.close()
+            except Exception:
+                pass
+            with self.io_lock:
+                if self.io is io:
+                    try:
+                        self.io = self.io_factory(self.fanout)
+                        self.restarts += 1
+                    except Exception as e:
+                        self.io = None
+                        print(f"voice: microphone restart failed: {e}", flush=True)
+            self.fanout.publish({"t": "mic_restart", "restarts": self.restarts})
+            print(f"voice: microphone was silent for {quiet:.0f} s; engine rebuilt ({self.restarts})", flush=True)
+            time.sleep(quiet)                      # back off: give the new engine time before judging it
 
     def open_mic(self):
         with self.io_lock:
@@ -63,7 +103,7 @@ class Service:
     def status(self):
         return {"ok": True, "mic_open": self.io is not None, "voice_processing": self.io is not None,
                 "tts_loaded": bool(getattr(self.tts, "loaded", False)), "stt_loaded": bool(getattr(self.stt, "loaded", False)),
-                "streams": self.fanout.count(), "stt_model": config.STT_MODEL, "tts_model": "gradium/phonon-31m-en"}
+                "streams": self.fanout.count(), "mic_restarts": self.restarts, "stt_model": config.STT_MODEL, "tts_model": "gradium/phonon-31m-en"}
 
 
 def make_handler(service):
@@ -150,6 +190,16 @@ def make_handler(service):
                     req = json.loads(self._body(20_000) or b"{}")
                     pcm, rate = service.tts.synth(req.get("text"), str(req.get("voice") or ""), req.get("speed"))
                     return self._send(200, to_wav(pcm, rate), "audio/wav")
+                if u.path == "/speak":       # synthesize and play through the echo-cancelling engine in one step
+                    if ctype != "application/json":
+                        return self._send(415, {"error": "send JSON"})
+                    req = json.loads(self._body(20_000) or b"{}")
+                    if service.io is None:
+                        return self._send(409, {"error": "open the microphone first (speech plays through the same engine)"})
+                    pcm, rate = service.tts.synth(req.get("text"), str(req.get("voice") or ""), req.get("speed"))
+                    item = int(req.get("id") or 0)
+                    service.io.play(pcm, rate, item)
+                    return self._send(200, {"ok": True, "id": item, "seconds": round(len(pcm) / rate, 3)})
                 if u.path == "/stt":
                     if ctype not in ("audio/wav", "audio/x-wav"):
                         return self._send(415, {"error": "send a 16-bit PCM WAV"})
