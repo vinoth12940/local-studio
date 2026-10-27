@@ -218,6 +218,27 @@ def service_routes_speak_listen_and_play():
 
 
 @check
+def speech_recognition_runs_on_one_thread():
+    # MLX streams belong to the thread that made them: the real model, loaded on the warm-up thread and called from a
+    # request thread, failed every transcription with "There is no Stream(cpu, 1) in current thread".
+    import threading
+    from studio.voice.stt import Parakeet
+    stt, seen = Parakeet(), set()
+
+    def fake(pcm, rate):
+        seen.add(threading.get_ident())
+        return "ok"
+    stt._transcribe = fake
+    workers = [threading.Thread(target=stt.transcribe, args=(np.zeros(1600, dtype=np.float32), 16000)) for _ in range(4)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    stt.warm()
+    assert len(seen) == 1 and threading.get_ident() not in seen, seen
+
+
+@check
 def a_silent_microphone_is_restarted():
     made = []
 
