@@ -448,7 +448,17 @@ def chat_voice_mode_never_reaches_the_engine():
     src = (REPO / "studio/api/chat.py").read_text()
     assert src.index("harness.apply_voice_mode(body)") < src.index("build_messages(body.get(\"messages\""), \
         "voice fields are removed before the request is built"
-    assert 'body["messages"].append({"role": "system", "content": voice_note})' in src
+    # Qwen's chat template (and others) reject a system message anywhere but first: the note joins the leading one.
+    assert 'harness.with_voice_note(body["messages"], voice_note)' in src
+    assert '{"role": "system", "content": voice_note}' not in src
+    chat = [{"role": "system", "content": "You are helpful."}, {"role": "user", "content": "Hi"}]
+    out = harness.with_voice_note(chat, note)
+    assert [m["role"] for m in out] == ["system", "user"] and out[0]["content"].startswith("You are helpful.")
+    assert note in out[0]["content"] and chat[0]["content"] == "You are helpful.", "merged, and the input is not mutated"
+    parts = harness.with_voice_note([{"role": "system", "content": [{"type": "text", "text": "a"}]}, chat[1]], note)
+    assert [m["role"] for m in parts] == ["system", "user"] and parts[0]["content"][-1]["text"] == note
+    bare = harness.with_voice_note([chat[1]], note)
+    assert [m["role"] for m in bare] == ["system", "user"] and bare[0]["content"] == note
 
 
 if __name__ == "__main__":
