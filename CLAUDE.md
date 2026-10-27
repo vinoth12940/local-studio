@@ -452,6 +452,14 @@ Run all checks before reporting any task complete, and include the verification 
 - Agent Harness check: `TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py`
 - Document OCR check: `uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py build/DocumentReader`
 - Voice service: `uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt --with numpy python macos/check_voice.py`
+- Chat templates: `TMPDIR=/tmp uv run ... python macos/check_templates.py` (in the build): every request `/api/chat` sends (typed, spoken,
+  tool rounds, late system notes) rendered with each installed MLX model's own chat template. Late system notes are folded into
+  the leading one at the engine boundary (`harness.fold_system_messages`): Qwen rejects a system message anywhere else.
+- Voice end to end, before an install that touches voice: `TMPDIR=/tmp uv run ... python macos/check_voice_e2e.py` (not in the build:
+  it needs the model loaded in the app, used attach-only). Real Phonon speech -> Parakeet -> `/api/chat` -> the model -> speech, on
+  test ports 8095/7881 with a throwaway home; reports heard-right, answer, markdown, length, web use, memory and first-audio time
+  (JSON in `build/voice-e2e/`); exit 2 means no model was loaded. Fakes are not evidence for the voice path: every bug the user hit
+  was at a boundary a fake replaced.
 - Workflow stack: `macos/check_harness_resources.py`, `check_workflow_policy.py`, `check_workflow_runs.py`, `check_workflow_reviews.py`,
   `check_workflow_triggers.py`, `check_workflow_worktrees.py` and `check_evals.py`, each run as the App check above (`TMPDIR=/tmp`, pinned requirements)
 - Full app build: `./macos/build.sh`

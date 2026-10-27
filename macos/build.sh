@@ -30,6 +30,7 @@ $UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-ap
 $UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_workflow_worktrees.py"
 $UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_context_window.py"
 $UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" --with numpy python "$HERE/check_voice.py"
+$UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_templates.py"   # every request x every installed model's chat template
 
 echo "==> Compiling"
 xcrun swiftc -O -target arm64-apple-macos14.0 -framework Cocoa -framework WebKit \

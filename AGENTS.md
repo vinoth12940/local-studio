@@ -42,6 +42,8 @@ TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirement
 uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py build/DocumentReader
 uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt --with numpy python macos/check_voice.py
 node macos/check_voice_ui.mjs
+TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_templates.py   # every request x every installed chat template
+TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_voice_e2e.py   # real voice path, attach-only to the loaded model
 
 # Full build (runs all checks above + compiles Swift binaries + signs bundle):
 ./macos/build.sh

@@ -1096,9 +1096,27 @@ def _chat_tool_detail(name, args, result, meta=None):
     return ""
 
 
+def fold_system_messages(messages):
+    """The engine's copy of a conversation with every system message folded into one leading message, in order. Notes
+    added mid-loop (workflow policy, the verification gate, a resumed run) were sent as later system messages, which
+    chat templates such as Qwen's reject outright ("System message must be at the beginning")."""
+    def parts(c):
+        return [{"type": "text", "text": c}] if isinstance(c, str) else list(c or [])
+    systems = [m for m in messages if m.get("role") == "system"]
+    if not systems or (len(systems) == 1 and messages[0].get("role") == "system"):
+        return messages
+    rest = [m for m in messages if m.get("role") != "system"]
+    if all(isinstance(m.get("content"), str) for m in systems):
+        content = "\n\n".join(m["content"].strip() for m in systems if m["content"].strip())
+    else:
+        content = [p for m in systems for p in parts(m.get("content"))]
+    return [{"role": "system", "content": content}] + rest
+
+
 async def _chat_engine_turn(url, body, state):
     """One streamed model turn. Native calls are assembled without interpreting prose as actions."""
     state.update(calls={}, content="", reasoning="", first=None, n_out=0, timings=None, usage=None, finish=None)
+    body = {**body, "messages": fold_system_messages(body.get("messages") or [])}
     async with httpx.AsyncClient(timeout=None) as client:
         async with client.stream("POST", f"{url}/v1/chat/completions", json=body) as response:
             if response.status_code != 200:
