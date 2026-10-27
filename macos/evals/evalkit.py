@@ -266,7 +266,8 @@ class Scripted:
         import httpx
         from studio.services import engines
         from studio.services import models
-        self._saved = (httpx.AsyncClient, engines.engine_state, engines._engine_ready, models.model_installed)
+        self._saved = (httpx.AsyncClient, engines.engine_state, engines._engine_ready, models.model_installed,
+                       engines._start_engine, engines._stop_engine)
         outer, iterator = self, iter(self.turns)
 
         class Response:
@@ -294,15 +295,23 @@ class Scripted:
         httpx.AsyncClient = Client
         from studio.storage.settings import load_settings
         mode_model = load_settings()["chat_model"]
-        engines.engine_state = lambda: {"mode": "text", "model_id": mode_model}
+        # The fake engine must match what the chat route asks for in every field, the context window included: a mismatch
+        # sends ensure_engine down its restart path, which stops engines machine-wide (the running app's too).
+        engines.engine_state = lambda: {"mode": "text", "model_id": mode_model,
+                                        "context_window": models.effective_context(models.chat_model(mode_model))}
         engines._engine_ready = lambda mode: True
         models.model_installed = lambda entry: True
+
+        def no_engine(*args, **kwargs):
+            raise RuntimeError("a scripted eval run tried to start or stop a real engine")
+        engines._start_engine = engines._stop_engine = no_engine
         return self
 
     def __exit__(self, *exc):
         import httpx
         from studio.services import engines, models
-        httpx.AsyncClient, engines.engine_state, engines._engine_ready, models.model_installed = self._saved
+        (httpx.AsyncClient, engines.engine_state, engines._engine_ready, models.model_installed,
+         engines._start_engine, engines._stop_engine) = self._saved
 
 
 def _hardware():
