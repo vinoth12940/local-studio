@@ -243,6 +243,23 @@ every route and static file) rejects requests with a non-loopback `Host`, a fore
 `Sec-Fetch-Site: cross-site|same-site`; the service itself refuses any request that carries an
 `Origin` or is cross-site (`_local_request`).
 
+### Voice service
+
+`voice.py` (thin entrypoint) + `studio/voice/` is a fifth process on port 8084, behind the `voice.enabled` flag (off): the
+echo-cancelled microphone and speaker (`bridge.py`: one AVAudioEngine with Apple voice processing, PyObjC), Parakeet TDT
+0.6B v3 speech recognition (`stt.py`, parakeet-mlx) and Phonon 31M speech (`tts.py`, Gradium's `ptts`; PyPI `phonon` is
+an unrelated package). It mirrors the search service: `studio/services/voice.py` is its only launcher (`_start_voice`,
+relative names, `cwd=ROOT`), `stop.sh` and `_stop_voice` find it by `python voice.py --port 8084` (keep in sync; it is
+also in stop.sh's pid list), its pinned deps are `voice-requirements.txt`, installed by `setup.sh --voice` when the user
+turns Voice on (`data/voice-deps.ok`). The UI backend never imports `studio.voice`. Every route but `/health` needs the
+token in `STATE/data/voice.token` (0600), and the service refuses any request with an `Origin` or `Sec-Fetch-Site`
+(only the backend talks to it) or a non-loopback `Host`. The microphone stays closed until `/mic/open`; speech for the
+conversation plays through the same engine (`/play`) so it is cancelled. Backend routes: `/api/voice/status|enable|
+disable|voices|say|transcribe` (404 while the flag is off; disable always works). The app's Info.plist carries
+`NSMicrophoneUsageDescription` and codesign adds `macos/LocalStudio.entitlements` (audio-input only). For development
+set `LOCAL_STUDIO_VOICE_PORT` (for example 8094). Checks: `macos/check_voice.py` (offline, fake models and microphone).
+Plan and measurements: [docs/voice-assistant-design.md](docs/voice-assistant-design.md).
+
 ### Chat Agent Harness
 
 `POST /api/chat` runs a bounded native tool-calling loop for local models: `CHAT_TOOLS` (24 native tools plus dynamic custom MCP tools `mcp__<server_id>__<tool>`, schemas defined inline in `studio/services/harness.py`; the loop's route is `studio/api/chat.py`), up to `CHAT_TOOL_ROUNDS = 12` rounds per turn.
@@ -420,6 +437,7 @@ Run all checks before reporting any task complete, and include the verification 
 - App check: `uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_app.py`
 - Agent Harness check: `TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py`
 - Document OCR check: `uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py build/DocumentReader`
+- Voice service: `uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt --with numpy python macos/check_voice.py`
 - Workflow stack: `macos/check_harness_resources.py`, `check_workflow_policy.py`, `check_workflow_runs.py`, `check_workflow_reviews.py`,
   `check_workflow_triggers.py`, `check_workflow_worktrees.py` and `check_evals.py`, each run as the App check above (`TMPDIR=/tmp`, pinned requirements)
 - Full app build: `./macos/build.sh`

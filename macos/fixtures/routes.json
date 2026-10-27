@@ -943,5 +943,47 @@
   ],
   "path": "/api/workflow/runs/{run_id}/cancel",
   "name": "cancel_run"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/voice/status",
+  "name": "voice_status"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/enable",
+  "name": "voice_enable"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/disable",
+  "name": "voice_disable"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/voice/voices",
+  "name": "voice_voices"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/say",
+  "name": "voice_say"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/transcribe",
+  "name": "voice_transcribe"
  }
 ]

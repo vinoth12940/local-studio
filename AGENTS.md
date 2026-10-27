@@ -17,6 +17,7 @@ This file provides repository instructions and architectural guidance for coding
 - `index.html`: the page's markup and CSS, loading `frontend/main.mjs` as a module.
 - `frontend/`: the UI's vanilla JS ES modules by concern (`core/`, `ui/`, `chat/`, `code/`, `images/`, `library/`, `settings/`, `search/`, `agent/`, boot in `main.mjs`). Modules import directly from modules that run before them and through `frontend/modules.mjs` for later ones (keeps the start-up order); names several modules assign live in `createStore` stores (`listState.current`, ...); names inline handlers call are set on `window` in `frontend/globals.mjs`. See CLAUDE.md, UI modules.
 - `search.py` + `studio/search/` + `search-requirements.txt`: On-device semantic & lexical file search service (EmbeddingGemma 2 on MLX, port 8083); thin CLI/re-exports, same launch pattern and cwd.
+- `voice.py` + `studio/voice/` + `voice-requirements.txt`: Voice service (port 8084, flag `voice.enabled`, off): echo-cancelled mic/speaker via AVAudioEngine voice processing, Parakeet STT, Phonon 31M TTS (`ptts`, never PyPI `phonon`). Same launch pattern as search (`studio/services/voice.py`, relative names, `cwd=ROOT`, stop.sh patterns `python voice.py --port 8084`); token in `data/voice.token`; refuses any Origin; backend never imports `studio.voice`. See CLAUDE.md, Voice service.
 - `catalog.json`: Curated MLX, GGUF, and mflux models.
 - `setup.sh` / `install.sh` / `start.sh` / `stop.sh` / `uninstall.sh`: zsh lifecycle scripts.
 - `macos/`:
@@ -39,6 +40,7 @@ uv run -q --no-project --python 3.12 --with numpy python macos/check_search.py
 uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_app.py
 TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_agent.py [check_name ...]
 uv run -q --no-project --python 3.12 --with pypdf python macos/check_document.py build/DocumentReader
+uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt --with numpy python macos/check_voice.py
 
 # Full build (runs all checks above + compiles Swift binaries + signs bundle):
 ./macos/build.sh

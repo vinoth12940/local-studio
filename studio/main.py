@@ -18,6 +18,7 @@ from studio.api import memory as api_memory
 from studio.api import models as api_models
 from studio.api import processes as api_processes
 from studio.api import search as api_search
+from studio.api import voice as api_voice
 from studio.api import storage as api_storage
 from studio.api import system as api_system
 from studio.api import terminal as api_terminal
@@ -37,7 +38,7 @@ from studio.security.headers import SecurityHeaders, internal_error
 from studio.security.local_only import LocalOnly
 from studio.security.api_token import ApiToken
 
-# Every UI backend module, in dependency order; the standalone studio.search service has its own entrypoint.
+# Every UI backend module, in dependency order; the standalone studio.search and studio.voice services have their own entrypoints.
 MODULES = (
     "studio.config",
     "studio.security.redact",
@@ -77,6 +78,8 @@ MODULES = (
     "studio.api.images",
     "studio.services.search",
     "studio.api.search",
+    "studio.services.voice",
+    "studio.api.voice",
     "studio.services.terminal",
     "studio.api.terminal",
     "studio.security.agent_gate",
@@ -131,7 +134,8 @@ app.add_middleware(SecurityHeaders)                          # outermost: nosnif
 for _router in (api_system.router, api_models.router, api_engines.router, api_chat.router, api_memory.router, api_undo.router,
                 api_processes.router, api_terminal.router, api_mcp.router, api_workspace.router, api_attachments.router,
                 api_chats.router, api_images.router, api_search.router, api_agent.router, api_updates.router,
-                api_storage.router, api_workflow.router, api_reviews.router, api_triggers.router, api_worktrees.router, api_workflow_runs.router):
+                api_storage.router, api_workflow.router, api_reviews.router, api_triggers.router, api_worktrees.router, api_workflow_runs.router,
+                api_voice.router):
     app.include_router(_router)
 
 

@@ -66,6 +66,13 @@ SEARCH_DIR = DATA / "search"                                 # its index
 SEARCH_REQS = ROOT / "search-requirements.txt"
 SEARCH_DEPS_OK = DATA / "search-deps.ok"                     # written by setup.sh --search
 SEARCH_DEFAULTS = {"enabled": False, "folders": [], "removed": [], "paused": False, "on_battery": False}
+# Voice: voice.py is a separate process like search.py (echo-cancelled mic and speaker, Parakeet, Phonon). Off unless the
+# voice.enabled flag is on and the user turns it on. LOCAL_STUDIO_VOICE_PORT gives a development server its own service.
+VOICE_PORT = int(os.environ.get("LOCAL_STUDIO_VOICE_PORT", 8084))
+VOICE_URL = f"http://127.0.0.1:{VOICE_PORT}"
+VOICE_REQS = ROOT / "voice-requirements.txt"
+VOICE_DEPS_OK = DATA / "voice-deps.ok"                       # written by setup.sh --voice
+VOICE_TOKEN = DATA / "voice.token"                           # per-install secret the service requires (0600)
 # Local Agent: drives the Mac through CuaDriver (MCP over a unix socket in standard mode, no manifest).
 AGENT_DIR = (DATA / "agent").absolute()                      # LaunchServices starts CuaDriver elsewhere: never relative
 AGENT_RUNS = AGENT_DIR / "runs"
