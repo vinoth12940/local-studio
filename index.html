@@ -245,6 +245,7 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 #v-voice { background: #0c0f12; color: #e9eef2; }
 .vv { flex: 1; min-height: 0; display: flex; --vc: #4cc9f0; }
 .vv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 22px 32px 28px; overflow: auto; }
+.vv-main > * { flex-shrink: 0; }
 .vv-top { align-self: stretch; display: flex; gap: 10px; align-items: baseline; }
 .vv-name { font-size: 15px; font-weight: 500; }
 .vv-st { font-size: 14px; color: #8b97a3; }
@@ -258,13 +259,15 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .vv[data-state="thinking"] .vv-r2, .vv[data-state="starting"] .vv-r2 { animation-duration: 2s; }
 .vv[data-state="off"] .vv-r1, .vv[data-state="off"] .vv-r2 { animation-play-state: paused; opacity: .18; }
 .vv[data-state="muted"] .vv-core span { background: #3a4651; }
-.vv-ask { margin: 34px 0 0; font-size: 15px; color: #8b97a3; text-align: center; min-height: 22px; max-width: 620px; }
-.vv-say { margin: 8px 0 0; font-size: 24px; line-height: 1.4; text-align: center; max-width: 640px; min-height: 68px; color: #ffffff; }
+.vv-ask, .vv-say { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+.vv-ask { margin: 34px 0 0; font-size: 15px; color: #8b97a3; text-align: center; min-height: 22px; max-width: 620px; -webkit-line-clamp: 2; }
+.vv-say { margin: 8px 0 0; font-size: 24px; line-height: 1.4; text-align: center; max-width: 640px; min-height: 68px; color: #ffffff; -webkit-line-clamp: 3; }
 .vv-note { margin: 10px 0 0; font-size: 13px; color: #6c7884; min-height: 18px; text-align: center; }
 .vv-ctl { margin-top: auto; padding-top: 28px; display: flex; gap: 28px; }
 .vv-c { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 12px; color: #8b97a3; }
 .vv-btn { width: 56px; height: 56px; border-radius: 50%; border: 1px solid #26323c; background: transparent; color: #e9eef2; display: grid; place-items: center; cursor: pointer; }
 .vv-btn:hover { background: #151c22; }
+.vv-btn.go:hover { background: var(--vc); filter: brightness(1.08); }
 .vv-btn:focus-visible { outline: 2px solid var(--vc); outline-offset: 3px; }
 .vv-btn svg { width: 21px; height: 21px; }
 .vv-btn.on { background: #e9eef2; color: #0c0f12; }
