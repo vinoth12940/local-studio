@@ -235,8 +235,15 @@ Suggested pull requests, each behind its flag and passing `macos/build.sh`:
    Open: while the assistant speaks, voice processing reads −100 dBFS at the mic (quieter than the room), so whether a
    real voice talking over it still gets through must be tested with a person before the conversation loop (PR 3)
    relies on it. Backend routes for the microphone and the event stream come with PR 3.
-3. **Conversation loop**: VAD, Smart Turn, barge-in, backchannels in the service; `/api/voice/*`; harness voice mode.
-4. **UI**: mic button, captions, Settings → Voice with characters.
+3. **Conversation loop** and 4. **UI**, **built together on branch `voice/conversation`.** Deviation from the plan: the
+   loop runs in the UI module `frontend/voice/` (the POC's tested logic, ported) instead of the service, so spoken turns
+   reuse `send()`/`generate()` and are ordinary chat turns; the service provides the echo-cancelled audio, Parakeet and
+   Phonon. Energy-based turn detection and the POC's rules stand in for Silero VAD and Smart Turn (still to add).
+   Verified on an isolated dev server with a scripted `/api/chat`: mic ready in 3.5 s, 78 echo-cancelled chunks in
+   2.5 s, small talk first audio 0.69 s, a tool turn says "Let me check." in 0.2 s and skips the model's narration,
+   typed turns carry no voice fields, End closes the mic. Two bugs found and fixed there: AVAudioEngine stopped itself
+   right after start (voice processing reconfigures the hardware), so nothing was heard; and a model's narration before
+   a tool call was spoken. Not verified: interrupting with a real voice, a real model reply, the signed app's mic prompt.
 5. **Real-voice corpus eval and tuning**; hands-free and wake word after that.
 
 ## 7. Decisions needed from you

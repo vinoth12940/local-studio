@@ -260,6 +260,17 @@ disable|voices|say|transcribe` (404 while the flag is off; disable always works)
 set `LOCAL_STUDIO_VOICE_PORT` (for example 8094). Checks: `macos/check_voice.py` (offline, fake models and microphone).
 Plan and measurements: [docs/voice-assistant-design.md](docs/voice-assistant-design.md).
 
+The conversation loop is `frontend/voice/` (`voice.mjs`; `turn.mjs` is pure: end-of-turn, backchannels, sentence cutting,
+scored by `macos/check_voice_ui.mjs`; `characters.mjs`: 13 Phonon voices + styles). The mic button (`#micBtn`, shown only
+when the flag is on) opens the service's mic through `/api/voice/mic/open|close`, `/api/voice/events` (relayed SSE),
+`/api/voice/speak|stop|pause|resume`. A spoken turn is a normal message: `send(text)` in `chat/live.mjs`, whose `generate()`
+adds `voiceRequest()` (`voice: true`, `voice_style`) and feeds every event to `voiceOnEvent()`/`voiceOnEnd()`.
+`harness.apply_voice_mode()` strips those fields before the engine sees them, turns thinking off and appends `VOICE_NOTE`.
+Two rules the loop depends on: AVAudioEngine stops itself right after start when voice processing reconfigures the
+hardware, so `VoiceIO` restarts it until audio flows and the service's watchdog restarts a stopped engine in place; and a
+round's first sentence is held until it is clearly an answer, because text before a tool call is narration, not speech.
+Test from the console with `LS.voiceHeard(text)` / `LS.voiceState()` and a stubbed `/api/chat` (never a real chat).
+
 ### Chat Agent Harness
 
 `POST /api/chat` runs a bounded native tool-calling loop for local models: `CHAT_TOOLS` (24 native tools plus dynamic custom MCP tools `mcp__<server_id>__<tool>`, schemas defined inline in `studio/services/harness.py`; the loop's route is `studio/api/chat.py`), up to `CHAT_TOOL_ROUNDS = 12` rounds per turn.

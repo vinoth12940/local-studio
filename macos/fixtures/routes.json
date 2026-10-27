@@ -985,5 +985,54 @@
   ],
   "path": "/api/voice/transcribe",
   "name": "voice_transcribe"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/mic/open",
+  "name": "voice_mic_open"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/mic/close",
+  "name": "voice_mic_close"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/speak",
+  "name": "voice_speak"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/stop",
+  "name": "voice_stop"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/pause",
+  "name": "voice_pause"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/voice/resume",
+  "name": "voice_resume"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/voice/events",
+  "name": "voice_events"
  }
 ]

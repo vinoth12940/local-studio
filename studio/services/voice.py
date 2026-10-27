@@ -133,3 +133,17 @@ def voice_request(method, path, timeout=60, **kw):
         detail = r.json().get("error") if r.headers.get("content-type", "").startswith("application/json") else None
         raise HTTPException(r.status_code, detail or "Voice error")
     return r
+
+
+async def voice_event_stream(request):
+    """Relay voice.py's /events to the page until the page goes away (then the upstream stream is closed too)."""
+    headers = {"Authorization": "Bearer " + _voice_token()}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10, read=30)) as client:
+            async with client.stream("GET", config.VOICE_URL + "/events", headers=headers) as r:
+                async for chunk in r.aiter_raw():
+                    if await request.is_disconnected():
+                        break
+                    yield chunk
+    except httpx.HTTPError:
+        yield b'data: {"t": "error", "error": "voice service stopped"}\n\n'

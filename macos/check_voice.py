@@ -178,16 +178,21 @@ def service_routes_speak_listen_and_play():
         pcm = np.zeros(2400, np.float32).astype("<f4").tobytes()
         assert _req(port, "POST", "/play?id=1&rate=24000", pcm, {"content-type": "application/octet-stream"})[0] == 409, \
             "speech must play through the echo-cancelling engine, which opens with the microphone"
+        assert _req(port, "POST", "/speak", json.dumps({"text": "Hi.", "voice": "Edwin"}), {"content-type": "application/json"})[0] == 409
         assert _req(port, "GET", "/status")[2] and json.loads(_req(port, "GET", "/status")[2])["mic_open"] is False
         assert _req(port, "POST", "/mic/open")[0] == 200 and len(FakeIO.instances) == 1
         assert _req(port, "POST", "/mic/open")[0] == 200 and len(FakeIO.instances) == 1, "opening twice reuses the engine"
         assert _req(port, "POST", "/play?id=5&rate=24000", pcm, {"content-type": "application/octet-stream"})[0] == 200
         assert _req(port, "POST", "/play?id=6&rate=24000", b"abc", {"content-type": "application/octet-stream"})[0] == 400
         assert _req(port, "POST", "/play?id=7&rate=1", pcm, {"content-type": "application/octet-stream"})[0] == 400
+        s, _, body = _req(port, "POST", "/speak", json.dumps({"text": "Hi.", "voice": "Edwin", "id": 8}), {"content-type": "application/json"})
+        assert s == 200 and json.loads(body) == {"ok": True, "id": 8, "seconds": 0.1}, body
+        assert _req(port, "POST", "/speak", json.dumps({"text": "Hi.", "voice": "nobody", "id": 9}), {"content-type": "application/json"})[0] == 400
         for p in ("/pause", "/resume", "/stop"):
             assert _req(port, "POST", p)[0] == 200
         io = FakeIO.instances[0]
-        assert [c[0] for c in io.calls] == ["play", "pause", "resume", "stop"]
+        assert [c[0] for c in io.calls] == ["play", "play", "pause", "resume", "stop"], io.calls
+        assert io.calls[1][3] == 8, "/speak plays under the id the page waits for"
         # the event stream carries microphone chunks and playback completions
         c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         c.request("GET", "/events", headers={"Host": f"127.0.0.1:{port}", "Authorization": "Bearer " + TOKEN})
@@ -210,6 +215,51 @@ def service_routes_speak_listen_and_play():
         assert json.loads(_req(port, "GET", "/status")[2])["mic_open"] is False
     finally:
         srv.shutdown(); srv.server_close()
+
+
+@check
+def a_silent_microphone_is_restarted():
+    made = []
+
+    class StalledIO(FakeIO):
+        def __init__(self, fanout):
+            super().__init__(fanout)
+            self.last_tap = time.monotonic() - (60 if not made else 0)   # the first engine never delivers audio
+            made.append(self)
+    service = Service(TOKEN, tts=FakeTTS(), stt=FakeSTT(), io_factory=StalledIO)
+    q = service.fanout.subscribe()
+    service.open_mic()
+    for _ in range(60):
+        if service.restarts:
+            break
+        time.sleep(0.1)
+    assert service.restarts == 1 and len(made) == 2 and service.io is made[1], "a stalled engine must be replaced"
+    assert made[0].calls[-1] == ("close",), "the stalled engine is closed first"
+    assert {"t": "mic_restart", "restarts": 1} in [q.get_nowait() for _ in range(q.qsize())], "the page is told"
+    service.close_mic()
+
+
+@check
+def a_stopped_engine_is_restarted_in_place():
+    class StoppingIO(FakeIO):
+        def __init__(self, fanout):
+            super().__init__(fanout)
+            self.is_running, self.last_tap, self.kicks = False, time.monotonic(), 0   # stops itself right after start
+        def running(self):
+            return self.is_running
+        def kick(self):
+            self.kicks += 1; self.is_running = True; self.last_tap = time.monotonic()
+            return True
+    FakeIO.instances.clear()
+    service = Service(TOKEN, tts=FakeTTS(), stt=FakeSTT(), io_factory=StoppingIO)
+    io = service.open_mic()
+    for _ in range(40):
+        if io.kicks:
+            break
+        time.sleep(0.1)
+    assert io.kicks == 1 and service.io is io and len(FakeIO.instances) == 1, "restart the same engine; do not rebuild it"
+    assert service.restarts == 1
+    service.close_mic()
 
 
 # ---------------------------------------------------------------- the app side
@@ -296,11 +346,19 @@ def voice_routes_are_off_by_default():
     try:
         st = c.get("/api/voice/status").json()
         assert st["available"] is False and st["running"] is False
-        for method, path in (("post", "/api/voice/enable"), ("get", "/api/voice/voices"), ("post", "/api/voice/say")):
+        for method, path in (("post", "/api/voice/enable"), ("get", "/api/voice/voices"), ("post", "/api/voice/say"),
+                             ("post", "/api/voice/mic/open"), ("post", "/api/voice/speak"), ("post", "/api/voice/stop"),
+                             ("post", "/api/voice/pause"), ("post", "/api/voice/resume"), ("get", "/api/voice/events")):
             r = getattr(c, method)(path, json={"text": "hi", "voice": "Edwin"}) if method == "post" else c.get(path)
             assert r.status_code == 404, (path, r.status_code)
         assert c.post("/api/voice/transcribe", content=b"x", headers={"content-type": "audio/wav"}).status_code == 404
         assert c.post("/api/voice/disable").status_code == 200, "the user can always stop voice"
+        real_running = services_voice._voice_running
+        services_voice._voice_running = lambda: False
+        try:
+            assert c.post("/api/voice/mic/close").json() == {"ok": True}, "the microphone can always be released"
+        finally:
+            services_voice._voice_running = real_running
     finally:
         services_voice._stop_voice = real_stop
 
@@ -338,10 +396,38 @@ def voice_routes_proxy_with_the_flag_on():
         assert c.post("/api/voice/transcribe", content=b"x", headers={"content-type": "text/plain"}).status_code == 415
         wav = audio.to_wav(np.zeros(1600, np.float32), 16000)
         assert c.post("/api/voice/transcribe", content=wav, headers={"content-type": "audio/wav"}).json() == {"text": "hello there"}
+        assert c.post("/api/voice/speak", json={"text": "y" * 3000, "voice": "Edwin", "id": "12"}).status_code == 200
+        method, path, kw = calls[-1]
+        assert path == "/speak" and len(kw["json"]["text"]) == 2000 and kw["json"]["id"] == 12
+        for p in ("/api/voice/mic/open", "/api/voice/stop", "/api/voice/pause", "/api/voice/resume"):
+            assert c.post(p).status_code == 200 and calls[-1][1] == p.replace("/api/voice", "")
+        real_running = services_voice._voice_running
+        services_voice._voice_running = lambda: False
+        try:
+            assert c.get("/api/voice/events").status_code == 503, "no event stream while the service is down"
+        finally:
+            services_voice._voice_running = real_running
         assert c.post("/api/voice/say", json={"text": "hi"}, headers={"Origin": "https://evil.example"}).status_code == 403, \
             "LocalOnly guards the voice routes like every other route"
     finally:
         services_voice.voice_available, services_voice.voice_request = real
+
+
+@check
+def chat_voice_mode_never_reaches_the_engine():
+    from studio.services import harness
+    body = {"messages": [], "voice": True, "voice_style": "  a calm   butler\n" + "x" * 900, "enable_thinking": True}
+    note = harness.apply_voice_mode(body)
+    assert "voice" not in body and "voice_style" not in body, "the engine must never see the voice fields"
+    assert body["enable_thinking"] is False, "spoken turns do not think aloud"
+    assert note.startswith(harness.VOICE_NOTE) and "a calm butler" in note and len(note) < len(harness.VOICE_NOTE) + 700
+    assert "never refuse" in note, "a character never limits what it helps with"
+    typed = {"messages": [], "enable_thinking": True}
+    assert harness.apply_voice_mode(typed) is None and typed == {"messages": [], "enable_thinking": True}
+    src = (REPO / "studio/api/chat.py").read_text()
+    assert src.index("harness.apply_voice_mode(body)") < src.index("build_messages(body.get(\"messages\""), \
+        "voice fields are removed before the request is built"
+    assert 'body["messages"].append({"role": "system", "content": voice_note})' in src
 
 
 if __name__ == "__main__":

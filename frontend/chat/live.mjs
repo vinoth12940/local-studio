@@ -13,11 +13,11 @@ import { attachmentsState, renderPending } from "./attachments.mjs";
 import {
   autosize, closeAc, compactCurrentChat, effort, permMode, thinking, updateCtx, updateSend
 } from "./composer.mjs";
-import { activeCodeWs, AG_RID, chAttachAction, CODE_MUTATING, loadCodeView, onAgentCodeMutation, refreshWorkflow, searchState, sr, takeWorkflowResume, useFiles, workflowRequest } from "../modules.mjs";
+import { activeCodeWs, AG_RID, chAttachAction, CODE_MUTATING, loadCodeView, onAgentCodeMutation, refreshWorkflow, searchState, sr, takeWorkflowResume, useFiles, voiceOnEnd, voiceOnEvent, voiceRequest, workflowRequest } from "../modules.mjs";
 
-async function send() {
-  const text = $("input").value.trim();
-  const atts = attachmentsState.pending.filter((p) => p.meta).map((p) => p.meta);
+async function send(spoken) {                            // spoken: text from voice/voice.mjs; the composer's draft stays as typed
+  const text = (spoken ?? $("input").value).trim();
+  const atts = spoken === undefined ? attachmentsState.pending.filter((p) => p.meta).map((p) => p.meta) : [];
   if ((text || atts.length) && listState.streaming && liveGen && liveGen.chat !== listState.current) return toast(`Still answering in “${liveGen.chat.title}”. Wait for it, or open it and stop it.`);
   if ((!text && !atts.length) || listState.streaming || chLive() || attachmentsState.pending.some((p) => p.busy)) return;
   if (view === "code" && !activeCodeWs()) await loadCodeView();
@@ -29,12 +29,12 @@ async function send() {
     updateWorkspaceUI();
   }
   closeAc();
-  if (text === "/compact" || text.startsWith("/compact ")) {
+  if (spoken === undefined && (text === "/compact" || text.startsWith("/compact "))) {
     $("input").value = ""; autosize();
     await compactCurrentChat();
     return;
   }
-  $("input").value = ""; attachmentsState.pending = []; renderPending(); autosize();
+  if (spoken === undefined) { $("input").value = ""; attachmentsState.pending = []; renderPending(); autosize(); }
   const title = (text || atts.map((a) => a.name).join(", ")).replace(/\s+/g, " ").slice(0, 48);
   if (!listState.current) listState.current = { id: newId(), title, messages: [] };
   else if (!listState.current.messages.length) listState.current.title = title;                            // a placeholder ("New coding task", "New chat") until the first message
@@ -113,6 +113,7 @@ async function generate(resumeBot = null) {
   if (!chat.workspace && useFiles && sr?.running && !sr.error && !searchState.noFilesOnce) body.use_files = true;
   if (listState.current?.workspace) body.workspace = listState.current.workspace;
   if (listState.current?.workspace && permMode === "accept_edits") body.permission_mode = "accept_edits";
+  Object.assign(body, voiceRequest());                   // a spoken turn: short plain sentences, the character's style
   searchState.noFilesOnce = false;
   listState.streaming = new AbortController(); updateSend(); renderHistory();
 
@@ -216,6 +217,7 @@ async function generate(resumeBot = null) {
           if (!line.startsWith("data:")) continue;
           const data = line.slice(5).trim(); if (data === "[DONE]") continue;
           let j; try { j = JSON.parse(data); } catch { continue; }
+          voiceOnEvent(j);                                   // speaks the reply as it streams (no-op for typed turns)
           if (j.error) { bot.error = typeof j.error === "string" ? j.error : (j.error.message || JSON.stringify(j.error)); continue; }
           if (j.x_engine) { bot.switching = j.x_engine.status === "switching" ? j.x_engine.mode : null; bot.switchModel = j.x_engine.model; if (bot.switching) poll(); repaint(); continue; }
           if (j.x_sources) { bot.sources = [...(bot.sources || []), ...j.x_sources]; continue; }
@@ -330,6 +332,7 @@ async function generate(resumeBot = null) {
       }
     }
   }
+  voiceOnEnd(bot);
   listState.streaming = null; liveGen = null; updateSend(); renderHistory();
   if (actionRun) return chAttachAction(chat, bot, el, actionRun);
   // Swap in the finished turn (actions + stats) without touching the rest of the thread.

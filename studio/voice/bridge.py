@@ -5,6 +5,7 @@ microphone hears (measured on built-in speakers: about 34 dB, below the room noi
 audio_mac.py (Apache-2.0). AVFoundation (PyObjC) is imported only when the microphone is opened.
 """
 import threading
+import time
 
 import numpy as np
 
@@ -32,12 +33,14 @@ class VoiceIO:
         self.engine.attachNode_(self.player)
         self.engine.connect_to_format_(self.player, mixer, self.out_fmt)
         self.lock, self.generation = threading.Lock(), 0
+        self.last_tap, self.taps = time.monotonic(), 0   # the service restarts an engine whose tap goes quiet (silent stall)
         fmt = self.input.outputFormatForBus_(0)      # hardware rate; often several channels, the first is used
         self.in_rate = int(fmt.sampleRate())
         chunker = Chunker(config.CHUNK)
 
         def tap(buf, when):                          # audio thread: keep it short
             n = buf.frameLength()
+            self.last_tap = time.monotonic(); self.taps += 1
             if n:
                 mic = np.frombuffer(buf.floatChannelData()[0].as_buffer(n), dtype=np.float32).copy()
                 for c in chunker(resample(mic, self.in_rate, config.MIC_RATE)):
@@ -50,6 +53,29 @@ class VoiceIO:
             self.input.removeTapOnBus_(0)
             raise RuntimeError(f"audio engine did not start: {err}")
         self.player.play()
+        # Switching voice processing on reconfigures the audio hardware, and AVAudioEngine stops itself on a configuration
+        # change, often right after start (measured: start OK, not running 0.2 s later, no audio). Start it again until
+        # the microphone delivers audio.
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline and self.taps < 3:
+            time.sleep(0.1)
+            self.kick()
+        if self.taps < 3:
+            self.close()
+            raise RuntimeError("the microphone did not deliver audio (is another app using it?)")
+
+    def running(self):
+        return bool(self.engine.isRunning())
+
+    def kick(self):
+        """Start the engine again if it stopped (see above); True when it had stopped and was restarted."""
+        if self.engine.isRunning():
+            return False
+        self.engine.prepare()
+        ok, _ = self.engine.startAndReturnError_(None)
+        if ok:
+            self.player.play()
+        return bool(ok)
 
     def play(self, pcm, rate, item_id):
         pcm = resample(pcm, rate, config.OUT_RATE)
