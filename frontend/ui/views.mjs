@@ -3,7 +3,7 @@ import { $, DEFAULT_MAX_TOKENS, store, toast } from "../core/util.mjs";
 import { setCollapsed } from "./theme.mjs";
 import {
   agFetchStatus, agOpen, codeTermS, codeTermStart, codeTermTheme, loadCodeView, loadGallery, loadLibrary, loadManage,
-  loadSearch, renderHistory, renderThread, scrollBottom, updateHeader
+  loadSearch, renderHistory, renderThread, scrollBottom, updateHeader, voiceViewShown
 } from "../modules.mjs";
 
 // ---------------- views
@@ -42,6 +42,7 @@ function showView(v) {
   if (v === "manage") loadManage();
   if (v === "search") { loadSearch(); setTimeout(() => $("srQuery").focus(), 0); }
   if (v === "agent") agOpen();
+  voiceViewShown(v);
   if (v === "chat") { setTimeout(() => $("input").focus(), 0); agFetchStatus(); }
   renderHistory();
   if (innerWidth < 820) setCollapsed(true);

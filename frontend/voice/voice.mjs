@@ -9,12 +9,13 @@
 import { $, store, toast } from "../core/util.mjs";
 import { listState } from "../chat/list.mjs";
 import { send } from "../chat/live.mjs";
+import { showView, view } from "../ui/views.mjs";
 import { CHARACTERS, DEFAULT_CHARACTER } from "./characters.mjs";
 import { endpointWait, isBackchannel, looksLikeOwnVoice, takeSentences } from "./turn.mjs";
 
 const MIC_RATE = 16000;
 const v = {
-  on: false, state: "off", rms: 0, level: 0, es: null, sampler: 0,
+  on: false, muted: false, state: "off", rms: 0, level: 0, es: null, sampler: 0,
   acceptInput: false, turnPending: false, gen: 0, speakId: 0, pending: new Map(), chain: Promise.resolve(),
   playedMs: 0, lastSpeechEnd: 0, respondAt: 0, firstAudioAt: 0, askedAt: 0,
 };
@@ -29,25 +30,67 @@ const character = () => CHARACTERS.find((c) => c.id === store.get("voiceCharacte
 const cleanSpeech = (s) => String(s || "").replace(/[*#`_~>|]/g, "").replace(/\[(.*?)\]\((.*?)\)/g, "$1").replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
 const post = (url, body) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
 
-// ---------------------------------------------------------------- the voice bar
+// ---------------------------------------------------------------- the Voice view and the small bar in chat
+// The Voice view (#v-voice) is the main surface; while voice is on and another view is open, the small bar above the
+// composer stands in for it.
 function setState(s, note) {
   v.state = s;
-  const bar = $("voiceBar"); if (!bar) return;
-  bar.dataset.state = s;
-  const label = { off: "Voice", starting: "Starting voice…", idle: "Listening", listening: "Listening", thinking: "Thinking…", speaking: character().name }[s] || s;
-  $("vState").textContent = note || label;
+  const shown = v.muted && s !== "off" && s !== "starting" ? "muted" : s;
+  const label = { off: "Voice is off", starting: "Starting…", idle: "Listening", listening: "Listening", thinking: "Thinking", speaking: "Speaking", muted: "Muted" }[shown] || s;
+  const bar = $("voiceBar");
+  if (bar) { bar.dataset.state = s; $("vState").textContent = note || (shown === "speaking" ? character().name : label); }
+  if ($("vv")) {
+    $("vv").dataset.state = shown;
+    $("vvState").textContent = note || label;
+    const on = s !== "off";
+    $("vvGo").className = "vv-btn " + (on ? "end" : "go");
+    $("vvGo").setAttribute("aria-label", on ? "End conversation" : "Start talking");
+    $("vvGoIcon").setAttribute("href", on ? "#i-x" : "#i-mic");
+    $("vvGoTxt").textContent = on ? "End" : "Start";
+  }
+  syncBar();
 }
-function caption(text) { const el = $("vCap"); if (el) el.textContent = text || ""; }
+function caption(text) { const el = $("vCap"); if (el) el.textContent = text || ""; const n = $("vvNote"); if (n) n.textContent = text || ""; }
+function asked(text) { const el = $("vvAsk"); if (el) el.textContent = text || ""; }
+function saying(text) { const el = $("vvSay"); if (el) el.textContent = text || ""; }
+function syncBar() { const bar = $("voiceBar"); if (bar) bar.hidden = !v.on || view === "voice"; }
+// The display's bars: your level while listening, a speech-like movement while it speaks, a slow ripple while it thinks.
+const BAR_SHAPE = [0.35, 0.55, 0.75, 0.9, 1, 0.9, 0.75, 0.55, 0.35];
 function drawOrb() {
-  const orb = $("vOrb"); if (!orb) return;
-  const amp = v.state === "speaking" ? 0.35 + 0.25 * Math.random() : v.level;
-  orb.style.transform = `scale(${(1 + Math.min(1, amp) * 0.9).toFixed(3)})`;
+  const amp = v.muted ? 0 : v.state === "speaking" ? 0.45 + 0.45 * Math.random() : v.level;
+  const orb = $("vOrb"); if (orb) orb.style.transform = `scale(${(1 + Math.min(1, amp) * 0.9).toFixed(3)})`;
+  if (view !== "voice") return;
+  const t = performance.now() / 1000, thinking = v.state === "thinking";
+  document.querySelectorAll("#vvBars span").forEach((el, i) => {
+    const a = thinking ? 0.18 + 0.12 * Math.sin(t * 5 + i * 0.7) : Math.max(0.08, Math.min(1, amp * BAR_SHAPE[i] * (0.7 + 0.6 * Math.random())));
+    el.style.transform = `scaleY(${a.toFixed(3)})`;
+  });
+}
+function restBars() { document.querySelectorAll("#vvBars span").forEach((el) => { el.style.transform = "scaleY(0.1)"; }); }
+
+// The transcript beside the display: what you said, the tools it used, and what it said aloud.
+const tr = { you: null, bot: null, count: 0 };
+function trAdd(kind, text, who) {
+  const log = $("vvLog"); if (!log) return null;
+  if (!tr.count++) { log.innerHTML = ""; $("vvTime").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+  const el = document.createElement(kind === "step" ? "p" : "div");
+  if (kind === "step") { el.className = "vv-step"; el.textContent = text; }
+  else { el.className = "vv-m " + kind; el.innerHTML = "<small></small><p></p>"; el.querySelector("small").textContent = who; el.querySelector("p").textContent = text; }
+  log.appendChild(el);
+  while (log.children.length > 80) log.firstChild.remove();
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+function trBot(text) {
+  if (!text) return;
+  if (!tr.bot) tr.bot = trAdd("bot", text, character().name);
+  else { tr.bot.querySelector("p").textContent = text; const log = $("vvLog"); log.scrollTop = log.scrollHeight; }
 }
 
 // ---------------------------------------------------------------- start and stop
 async function startVoice() {
   if (v.on) return;
-  v.on = true; $("voiceBar").hidden = false; setState("starting");
+  v.on = true; setState("starting"); saying(""); asked("");
   try {
     let st = await (await fetch("/api/voice/status")).json();
     if (!st.available) throw new Error("Voice is off. Turn on the voice.enabled flag in Settings first.");
@@ -70,7 +113,7 @@ async function startVoice() {
     v.es.onerror = () => { if (v.on) caption("Reconnecting to the microphone…"); };
     v.playedMs = 0; v.acceptInput = true;
     clearInterval(v.sampler); v.sampler = setInterval(sample, 30);
-    setState("listening"); caption("Say something. Talk over me any time.");
+    setState("listening"); caption("Say something. Talk over me any time."); saying("I'm listening.");
     $("micBtn")?.classList.add("on");
   } catch (e) {
     toast(String(e.message || e)); await stopVoice();
@@ -81,10 +124,11 @@ async function stopVoice() {
   v.on = false; v.acceptInput = false; v.gen++; clearInterval(v.sampler); clearInterval(turn.tick); clearTimeout(pend.timer);
   try { v.es?.close(); } catch {}
   v.es = null; v.pending.clear(); tent = null; turn.active = false; v.turnPending = false;
-  if (wasOn) { await post("/api/voice/stop").catch(() => {}); await post("/api/voice/mic/close").catch(() => {}); }
   $("micBtn")?.classList.remove("on");
-  if ($("voiceBar")) $("voiceBar").hidden = true;
-  setState("off");
+  v.muted = false; setMuteButton();
+  setState("off"); restBars(); caption("");
+  if ($("vvSay")?.textContent === "I'm listening.") saying("Press Start and just talk. You can talk over it any time.");
+  if (wasOn) { await post("/api/voice/stop").catch(() => {}); await post("/api/voice/mic/close").catch(() => {}); }
 }
 
 // ---------------------------------------------------------------- microphone events
@@ -105,7 +149,7 @@ function onEvent(ev) {
 // Every 30 ms: smooth the level, and decide about interruptions. With echo cancellation the assistant's own voice
 // sits below the room noise, so a low bar; the canceller adapts during the first seconds, so the bar starts high.
 function sample() {
-  v.level += (Math.min(1, v.rms * 6) - v.level) * 0.35;
+  v.level += ((v.muted ? 0 : Math.min(1, v.rms * 6)) - v.level) * 0.35;
   drawOrb();
   const now = performance.now(), speaking = v.state === "speaking", thinking = v.state === "thinking" && now - v.respondAt > 700;
   const adapting = v.playedMs < 4000;
@@ -138,7 +182,7 @@ function judgeTent(now) {
 // Capture what you say: ~1.2 s of audio before you start is kept, so words said while it decides are not lost.
 function onMicChunk(chunk) {
   const dur = chunk.length / MIC_RATE, voiced = v.level > 0.1, maxPre = Math.ceil(1.2 * MIC_RATE / chunk.length);
-  if (!v.acceptInput) { cap.on = false; cap.chunks = []; cap.pre.push(chunk); if (cap.pre.length > maxPre) cap.pre.shift(); return; }
+  if (!v.acceptInput || v.muted) { cap.on = false; cap.chunks = []; cap.pre.push(chunk); if (cap.pre.length > maxPre) cap.pre.shift(); return; }
   if (!cap.on) {
     cap.pre.push(chunk); if (cap.pre.length > maxPre) cap.pre.shift();
     if (voiced) { cap.on = true; cap.chunks = cap.pre.slice(); cap.voiced = 0; cap.silence = 0; setState("listening"); userResumed(); }
@@ -176,7 +220,7 @@ function submitUtterance(text) {
   clearTimeout(pend.timer);
   pend.text = (pend.text ? pend.text + " " : "") + text;
   const [wait] = endpointWait(pend.text);
-  caption("You: " + pend.text);
+  caption("You: " + pend.text); asked(pend.text);
   pend.timer = setTimeout(firePending, wait);
 }
 function userResumed() {                                 // you are still talking: hold the answer, give up after 2.5 s
@@ -189,11 +233,13 @@ async function firePending() {
   if (turn.question) {                                   // the assistant asked you something: this is the answer
     const q = turn.question; turn.question = null;
     post(`/api/chat/sessions/${q.session_id}/reply`, { id: q.id, answer: text }).catch(() => {});
+    trAdd("you", text, "You"); tr.bot = null;
     setState("thinking"); v.acceptInput = false; v.respondAt = performance.now();
     return;
   }
   if (listState.streaming) { caption("Still working on the last one. Say it again in a moment."); return; }
   v.acceptInput = false; v.turnPending = true; v.askedAt = performance.now(); v.respondAt = v.askedAt;
+  trAdd("you", text, "You"); tr.bot = null; saying(""); caption("");
   setState("thinking");
   await send(text);
   if (v.turnPending) {                                    // send() refused (for example, another chat is still answering)
@@ -216,6 +262,8 @@ function interrupt() {
   if (turn.active) { turn.interrupted = true; listState.streaming?.abort(); }
   turn.done = false; turn.active = false;
   v.lastSpeechEnd = performance.now(); v.acceptInput = true; setState("listening"); caption("Go ahead.");
+  if (tr.bot && turn.heard.trim()) tr.bot.querySelector("p").textContent = turn.heard.trim() + " …";
+  tr.bot = null;
 }
 
 // ---------------------------------------------------------------- speaking the reply
@@ -231,6 +279,7 @@ function speak(text) {
       const { seconds } = await r.json();
       if (gen !== v.gen) return;
       v.pending.set(id, { text: clean, ms: (seconds || 0) * 1000 });
+      turn.shown = (turn.shown ? turn.shown + " " : "") + clean; saying(turn.shown); trBot(turn.shown);
       // If its "played" notice is ever lost (the engine restarted), count it as played a little after it should have ended.
       setTimeout(() => { if (v.pending.has(id)) onEvent({ t: "played", id }); }, (seconds || 0) * 1000 + 2500 + v.pending.size * 400);
       if (v.state !== "speaking") { setState("speaking"); if (!v.firstAudioAt) v.firstAudioAt = performance.now(); }
@@ -242,7 +291,7 @@ function speak(text) {
 function voiceRequest() {
   if (!v.turnPending) return {};
   v.turnPending = false;
-  Object.assign(turn, { active: true, done: false, buf: "", held: [], roundSpoken: 0, chunks: 0, said: "", heard: "", toolActive: false,
+  Object.assign(turn, { active: true, done: false, buf: "", held: [], roundSpoken: 0, chunks: 0, said: "", heard: "", shown: "", toolActive: false,
     filler: false, workIdx: 0, lastSpoke: performance.now(), interrupted: false });
   clearInterval(turn.tick);
   const gen = v.gen;
@@ -266,6 +315,7 @@ function voiceOnEvent(j) {
       dropRound();                                       // words before a tool call are the model thinking aloud
       if (!turn.filler && !turn.chunks) { turn.filler = true; speak("Let me check."); }
       caption(j.x_tool.summary || j.x_tool.name);
+      trAdd("step", j.x_tool.summary || j.x_tool.name);
     }
     return;
   }
@@ -296,26 +346,53 @@ function voiceOnEnd(bot) {
 }
 
 // ---------------------------------------------------------------- controls
+const CHECK = '<svg class="i"><use href="#i-check"/></svg>';
 function renderCharacters() {
-  const sel = $("vChar"); if (!sel) return;
-  sel.innerHTML = CHARACTERS.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
-  sel.value = character().id;
+  const c = character(), sel = $("vChar");
+  if (sel) { sel.innerHTML = CHARACTERS.map((x) => `<option value="${x.id}">${x.name}</option>`).join(""); sel.value = c.id; }
+  const list = $("vvChars");
+  if (list) list.innerHTML = CHARACTERS.map((x) => `<button class="vv-ch${x.id === c.id ? " on" : ""}" data-ch="${x.id}" aria-pressed="${x.id === c.id}">`
+    + `<i style="background:${x.color}"></i><span><b>${x.name}</b><small>${x.tag}</small></span>${CHECK}</button>`).join("");
+  $("vv")?.style.setProperty?.("--vc", c.color);
+  if ($("vvName")) $("vvName").textContent = c.name;
 }
-$("micBtn").onclick = () => (v.on ? stopVoice() : startVoice());
+function pickCharacter(id) { store.set("voiceCharacter", id); renderCharacters(); }
+function setMuteButton() {
+  $("vvMute")?.classList.toggle("on", v.muted);
+  $("vvMuteIcon")?.setAttribute("href", v.muted ? "#i-micoff" : "#i-mic");
+  if ($("vvMuteTxt")) $("vvMuteTxt").textContent = v.muted ? "Unmute" : "Mute";
+  $("vvMute")?.setAttribute("aria-label", v.muted ? "Unmute" : "Mute");
+}
+function toggleMute() {                                  // muted: it keeps talking, but hears nothing and can't be cut off
+  if (!v.on) return;
+  v.muted = !v.muted; setMuteButton(); setState(v.state);
+}
+// Called by ui/views.mjs whenever the view changes: opening Voice starts it, and the small bar shows elsewhere.
+function voiceViewShown(name) {
+  syncBar();
+  if (name !== "voice") return;
+  renderCharacters();
+  if (!v.on) startVoice();
+}
+$("micBtn").onclick = () => { showView("voice"); };
 $("vEnd").onclick = () => stopVoice();
-$("vChar").onchange = (e) => { store.set("voiceCharacter", e.target.value); };
+$("vChar").onchange = (e) => pickCharacter(e.target.value);
+$("vvGo").onclick = () => (v.on ? stopVoice() : startVoice());
+$("vvMute").onclick = toggleMute;
+$("vvType").onclick = () => { showView("chat"); };
+$("vvChars").onclick = (e) => { const b = e.target.closest?.("[data-ch]"); if (b) pickCharacter(b.dataset.ch); };
 renderCharacters();
-// The mic button appears only when the voice.enabled flag is on.
+// The mic button and the Voice item appear only when the voice.enabled flag is on.
 (async () => {
   try {
     if (typeof fetch !== "function") return;
     const st = await (await fetch("/api/voice/status")).json();
-    if (st.available) $("micBtn").hidden = false;
+    if (st.available) { $("micBtn").hidden = false; $("navVoice").hidden = false; }
   } catch {}
 })();
 
 // As if you had said `text` (the dev server console and the checks use it through window.LS; the microphone is not needed).
 function voiceHeard(text) { if (v.on) submitUtterance(String(text || "")); }
-const voiceState = () => ({ on: v.on, state: v.state, acceptInput: v.acceptInput, pending: v.pending.size, speaking: turn.chunks, said: turn.said.trim() });
+const voiceState = () => ({ on: v.on, muted: v.muted, state: v.state, acceptInput: v.acceptInput, pending: v.pending.size, speaking: turn.chunks, said: turn.said.trim() });
 
-export { startVoice, stopVoice, voiceHeard, voiceOnEnd, voiceOnEvent, voiceRequest, voiceState };
+export { startVoice, stopVoice, voiceHeard, voiceOnEnd, voiceOnEvent, voiceRequest, voiceState, voiceViewShown };

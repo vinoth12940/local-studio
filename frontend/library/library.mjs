@@ -22,6 +22,7 @@ function updateHeader() {
   else if (view === "library") { $("hdrTitle").textContent = "Model library"; $("hdrSub").textContent = ""; }
   else if (view === "search") { $("hdrTitle").textContent = "Search"; $("hdrSub").textContent = "EmbeddingGemma 2"; }
   else if (view === "agent") { $("hdrTitle").textContent = "Agent"; $("hdrSub").textContent = ""; }
+  else if (view === "voice") { $("hdrTitle").textContent = "Voice"; $("hdrSub").textContent = "On this Mac"; }
   else { $("hdrTitle").textContent = "Settings"; $("hdrSub").textContent = ""; }
 }
 async function loadLibrary() {

@@ -241,6 +241,59 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .vtxt span { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .voicebar select { font: inherit; font-size: 12.5px; color: var(--ink-2); background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; }
 .sendbtn svg { width: 18px; height: 18px; stroke-width: 2.2; }
+/* Voice view: always dark (an immersive mode); --vc is the chosen character's colour */
+#v-voice { background: #0c0f12; color: #e9eef2; }
+.vv { flex: 1; min-height: 0; display: flex; --vc: #4cc9f0; }
+.vv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 22px 32px 28px; overflow: auto; }
+.vv-top { align-self: stretch; display: flex; gap: 10px; align-items: baseline; }
+.vv-name { font-size: 15px; font-weight: 500; }
+.vv-st { font-size: 14px; color: #8b97a3; }
+.vv-hud { position: relative; width: 280px; height: 280px; margin-top: 34px; flex: none; }
+.vv-r1, .vv-r2, .vv-r3, .vv-core { position: absolute; border-radius: 50%; }
+.vv-r1 { inset: 0; border: 1px dashed var(--vc); opacity: .3; animation: vvspin 40s linear infinite; }
+.vv-r2 { inset: 20px; border: 2px solid transparent; border-top-color: var(--vc); border-right-color: var(--vc); opacity: .8; animation: vvspinr 12s linear infinite; }
+.vv-r3 { inset: 42px; border: 1px solid #1f2a33; }
+.vv-core { inset: 74px; background: #121a21; display: flex; align-items: center; justify-content: center; gap: 4px; }
+.vv-core span { width: 4px; height: 60px; border-radius: 2px; background: var(--vc); transform: scaleY(.1); transition: transform .08s linear; }
+.vv[data-state="thinking"] .vv-r2, .vv[data-state="starting"] .vv-r2 { animation-duration: 2s; }
+.vv[data-state="off"] .vv-r1, .vv[data-state="off"] .vv-r2 { animation-play-state: paused; opacity: .18; }
+.vv[data-state="muted"] .vv-core span { background: #3a4651; }
+.vv-ask { margin: 34px 0 0; font-size: 15px; color: #8b97a3; text-align: center; min-height: 22px; max-width: 620px; }
+.vv-say { margin: 8px 0 0; font-size: 24px; line-height: 1.4; text-align: center; max-width: 640px; min-height: 68px; color: #ffffff; }
+.vv-note { margin: 10px 0 0; font-size: 13px; color: #6c7884; min-height: 18px; text-align: center; }
+.vv-ctl { margin-top: auto; padding-top: 28px; display: flex; gap: 28px; }
+.vv-c { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 12px; color: #8b97a3; }
+.vv-btn { width: 56px; height: 56px; border-radius: 50%; border: 1px solid #26323c; background: transparent; color: #e9eef2; display: grid; place-items: center; cursor: pointer; }
+.vv-btn:hover { background: #151c22; }
+.vv-btn:focus-visible { outline: 2px solid var(--vc); outline-offset: 3px; }
+.vv-btn svg { width: 21px; height: 21px; }
+.vv-btn.on { background: #e9eef2; color: #0c0f12; }
+.vv-btn.go { background: var(--vc); border-color: var(--vc); color: #0c0f12; }
+.vv-btn.end { background: #e5483c; border-color: #e5483c; color: #ffffff; }
+.vv[data-state="off"] #vvMute, .vv[data-state="off"] #vvType { opacity: .35; pointer-events: none; }
+.vv-side { width: 340px; flex: none; border-left: 1px solid #1a2229; background: #0f1317; display: flex; flex-direction: column; min-height: 0; }
+.vv-side h3 { margin: 0; font-size: 12.5px; font-weight: 500; color: #8b97a3; }
+.vv-voices { padding: 20px 16px 14px; border-bottom: 1px solid #1a2229; }
+.vv-chars { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; max-height: 236px; overflow: auto; }
+.vv-ch { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; border: 0; background: transparent; color: #e9eef2; text-align: left; cursor: pointer; font: inherit; }
+.vv-ch:hover { background: #151c22; }
+.vv-ch.on { background: #1a2229; }
+.vv-ch i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.vv-ch b { display: block; font-size: 14px; font-weight: 500; }
+.vv-ch small { display: block; font-size: 12px; color: #8b97a3; }
+.vv-ch svg { margin-left: auto; width: 16px; height: 16px; visibility: hidden; }
+.vv-ch.on svg { visibility: visible; }
+.vv-tr { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 20px 18px; }
+.vv-trh { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: #6c7884; }
+.vv-log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.vv-m small { display: block; font-size: 12px; color: #6c7884; margin-bottom: 3px; }
+.vv-m p { margin: 0; font-size: 14px; line-height: 1.5; }
+.vv-m.you p { color: #c5ced6; }
+.vv-step, .vv-empty { margin: 0; font-size: 12.5px; color: #6c7884; }
+@keyframes vvspin { to { transform: rotate(360deg); } }
+@keyframes vvspinr { to { transform: rotate(-360deg); } }
+@media (prefers-reduced-motion: reduce) { .vv-r1, .vv-r2 { animation: none; } }
+@media (max-width: 900px) { .vv { flex-direction: column; overflow: auto; } .vv-main { overflow: visible; } .vv-side { width: auto; border-left: 0; border-top: 1px solid #1a2229; } .vv-log { max-height: 320px; } }
 .atts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px -8px; }
 .atts:empty { display: none; }
 .att { position: relative; display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 6px 10px 6px 6px; background: var(--bg); max-width: 260px; }
@@ -798,6 +851,8 @@ dialog::backdrop { background: var(--overlay); }
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
   <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-micoff" viewBox="0 0 24 24"><path d="M15 9.3V6a3 3 0 0 0-5.7-1.3M9 9v2a3 3 0 0 0 4.9 2.3M5 11a7 7 0 0 0 11.6 5.3M19 11a7 7 0 0 1-.6 2.8M12 18v3M3 3l18 18"/></symbol>
+  <symbol id="i-keys" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></symbol>
   <symbol id="i-redo" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></symbol>
@@ -834,6 +889,7 @@ dialog::backdrop { background: var(--overlay); }
     </div>
     <div class="sb-actions">
       <button class="navitem" id="newChat"><svg class="i"><use href="#i-plus"/></svg>New chat<span class="kbd">⇧⌘O</span></button>
+      <button class="navitem" data-view="voice" id="navVoice" hidden><svg class="i"><use href="#i-mic"/></svg>Voice</button>
       <button class="navitem" data-view="code" id="navCode"><svg class="i"><use href="#i-code"/></svg>Code</button>
       <button class="navitem" data-view="images"><svg class="i"><use href="#i-image"/></svg>Images</button>
       <button class="navitem" data-view="search"><svg class="i"><use href="#i-search"/></svg>Search</button>
@@ -940,6 +996,33 @@ dialog::backdrop { background: var(--overlay); }
           </div>
         </div>
         <div class="foot"><button class="ctxfoot" id="ctxFoot" hidden></button><button class="modefoot" id="modeFoot" hidden title="Shift+Tab also switches">✎ Ask before edits · shift+tab to switch</button><span id="footTxt">Attach images, PDFs, Word, Excel or code · <span class="mono">/</span> for commands · Runs entirely on this Mac</span></div>
+      </div>
+    </section>
+
+    <section class="view" id="v-voice">
+      <div class="vv" id="vv" data-state="off">
+        <div class="vv-main">
+          <div class="vv-top"><span class="vv-name" id="vvName">Jarvis</span><span class="vv-st" id="vvState">Voice is off</span></div>
+          <div class="vv-hud" aria-hidden="true">
+            <div class="vv-r1"></div><div class="vv-r2"></div><div class="vv-r3"></div>
+            <div class="vv-core" id="vvBars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          </div>
+          <p class="vv-ask" id="vvAsk"></p>
+          <p class="vv-say" id="vvSay" aria-live="polite">Press Start and just talk. You can talk over it any time.</p>
+          <p class="vv-note" id="vvNote"></p>
+          <div class="vv-ctl">
+            <div class="vv-c"><button class="vv-btn" id="vvMute" aria-label="Mute"><svg class="i"><use href="#i-mic" id="vvMuteIcon"/></svg></button><span id="vvMuteTxt">Mute</span></div>
+            <div class="vv-c"><button class="vv-btn" id="vvType" aria-label="Type instead"><svg class="i"><use href="#i-keys"/></svg></button><span>Type</span></div>
+            <div class="vv-c"><button class="vv-btn go" id="vvGo" aria-label="Start talking"><svg class="i"><use href="#i-mic" id="vvGoIcon"/></svg></button><span id="vvGoTxt">Start</span></div>
+          </div>
+        </div>
+        <aside class="vv-side">
+          <section class="vv-voices"><h3>Voice</h3><div class="vv-chars" id="vvChars"></div></section>
+          <section class="vv-tr">
+            <div class="vv-trh"><h3>Transcript</h3><span id="vvTime"></span></div>
+            <div class="vv-log" id="vvLog"><p class="vv-empty">What you say and its replies appear here.</p></div>
+          </section>
+        </aside>
       </div>
     </section>
 

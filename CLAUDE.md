@@ -261,8 +261,11 @@ set `LOCAL_STUDIO_VOICE_PORT` (for example 8094). Checks: `macos/check_voice.py`
 Plan and measurements: [docs/voice-assistant-design.md](docs/voice-assistant-design.md).
 
 The conversation loop is `frontend/voice/` (`voice.mjs`; `turn.mjs` is pure: end-of-turn, backchannels, sentence cutting,
-scored by `macos/check_voice_ui.mjs`; `characters.mjs`: 13 Phonon voices + styles). The mic button (`#micBtn`, shown only
-when the flag is on) opens the service's mic through `/api/voice/mic/open|close`, `/api/voice/events` (relayed SSE),
+scored by `macos/check_voice_ui.mjs`; `characters.mjs`: 13 Phonon voices + styles, each with a colour and tag). Its surface is
+the Voice view (`#v-voice`, nav `#navVoice`; always dark): the ring display (`#vvBars` follow the mic level or its speech), what
+you said and what it is saying, Mute/Type/Start-End, and a side panel to pick the character and read the transcript. Opening the
+view starts voice; elsewhere the small `#voiceBar` above the composer stands in (`voiceViewShown()`, called by `showView`). The
+nav item and the mic button (`#micBtn`, which opens the view) show only when the flag is on. The view opens the service's mic through `/api/voice/mic/open|close`, `/api/voice/events` (relayed SSE),
 `/api/voice/speak|stop|pause|resume`. A spoken turn is a normal message: `send(text)` in `chat/live.mjs`, whose `generate()`
 adds `voiceRequest()` (`voice: true`, `voice_style`) and feeds every event to `voiceOnEvent()`/`voiceOnEnd()`.
 `harness.apply_voice_mode()` strips those fields before the engine sees them, turns thinking off and appends `VOICE_NOTE`.
