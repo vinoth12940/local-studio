@@ -1387,6 +1387,19 @@ def apply_voice_mode(body):
     return note
 
 
+def with_voice_note(messages, note):
+    """A spoken turn's note joins the leading system message (_with_agent_note always makes one): chat templates such as
+    Qwen's reject a system message anywhere but first ("System message must be at the beginning")."""
+    first = messages[0] if messages else None
+    if first and first.get("role") == "system":
+        c = first.get("content")
+        if isinstance(c, str):
+            return [{**first, "content": c.rstrip() + "\n\n" + note}] + messages[1:]
+        if isinstance(c, list):
+            return [{**first, "content": c + [{"type": "text", "text": note}]}] + messages[1:]
+    return [{"role": "system", "content": note}] + messages
+
+
 def _with_agent_note(messages, timezone=None, use_files=False, workspace=None):
     """Computer capabilities, once, in the leading system message after the user's own system prompt (a second system
     message would break chat templates that allow only the first), or as a new first message. Never duplicated."""

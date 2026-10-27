@@ -239,7 +239,7 @@ async def chat(request: Request):
     if policy.enabled:
         body["messages"].append({"role": "system", "content": policy.guidance()})
     if voice_note:
-        body["messages"].append({"role": "system", "content": voice_note})
+        body["messages"] = messages = harness.with_voice_note(body["messages"], voice_note)
     # Keep prompt + reply inside the context window: long documents leave less room to answer.
     prompt_chars, images = 0, 0
     for msg in messages:
