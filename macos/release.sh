@@ -7,9 +7,14 @@
 #   macos/release.sh --dry-run   dependency audits and signature checks of the existing build only
 #   macos/release.sh --publish   the same as a plain run, then publish GitHub release v<version> with the DMG and its .sha256
 #
-#   LOCAL_STUDIO_NOTARY_PROFILE  a `notarytool store-credentials` profile name (default: notary)
-#   LOCAL_STUDIO_NOTARY_KEY, LOCAL_STUDIO_NOTARY_KEY_ID, LOCAL_STUDIO_NOTARY_ISSUER
-#                                alternative to the profile: an App Store Connect API key (.p8 path, key id, issuer id)
+#   LOCAL_STUDIO_NOTARY_ENV      a file that sets ASC_KEY_PATH, ASC_KEY_ID and ASC_ISSUER_ID (an App Store Connect API key),
+#                                e.g. ~/private_keys/asc.env, the one Murmur's release used. Preferred: no keychain involved
+#   LOCAL_STUDIO_NOTARY_KEY, LOCAL_STUDIO_NOTARY_KEY_ID, LOCAL_STUDIO_NOTARY_ISSUER (or ASC_KEY_PATH, ASC_KEY_ID, ASC_ISSUER_ID)
+#                                the same key given directly
+#   LOCAL_STUDIO_NOTARY_PROFILE  otherwise, a `notarytool store-credentials` profile name (default: notary). A saved profile
+#                                can vanish from the login keychain mid-release; Murmur's did, twice
+# Apple can keep a first submission "In Progress" for half an hour or more (Murmur's app took 29 minutes); each wait is
+# capped at LOCAL_STUDIO_NOTARY_TIMEOUT (default 2h), and the submission id is printed so `notarytool info` can follow it.
 # The signing identity is the Developer ID Application certificate build.sh finds in the keychain.
 #
 # --publish refuses anything a download must not be: a build that is not notarized, not from main as pushed, from a dirty
@@ -28,11 +33,20 @@ DMG="$ROOT/build/Local-Studio-$VERSION.dmg"
 NOTES="$ROOT/build/release-notes-$VERSION.md"
 fail() { echo "release: $*" >&2; exit 1; }
 
-if [[ -n "${LOCAL_STUDIO_NOTARY_KEY:-}" && -n "${LOCAL_STUDIO_NOTARY_KEY_ID:-}" && -n "${LOCAL_STUDIO_NOTARY_ISSUER:-}" ]]; then
-  NOTARY_AUTH=(--key "$LOCAL_STUDIO_NOTARY_KEY" --key-id "$LOCAL_STUDIO_NOTARY_KEY_ID" --issuer "$LOCAL_STUDIO_NOTARY_ISSUER")
+if [[ -n "${LOCAL_STUDIO_NOTARY_ENV:-}" ]]; then
+  [[ -r "$LOCAL_STUDIO_NOTARY_ENV" ]] || fail "LOCAL_STUDIO_NOTARY_ENV: cannot read $LOCAL_STUDIO_NOTARY_ENV"
+  set -a; source "$LOCAL_STUDIO_NOTARY_ENV"; set +a
+fi
+KEY=${LOCAL_STUDIO_NOTARY_KEY:-${ASC_KEY_PATH:-}}; KEY_ID=${LOCAL_STUDIO_NOTARY_KEY_ID:-${ASC_KEY_ID:-}}
+ISSUER=${LOCAL_STUDIO_NOTARY_ISSUER:-${ASC_ISSUER_ID:-}}
+if [[ -n "$KEY" && -n "$KEY_ID" && -n "$ISSUER" ]]; then
+  [[ -r "$KEY" ]] || fail "the App Store Connect API key file is not readable"
+  NOTARY_AUTH=(--key "$KEY" --key-id "$KEY_ID" --issuer "$ISSUER")
 else
   NOTARY_AUTH=(--keychain-profile "${LOCAL_STUDIO_NOTARY_PROFILE:-notary}")
 fi
+unset ASC_KEY_PATH ASC_KEY_ID ASC_ISSUER_ID LOCAL_STUDIO_NOTARY_KEY LOCAL_STUDIO_NOTARY_KEY_ID LOCAL_STUDIO_NOTARY_ISSUER   # build.sh and its checks never see them
+WAIT=(--wait --timeout "${LOCAL_STUDIO_NOTARY_TIMEOUT:-2h}")
 notary_ready() { xcrun notarytool history "${NOTARY_AUTH[@]}" >/dev/null 2>&1; }
 developer_id() { security find-identity -v -p codesigning | awk -F'"' '/Developer ID Application/ {print $2; exit}'; }
 
@@ -54,7 +68,7 @@ if (( PUBLISH )); then
   [[ "$heading" != *unreleased* ]] || fail "date the CHANGELOG.md entry first: $heading"
   [[ -n "$(changelog_entry | tr -d '[:space:]')" ]] || fail "the CHANGELOG.md entry for $VERSION is empty"
   [[ -n "$(developer_id)" ]] || fail "no Developer ID Application certificate in the keychain"
-  notary_ready || fail "no working notarization credentials (${NOTARY_AUTH[*]}): see docs/RELEASING.md"
+  notary_ready || fail "no working notarization credentials (${NOTARY_AUTH[1]}): see docs/RELEASING.md"
 fi
 
 UV=$(command -v uv || echo ~/.local/bin/uv)
@@ -82,10 +96,10 @@ NOTARIZE=0
 if [[ -n "$ID" ]] && notary_ready; then NOTARIZE=1; fi
 if (( NOTARIZE )); then
   # The app first, so the copy people drag to Applications carries its own ticket (it opens even offline).
-  echo "==> Notarizing the app (a few minutes)"
+  echo "==> Notarizing the app (minutes; a first submission can take half an hour or more)"
   ZIP="$ROOT/build/Local-Studio-notarize.zip"
   rm -f "$ZIP"; ditto -c -k --keepParent "$APP" "$ZIP"
-  xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" --wait
+  xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" "${WAIT[@]}"
   xcrun stapler staple "$APP"
   rm -f "$ZIP"
 fi
@@ -100,12 +114,16 @@ rm -rf "$STAGE"
 
 if [[ -n "$ID" ]]; then codesign --force --sign "$ID" --timestamp "$DMG"; fi
 if (( NOTARIZE )); then
-  echo "==> Notarizing the DMG (a few minutes)"
-  xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" --wait
+  echo "==> Notarizing the DMG"
+  xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" "${WAIT[@]}"
   xcrun stapler staple "$DMG"
-  # Check it the way a user's Mac will.
+  # Check it the way a user's Mac will: the DMG, then the app inside it, as Murmur's release did.
   xcrun stapler validate "$DMG"
   spctl -a -vv -t open --context context:primary-signature "$DMG"
+  MNT=$(mktemp -d)
+  hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$DMG" >/dev/null
+  { spctl -a -vv --type execute "$MNT/Local Studio.app" && xcrun stapler validate "$MNT/Local Studio.app"; } || { hdiutil detach -quiet "$MNT"; fail "the app inside the DMG is not accepted by Gatekeeper"; }
+  hdiutil detach -quiet "$MNT"
 fi
 # Assess after notarization, so a new Developer ID build can obtain its ticket first.
 assess_distribution

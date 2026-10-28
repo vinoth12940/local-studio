@@ -15,7 +15,7 @@ permissions:
 jobs:
   release:
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 240           # Apple can hold a first notarization "In Progress" for half an hour or more
     env:
       TMPDIR: /tmp                 # check_agent's unix sockets: macOS limits their paths to 104 bytes
     steps:
@@ -23,7 +23,7 @@ jobs:
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-          HAVE_CERT: ${{ secrets.LOCAL_STUDIO_CERT_P12 != '' && secrets.LOCAL_STUDIO_APP_PASSWORD != '' }}
+          HAVE_CERT: ${{ secrets.LOCAL_STUDIO_CERT_P12 != '' && (secrets.LOCAL_STUDIO_ASC_KEY_P8 != '' || secrets.LOCAL_STUDIO_APP_PASSWORD != '') }}
         run: |
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::notice::$GITHUB_REF_NAME is already published (from a Mac with macos/release.sh --publish): nothing to do."
@@ -74,20 +74,28 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
 
-      - name: Store notarization credentials
+      - name: Notarization credentials
         if: steps.gate.outputs.run == 'true'
         env:
+          ASC_KEY_P8: ${{ secrets.LOCAL_STUDIO_ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.LOCAL_STUDIO_ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.LOCAL_STUDIO_ASC_ISSUER_ID }}
           APPLE_ID: ${{ secrets.LOCAL_STUDIO_APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.LOCAL_STUDIO_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.LOCAL_STUDIO_APP_PASSWORD }}
         run: |
-          xcrun notarytool store-credentials local-studio-ci \
-            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          if [[ -n "$ASC_KEY_P8" ]]; then        # an App Store Connect API key: no keychain profile (Murmur's lesson)
+            umask 077; printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc.p8"
+            { echo "LOCAL_STUDIO_NOTARY_KEY=$RUNNER_TEMP/asc.p8"; echo "LOCAL_STUDIO_NOTARY_KEY_ID=$ASC_KEY_ID"
+              echo "LOCAL_STUDIO_NOTARY_ISSUER=$ASC_ISSUER_ID"; } >> "$GITHUB_ENV"
+          else
+            xcrun notarytool store-credentials local-studio-ci \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+            echo "LOCAL_STUDIO_NOTARY_PROFILE=local-studio-ci" >> "$GITHUB_ENV"
+          fi
 
       - name: Build, check, sign and notarize
         if: steps.gate.outputs.run == 'true'
-        env:
-          LOCAL_STUDIO_NOTARY_PROFILE: local-studio-ci
         run: |
           zsh macos/release.sh
           DMG="build/Local-Studio-${GITHUB_REF_NAME#v}.dmg"

@@ -17,29 +17,43 @@ automatically when it is):
 security find-identity -v -p codesigning | grep "Developer ID Application"
 ```
 
-### 2. Notarization credentials
+### 2. Notarization credentials: an App Store Connect API key
 
-`release.sh` uses the `notarytool` keychain profile named in `LOCAL_STUDIO_NOTARY_PROFILE` (default `notary`). A profile
-belongs to your Apple ID and team, not to an app, so the one Murmur uses works here too:
+Use an **App Store Connect API key** (Users and Access → Integrations → App Store Connect API: note the Key ID and
+the Issuer ID, and download `AuthKey_<KeyID>.p8` once). `notarytool` takes the key directly, so no keychain item is
+involved. Murmur's first release found the keychain profile unreliable:
+- the app's notarization was accepted with `murmur-notary`;
+- seconds later, the DMG's submission failed with "No Keychain password item found for profile";
+- re-storing the profile did not stick, and only the key passed directly worked.
+
+The same profile vanished here on 2026-10-28.
+
+Keep the key in a file outside the repository that sets three variables, as Murmur's `~/private_keys/asc.env` does:
 
 ```bash
-export LOCAL_STUDIO_NOTARY_PROFILE=murmur-notary
+ASC_KEY_PATH=/path/to/AuthKey_<KeyID>.p8
+ASC_KEY_ID=<KeyID>
+ASC_ISSUER_ID=<IssuerID>
 ```
 
-To create one, make an **app-specific password** at appleid.apple.com → Sign-In and Security → App-Specific Passwords, then
-store it once (the command asks for the password; nothing is written to the repository):
+Make it and the `.p8` readable only by you (`chmod 600`). Then point `release.sh` at it with
+`LOCAL_STUDIO_NOTARY_ENV=~/private_keys/asc.env`. The script sources it and passes the key straight to `notarytool`,
+and the build and its checks never see the values. `LOCAL_STUDIO_NOTARY_KEY`, `_KEY_ID` and `_ISSUER` (or `ASC_*`)
+set directly work too.
 
-```bash
-xcrun notarytool store-credentials notary --apple-id "you@example.com" --team-id "TEAMID"
-```
+A keychain profile (`LOCAL_STUDIO_NOTARY_PROFILE`, default `notary`) still works as a fallback. Create it with
+`xcrun notarytool store-credentials notary --apple-id "you@example.com" --team-id "TEAMID"` and an app-specific password.
+`release.sh --publish` checks the credentials before building and refuses to start without working ones.
 
-Or use an App Store Connect API key instead of a password: set `LOCAL_STUDIO_NOTARY_KEY` (the `.p8` path),
-`LOCAL_STUDIO_NOTARY_KEY_ID` and `LOCAL_STUDIO_NOTARY_ISSUER`. Keep the key file out of the repository.
+### How long notarization takes
 
-Check the credentials right before a release with `xcrun notarytool history --keychain-profile <name>`. A saved
-profile can vanish from the login keychain: Murmur's guide records it, and on 2026-10-28 `murmur-notary` answered once
-and then reported "No Keychain password item found". The API key variables avoid the keychain entirely.
-`release.sh --publish` checks the credentials before building and refuses to start without them.
+- Apple held Murmur's first app submission "In Progress" for **29 minutes**; its DMG, right after, took about 30
+  seconds. A team's or an app's first submissions are the slow ones.
+- `release.sh` waits up to `LOCAL_STUDIO_NOTARY_TIMEOUT` (default `2h`) for each of its two submissions (app, then DMG)
+  and prints each submission id.
+- A long wait is not a failure. Ask Apple directly with
+  `xcrun notarytool history --key <p8> --key-id <id> --issuer <issuer>`, or with `xcrun notarytool info <id> ...`.
+- Run the release where a half-hour wait is fine (in the background, or in a terminal you leave open).
 
 ## Cutting a release from your Mac
 
@@ -49,13 +63,14 @@ and then reported "No Keychain password item found". The API key variables avoid
 
    ```bash
    git switch main && git pull --ff-only
-   LOCAL_STUDIO_NOTARY_PROFILE=murmur-notary macos/release.sh --publish
+   LOCAL_STUDIO_NOTARY_ENV=~/private_keys/asc.env macos/release.sh --publish
    ```
 
 `release.sh` runs the dependency audits and `build.sh` (every check), then:
 - notarizes and staples the app;
 - puts it in the DMG, then signs, notarizes and staples the DMG;
-- checks the DMG the way a user's Mac will (`stapler validate`, `spctl --assess --type open`);
+- checks the DMG the way a user's Mac will (`stapler validate`, `spctl --assess --type open`), then mounts it and checks
+  the app inside (`spctl --type execute`, `stapler validate`), as Murmur's release did;
 - writes `build/Local-Studio-<version>.dmg.sha256`;
 - publishes release `v<version>` with both files. The notes are the changelog entry plus the SHA-256.
 
@@ -84,11 +99,11 @@ notarizes and publishes there. It needs these repository secrets (Settings → S
 |---|---|
 | `LOCAL_STUDIO_CERT_P12` | The Developer ID Application certificate exported from Keychain Access as a `.p12`, then `base64 -i cert.p12 \| pbcopy` |
 | `LOCAL_STUDIO_CERT_PASSWORD` | The password you set when exporting the `.p12` |
-| `LOCAL_STUDIO_APPLE_ID` | Your Apple ID email |
-| `LOCAL_STUDIO_TEAM_ID` | Your 10-character Team ID |
-| `LOCAL_STUDIO_APP_PASSWORD` | An app-specific password |
+| `LOCAL_STUDIO_ASC_KEY_P8` | The contents of `AuthKey_<KeyID>.p8` (preferred, as above) |
+| `LOCAL_STUDIO_ASC_KEY_ID`, `LOCAL_STUDIO_ASC_ISSUER_ID` | Its Key ID and Issuer ID |
+| `LOCAL_STUDIO_APPLE_ID`, `LOCAL_STUDIO_TEAM_ID`, `LOCAL_STUDIO_APP_PASSWORD` | Instead of the key: Apple ID email, Team ID, app-specific password |
 
-Without those secrets, or when the release already exists, the workflow skips with a notice instead of failing.
+The job may run for up to four hours, for a slow first notarization. Without those secrets, or when the release already exists, the workflow skips with a notice instead of failing.
 `release.sh --publish` creates the tag, so its own run always takes the second path. Anyone who can change workflows on
 `main` can use the certificate, so add the secrets only if you want releases built without your Mac.
 
