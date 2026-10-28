@@ -6328,10 +6328,12 @@ def chat_verification_gate_repairs_and_handles_reply_tool():
                  _verification_edit('3', '2'), check_turn, reply_turn]
         response, engine, content, status = _verification_request(e, ws, turns)
         assert content == 'CLAIM_ALL_DONE' and status[-1]['status'] == 'verified' and status[-1]['revision'] == 2, response.text
-        # The withheld reply call has a matching trusted tool result before repair.
+        # The withheld reply call has a matching trusted tool result before repair, and the gate's guidance reaches the
+        # model folded into the one leading system message (a later system message is rejected by templates such as Qwen's).
         history = engine.seen[3]['messages']
-        assert history[-2]['role'] == 'tool' and history[-2]['name'] == 'reply' and 'Unverified' in history[-2]['content']
-        assert 'Completion is withheld' in history[-1]['content']
+        assert history[-1]['role'] == 'tool' and history[-1]['name'] == 'reply' and 'Unverified' in history[-1]['content']
+        assert [m['role'] for m in history].count('system') == 1 and history[0]['role'] == 'system'
+        assert 'Completion is withheld' in history[0]['content']
         stops = [event for event in sse(response.text) if (event.get('choices') or [{}])[0].get('finish_reason') == 'stop']
         assert len(stops) == 1, 'a premature model stop was streamed before verification'
 

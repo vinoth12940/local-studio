@@ -353,6 +353,16 @@ async function generate(resumeBot = null) {
   poll();
 }
 
+// The request fields that shape the model's instructions, set as generate() sets them: voice/voice.mjs warms the engine's
+// prompt cache with a request built the same way, so a spoken turn finds its instructions already processed.
+function promptShape(chat = listState.current) {
+  const s = store.get("settings", {});
+  const out = { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, messages: s.sys ? [{ role: "system", content: s.sys }] : [] };
+  if (!chat?.workspace && useFiles && sr?.running && !sr.error) out.use_files = true;
+  if (chat?.workspace) out.workspace = chat.workspace;
+  return out;
+}
+
 export {
-  generate, liveGen, liveSkeletonHTML, send
+  generate, liveGen, liveSkeletonHTML, promptShape, send
 };

@@ -8,14 +8,14 @@
 //    lets it carry on; it waits when you sound mid-thought (turn.mjs).
 import { $, store, toast } from "../core/util.mjs";
 import { listState } from "../chat/list.mjs";
-import { send } from "../chat/live.mjs";
+import { promptShape, send } from "../chat/live.mjs";
 import { showView, view } from "../ui/views.mjs";
 import { CHARACTERS, DEFAULT_CHARACTER } from "./characters.mjs";
 import { endpointWait, isBackchannel, looksLikeOwnVoice, takeSentences } from "./turn.mjs";
 
 const MIC_RATE = 16000;
 const v = {
-  on: false, muted: false, state: "off", rms: 0, level: 0, es: null, sampler: 0,
+  on: false, muted: false, state: "off", rms: 0, level: 0, micChunks: 0, es: null, sampler: 0,
   acceptInput: false, turnPending: false, gen: 0, speakId: 0, pending: new Map(), chain: Promise.resolve(),
   playedMs: 0, lastSpeechEnd: 0, respondAt: 0, firstAudioAt: 0, askedAt: 0,
 };
@@ -50,7 +50,26 @@ function setState(s, note) {
   }
   syncBar();
 }
-function caption(text) { const el = $("vCap"); if (el) el.textContent = text || ""; const n = $("vvNote"); if (n) n.textContent = text || ""; }
+function caption(text) {
+  const el = $("vCap"); if (el) el.textContent = text || "";
+  const n = $("vvNote"); if (n) { n.textContent = text || ""; n.classList.remove("err"); }
+}
+// Something failed: say what, in plain words, on screen and in the transcript, with the real reason (never a bare "went wrong").
+function problem(text, detail) {
+  const el = $("vCap"); if (el) el.textContent = text;
+  const n = $("vvNote"); if (n) { n.textContent = text; n.classList.add("err"); }
+  trAdd("step", detail ? `${text} (${detail})` : text)?.classList.add("err");
+  console.warn("voice:", text, detail || "");
+}
+// The engine's error text, as the person would want to hear it.
+function explainError(e) {
+  const s = String(e || "");
+  if (/not running|isn't running|no .* engine is ready|load .* first|connection attempts failed|switching/i.test(s)) return "No chat model is loaded. Load one in the sidebar.";
+  if (/Engine answered 4\d\d/i.test(s)) return "The model refused the request.";
+  if (/context|too long|max_tokens/i.test(s)) return "The conversation is too long for the model. Start a new chat.";
+  if (/stopped/i.test(s)) return "";
+  return "The reply failed.";
+}
 function asked(text) { const el = $("vvAsk"); if (el) el.textContent = text || ""; }
 function saying(text) { const el = $("vvSay"); if (el) el.textContent = text || ""; }
 function syncBar() { const bar = $("voiceBar"); if (bar) bar.hidden = !v.on || view === "voice"; }
@@ -114,10 +133,44 @@ async function startVoice() {
     v.playedMs = 0; v.acceptInput = true;
     clearInterval(v.sampler); v.sampler = setInterval(sample, 30);
     setState("listening"); caption("Say something. Talk over me any time."); saying("I'm listening.");
+    selfCheck();
     $("micBtn")?.classList.add("on");
   } catch (e) {
     toast(String(e.message || e)); await stopVoice();
   }
+}
+// About a second, in the background, once listening: is sound arriving, is a model loaded, and can it speak and be
+// understood (its own voice through the recognizer)? Anything wrong is shown as the part that failed, not as silence.
+async function selfCheck() {
+  const gen = v.gen; v.micChunks = 0;
+  const failed = [];
+  try {
+    const h = await fetch("/api/llm/health");
+    if (!h.ok) failed.push(["No chat model is loaded. Load one in the sidebar.", "model not ready"]);
+    else warmModel();                                    // only a loaded model: opening Voice never starts one
+  } catch {}
+  try {
+    const wav = await fetch("/api/voice/say", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "Voice check, one two three.", voice: character().voice }) });
+    if (!wav.ok) throw new Error("speech " + wav.status);
+    const r = await fetch("/api/voice/transcribe", { method: "POST", headers: { "content-type": "audio/wav" }, body: await wav.blob() });
+    const heard = r.ok ? ((await r.json()).text || "") : "";
+    if (!/voice|check|one|two|three/i.test(heard)) failed.push(["Speech recognition isn't working.", r.ok ? `heard "${heard}"` : `HTTP ${r.status}`]);
+  } catch (e) { failed.push(["The voice can't speak right now.", String(e.message || e)]); }
+  await new Promise((res) => setTimeout(res, Math.max(0, 2500)));
+  if (gen !== v.gen || !v.on) return;
+  if (!v.micChunks) failed.push(["The microphone isn't sending any sound.", "check System Settings, Privacy & Security, Microphone"]);
+  v.check = failed.length ? failed.map((f) => f[0]) : ["ok"];
+  if (failed.length) failed.forEach(([t, d]) => problem(t, d));
+}
+// One token, built like a spoken turn: the engine processes the tools and instructions now (about 3 s when its cache was
+// dropped), not when you ask your first question. Nothing is saved; a failure only means the first turn is slower.
+function warmModel() {
+  const b = promptShape();
+  b.messages.push({ role: "user", content: "Hello." });
+  fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...b, warm: true, voice: true, voice_style: character().style, enable_thinking: false }) })
+    .then((r) => r.text()).catch(() => {});
 }
 async function stopVoice() {
   const wasOn = v.on;
@@ -134,7 +187,7 @@ async function stopVoice() {
 // ---------------------------------------------------------------- microphone events
 function onEvent(ev) {
   if (ev.t === "mic") {
-    v.rms = ev.rms;
+    v.rms = ev.rms; v.micChunks++;
     const u8 = Uint8Array.from(atob(ev.pcm), (c) => c.charCodeAt(0)), i16 = new Int16Array(u8.buffer), f = new Float32Array(i16.length);
     for (let k = 0; k < f.length; k++) f[k] = i16[k] / 32768;
     onMicChunk(f);
@@ -209,13 +262,13 @@ function wav16k(chunks) {
 async function transcribe(chunks) {
   try {
     const r = await fetch("/api/voice/transcribe", { method: "POST", headers: { "content-type": "audio/wav" }, body: wav16k(chunks) });
-    if (!r.ok) return;
+    if (!r.ok) { problem("I couldn't make out what you said.", (await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`); return; }
     const text = ((await r.json()).text || "").trim();
     if (!text || !v.on) return;
     if (tent && isBackchannel(text)) { endTent(); return; }      // "yeah", "uh-huh": keep talking
     if (performance.now() - v.lastSpeechEnd < 3000 && looksLikeOwnVoice(text, turn.said)) return;
     submitUtterance(text);
-  } catch {}
+  } catch (e) { problem("I couldn't make out what you said.", String(e.message || e)); }
 }
 
 // ---------------------------------------------------------------- turn taking
@@ -286,7 +339,10 @@ function speak(text) {
       // If its "played" notice is ever lost (the engine restarted), count it as played a little after it should have ended.
       setTimeout(() => { if (v.pending.has(id)) onEvent({ t: "played", id }); }, (seconds || 0) * 1000 + 2500 + v.pending.size * 400);
       if (v.state !== "speaking") { setState("speaking"); if (!v.firstAudioAt) v.firstAudioAt = performance.now(); }
-    } catch { if (!v.pending.size && turn.done) finishTurn(); }
+    } catch (e) {
+      if (gen === v.gen) problem("I couldn't speak that.", String(e.message || e));
+      if (!v.pending.size && turn.done) finishTurn();
+    }
   });
 }
 
@@ -324,7 +380,11 @@ function voiceOnEvent(j) {
   }
   if (j.x_approval) { speak("I need your okay on screen for that."); return; }
   if (j.x_question) { turn.question = { session_id: j.x_question.session_id, id: j.x_question.id }; speak(j.x_question.question); return; }
-  if (j.error) { speak("Sorry, something went wrong."); return; }
+  if (j.error) {
+    const said = explainError(j.error);
+    if (said) { speak(said); problem(said, String(j.error).slice(0, 240)); }
+    return;
+  }
   const ch = j.choices?.[0], d = ch?.delta?.content;
   if (d) {
     turn.toolActive = false; turn.buf += d;
@@ -396,6 +456,6 @@ renderCharacters();
 
 // As if you had said `text` (the dev server console and the checks use it through window.LS; the microphone is not needed).
 function voiceHeard(text) { if (v.on) submitUtterance(String(text || "")); }
-const voiceState = () => ({ on: v.on, muted: v.muted, state: v.state, acceptInput: v.acceptInput, pending: v.pending.size, speaking: turn.chunks, said: turn.said.trim() });
+const voiceState = () => ({ on: v.on, muted: v.muted, state: v.state, check: v.check, micChunks: v.micChunks, acceptInput: v.acceptInput, pending: v.pending.size, speaking: turn.chunks, said: turn.said.trim() });
 
 export { startVoice, stopVoice, voiceHeard, voiceOnEnd, voiceOnEvent, voiceRequest, voiceState, voiceViewShown };
