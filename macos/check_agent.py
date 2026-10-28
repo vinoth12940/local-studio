@@ -5251,6 +5251,46 @@ def chat_answers_after_one_fast_search_round():
 
 
 @check
+def voice_turns_prefetch_live_facts_before_the_first_round():
+    from studio.services import decide
+    real_read, real_pre, original = app._chat_read_tool, decide.preflight, app.load_settings()
+    reads = []
+    def evidence(name, args, timezone=None):
+        reads.append((name, args)); return {"results": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin"}],
+                                            "pages": [{"url": "https://coinmarketcap.com/", "text": "Bitcoin is 81,066 dollars."}]}
+    plans = {"Bitcoin price right now?": dict(live_facts=0.9, my_files=0.0, small_talk=0.0, standalone=0.95, news=0.0, source="d1", ms=40),
+             "And tomorrow?": dict(live_facts=0.9, my_files=0.0, small_talk=0.0, standalone=0.1, news=0.0, source="d1", ms=40),
+             "When does my passport expire?": dict(live_facts=0.7, my_files=0.95, small_talk=0.0, standalone=0.9, news=0.0, source="d1", ms=40)}
+    studio.services.harness._chat_read_tool = evidence
+    decide.preflight = lambda text, previous, timeout=0.25: plans[text]
+    try:
+        app.save_settings({**original, "voice": {"enabled": True, "decide": True}, "harness": {"web_fast": True}})
+        turns = [chat_action_deltas(name="reply", args='{"text":"About 81 thousand dollars."}')]
+        with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
+            r = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "messages": [{"role": "user", "content": "Bitcoin price right now?"}]})
+            assert reads == [("web_search", {"query": "Bitcoin price right now?"})] and len(engine.seen) == 1
+            assert engine.seen[0]["messages"][-1]["role"] == "tool" and "81,066" in engine.seen[0]["messages"][-1]["content"]
+            assert any(ev.get("x_tool", {}).get("id") == "pre-0" for ev in sse(r.text) if isinstance(ev, dict))
+        for said in ("And tomorrow?", "When does my passport expire?"):
+            reads.clear()
+            with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
+                e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "messages": [{"role": "user", "content": said}]})
+                assert reads == [], said                                     # no Search for this turn: nothing, never the web
+        reads.clear()
+        with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
+            e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "use_files": True,
+                                        "messages": [{"role": "user", "content": "When does my passport expire?"}]})
+            assert reads[:1] == [("search_files", {"query": "When does my passport expire?"})]
+        reads.clear()
+        with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
+            e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Bitcoin price right now?"}]})
+            assert reads == [], "typed chat never prefetches"
+    finally:
+        studio.services.harness._chat_read_tool, decide.preflight = real_read, real_pre
+        app.save_settings(original)
+
+
+@check
 def chat_engine_done_does_not_wait_for_connection_close():
     real = app.httpx.AsyncClient
     class Response:

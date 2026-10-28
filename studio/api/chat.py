@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from studio import config
 from studio.services import engines
 from studio.services import chat_streams
+from studio.services import decide
 from studio.services import harness
 from studio.services import models
 from studio.services import workflow_runs
@@ -279,6 +280,10 @@ async def chat(request: Request):
             raise HTTPException(409, str(error)) from error
 
     async def relay():
+        # voice.decide: d1 (or the word rules) decides now, while any engine switch runs, whether to search before round one.
+        said = [msg["content"] for msg in raw_messages if msg.get("role") == "user" and isinstance(msg.get("content"), str)]
+        preflight = (asyncio.ensure_future(asyncio.to_thread(decide.preflight, said[-1], said[-2] if len(said) > 1 else None))
+                     if voice_note and not warm and said and flag("voice.decide") else None)
         # The agent holds the machine: only its own engine may answer (requests run one at a time).
         if agent_lock.locked() and (mode, m["id"]) != (agent_engine["mode"], agent_engine["model_id"]):
             yield _sse({"error": AGENT_BUSY_MSG})
@@ -333,6 +338,37 @@ async def chat(request: Request):
         observed_steps = set()
         _chat_sessions[session.id] = session
         try:
+            pick = decide.prefetch_call(await preflight, said[-1], flag("harness.web_fast"), use_files) if preflight else None
+            if pick:
+                # A spoken turn that needs live facts (or the user's files): run that search now and hand the model its result
+                # as the first tool result, so it answers from evidence in what would have been its second round.
+                pre_name, pre_args = pick
+                summary = _chat_tool_summary(pre_name, pre_args)
+                yield _sse({"x_tool": {"id": "pre-0", "name": pre_name, "status": "running", "summary": summary}})
+                def _prefetch():
+                    try:
+                        policy.before_tool(pre_name, pre_args)
+                        value = _in_workspace(workspace, harness._chat_read_tool, pre_name, pre_args, timezone)
+                        policy.after_tool(pre_name, pre_args, value)
+                        return value
+                    except ValueError as error:
+                        return {"error": str(error), "verified": False}
+                result = await asyncio.to_thread(_prefetch)
+                if flag("security.redact"):
+                    result = redact_obj(result)
+                call = {"id": "prefetch-0", "type": "function", "function": {"name": pre_name, "arguments": json.dumps(pre_args, ensure_ascii=False)}}
+                body["messages"] = body["messages"] + [{"role": "assistant", "content": "", "tool_calls": [call]},
+                                                       {"role": "tool", "tool_call_id": "prefetch-0", "name": pre_name,
+                                                        "content": json.dumps(result, ensure_ascii=False)}]
+                yield _sse({"x_tool": {"id": "pre-0", "name": pre_name, "status": "error" if result.get("error") else "done", "summary": summary,
+                                       **({"error": result["error"]} if result.get("error") else {})}})
+                found = result.get("results", []) if pre_name == "web_search" else result.get("items", []) if pre_name == "news_search" else []
+                if found:
+                    yield _sse({"x_web_sources": [{"url": item["url"], "title": item.get("title") or item["url"]} for item in found if item.get("url")]})
+                if pre_name == "web_search" and result.get("results") and not any(p.get("text") for p in result.get("pages") or []):
+                    unread_web_results = True
+                if pre_name == "search_files" and result.get("results"):
+                    file_candidates.update({item["file_id"]: item for item in result["results"] if item.get("file_id")})
             for round_no in range(CHAT_TOOL_ROUNDS):
                 if await request.is_disconnected(): return
                 instruction_fingerprints.update(pending_instruction_fingerprints)
