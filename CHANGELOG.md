@@ -3,6 +3,13 @@
 Each release that changes behavior gets a new version in `app.py` (`APP_VERSION`) and an entry here. The build number in
 Settings (and in `Info.plist`) is the git commit count, so a report names exactly which build it came from.
 
+## Unreleased
+
+- The context meter could read more free space than the whole window ("128.9k of 128k free"): free space was counted in
+  thousands and the window in 1024s. Both now use 1024s, like every window size in the app.
+- README rewritten around what the app does, with new screenshots (light and dark) taken from a demo server by
+  `macos/readme_screenshots.py`; the detailed reference moved to `docs/GUIDE.md`.
+
 ## 1.6.0 (2026-10-28)
 
 The first step of the [production-readiness plan](docs/production-readiness-plan.md): a safety net, no new features.

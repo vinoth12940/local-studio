@@ -1,427 +1,174 @@
-# Local Studio
+<p align="center">
+  <img src="docs/logo.png" width="112" alt="Local Studio app icon">
+</p>
 
-<img src="docs/logo.png" width="96" align="right" alt="Local Studio logo">
+<h1 align="center">Local Studio</h1>
 
-A private, on-device AI studio for Apple Silicon Macs. Chat with models like **Qwen3.8-27B**
-accelerated by **DFlash/DSpark** speculative decoding or any **GGUF** model on **llama.cpp**, ask
-about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Image Turbo** or
-**FLUX.2 Klein**. Model inference runs locally. Web requests go to the search provider and
-sites you ask about; local file tools read your on-device index.
+<p align="center">
+  <b>A private AI studio that runs on your Mac.</b><br>
+  Chat, code, talk, search your files and make images with open models. Your chats and files stay on this Mac.
+</p>
 
-[![Latest release](https://img.shields.io/github/v/release/vinoth12940/local-studio?label=download&color=c2410c)](https://github.com/vinoth12940/local-studio/releases/latest)
-![macOS 14 or later](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
-![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M--series-black)
-[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.6.0**
+<p align="center">
+  <a href="https://github.com/vinoth12940/local-studio/releases/latest"><img src="https://img.shields.io/github/v/release/vinoth12940/local-studio?label=download&color=c2410c" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple" alt="macOS 14 or later">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-M--series-black" alt="Apple Silicon">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/vinoth12940/local-studio?color=555" alt="MIT license"></a>
+</p>
 
-**[⬇️ Download for Mac](https://github.com/vinoth12940/local-studio/releases/latest)** · [Install](#install) · [Use](#use)
+<p align="center">
+  <a href="https://github.com/vinoth12940/local-studio/releases/latest"><b>⬇️ Download for Mac</b></a>
+  &nbsp;·&nbsp; <a href="#what-it-does">What it does</a>
+  &nbsp;·&nbsp; <a href="#install">Install</a>
+  &nbsp;·&nbsp; <a href="#privacy">Privacy</a>
+  &nbsp;·&nbsp; <a href="docs/GUIDE.md">Guide</a>
+</p>
 
-![Chat](docs/chat.jpg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/chat-dark.jpg">
+  <img src="docs/screenshots/chat-light.jpg" alt="Local Studio answering a question from the user's own files: it searched them, read a warranty PDF and replied with the dates in a table.">
+</picture>
 
-| Model library | Images |
-|---|---|
-| ![Model library](docs/library.jpg) | ![Images](docs/images.jpg) |
+## Why Local Studio
 
-## Features
+- **Private by design.** Models run on your Mac. Conversations, documents, the file index and voice audio never leave
+  it. The app itself loads nothing from the internet.
+- **Fast on Apple Silicon.** MLX models with DFlash and DSpark speculative decoding run 2–3× faster than plain decoding.
+  Any GGUF model runs on llama.cpp.
+- **It does the work.** Every chat is an agent. It can search the web, read your documents, edit code and run your
+  tests, asking before anything changes.
+- **One app.** Chat, a coding workbench, voice, file search, computer use and image generation share one model library.
 
-- **Chat**: streaming replies, step-by-step per-round collapsible "thinking" and intermediate
-  notes, effort control, saved conversations with search/rename/delete, copy and regenerate, and
-  per-reply performance details (tok/s, speed-up, accept length, time to first token, cached tokens).
-  A reply keeps running while you open other chats or views (a dot marks it in the sidebar), and a
-  meter under the message box shows how much of the context is used and free.
-- **Agent Harness in chat**: local models work like a full coding and research agent harness across up
-  to 12 tool-calling rounds:
-  - **Workspace & codebase tools**: pick a workspace folder per conversation (`list_directory`,
-    `find_files`, `grep_files`, `read_file`), create or edit files (`write_file`, `edit_file`) with
-    unified diff previews, tolerant block matching, automatic backups, and 1-click **Undo**.
-  - **Local execution**: run Python (`run_python`) and shell commands (`run_shell`) in your active
-    workspace with numbered permission prompts (**Yes**, **Yes, and don't ask again in this chat**,
-    **No, and tell the agent what to do instead**; keys 1/2/3, Esc declines) and strict path/command
-    safety fences. **Shift+Tab** switches to *Accept edits* until you quit (commands still ask).
-  - **Planning, memory & clarifying questions**: live step-by-step task checklist (`todo_write`),
-    persistent cross-chat memory (`memory_store`, `memory_recall`, manageable in Settings), and
-    interactive clarifying question cards with option chips (`ask_user`).
-  - **Clock, web & indexed local files**: check the real date/time (`get_current_datetime`), search
-    and verify public web pages (`web_search`, `read_webpage`), and search/read indexed personal
-    documents and PDFs with on-device OCR (`search_files`, `read_file`).
-- **Code view**: a workspace view with a file explorer (Files, Changes, Outline), an editor with
-  Code/Diff modes and syntax checks on save, a real terminal (your login shell, in the workspace), and
-  the agent beside it with one-click `/review`, `/test`, `/commit`, `/simplify`, `/init` and `/compact`.
-- **Attachments (multimodal)**: attach with the paperclip, drag and drop, or paste. Ask about
-  images (Qwen3.8 vision), PDFs, Word (.docx), Excel (.xlsx), and text/code files. Scanned PDFs
-  are read as page images.
-- **Computer use in chat**: ask naturally to use a browser or Mac app (`use_computer`). Chat chooses
-  when to act and shows progress, approvals and results in the same conversation. Computer access is
-  enabled once.
-- **Images**: text-to-image with aspect presets, steps, seed, guidance and step caching; live
-  progress with ETA and cancel; a library with full-size view, reuse settings, download and delete.
-- **Model library**: one-click download, switch and delete for a curated set of chat and image
-  models, plus search across Hugging Face for any MLX or GGUF model (pick the quantization).
-  Switch the chat model from the header; the right engine starts automatically.
-- **Settings**: start/stop the engine, see versions, update the engines in one click, manage
-  persistent agent memory, clear images, chats, uploads, logs and caches, and uninstall everything.
-- **API**: the engine serves OpenAI- and Anthropic-compatible endpoints at
-  `http://127.0.0.1:8080/v1`, usable from Claude Code, scripts or other local apps.
+## What it does
 
-## Requirements
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/code.jpg" alt="The Code view: file explorer, editor, terminal and the agent fixing a failing test">
+      <b>Code.</b> An explorer, editor and real terminal beside the agent, which edits files with diff previews and
+      one-click Undo, runs your tests, and has <code>/review</code>, <code>/test</code> and <code>/commit</code>.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/voice.jpg" alt="The Voice view speaking an answer, with the transcript and voice picker">
+      <b>Voice</b> <i>(preview)</i>. Talk hands-free and interrupt any time. The microphone is echo-cancelled, there are
+      13 voices, and speech is recognized and spoken on this Mac.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/files.jpg" alt="Search finding a warranty PDF with the matching passage highlighted">
+      <b>Search your files.</b> Describe what you're looking for. It finds documents, PDFs and scans, photos, voice memos
+      and videos, and opens the page where it matched.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/images.jpg" alt="The Images view with generated pictures in the library">
+      <b>Images.</b> Text-to-image with Qwen-Image 2.1, Z-Image Turbo or FLUX.2 Klein, with live progress, seeds and a
+      library.
+    </td>
+  </tr>
+</table>
 
-- Mac with Apple Silicon (M1 or newer), macOS 14+
-- 16 GB RAM for the smallest models, 32 GB+ for the larger ones; 48 GB recommended (all numbers below are from a 48 GB M4 Pro)
-- ~30 GB free disk space for the models
-- Internet for installation, model downloads and public web tools; everything else, including the interface, works offline
+- **Chat** with thinking you can open, live tool steps, attachments (images, PDFs, Word, Excel, code), and speed shown
+  under every reply.
+- **Your documents in chat.** Turn on **My files** and it answers from your own documents, naming the ones it used.
+- **Computer use** *(experimental).* It drives an isolated Chrome or your Mac apps, with per-app permissions and an
+  approval for every risky step.
+- **[Model library](docs/screenshots/models.jpg).** One-click downloads of curated models, plus any MLX or GGUF model
+  from Hugging Face.
+- **Local API.** OpenAI- and Anthropic-compatible endpoints at `http://127.0.0.1:8080/v1` for your own scripts and apps.
+
+The [guide](docs/GUIDE.md) covers every tool, limit and setting.
 
 ## Install
 
-### The easy way (recommended)
+1. Download **Local-Studio-1.6.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+2. Open it and drag **Local Studio** to **Applications**.
+3. Open Local Studio and click **Install**. It sets up the engines: about 3 GB and a few minutes, with no Terminal,
+   Homebrew or Xcode.
+4. Pick a model. Local Studio suggests ones that fit your Mac's memory; chat unlocks when the download finishes.
 
-1. Get **Local-Studio-1.6.0.dmg** from the [Releases page](https://github.com/vinoth12940/local-studio/releases/latest)
-   (each release lists the DMG's SHA-256 and has a `.sha256` file).
-2. Open it and drag **Local Studio** into **Applications**.
-3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
-   engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
-   or Xcode needed).
-4. Pick your first model. Local Studio recommends models that fit your Mac's memory, and chat
-   unlocks when the download finishes.
+The DMG is signed with a Developer ID and notarized by Apple, so it opens without a warning. Each release lists its
+SHA-256.
 
-Requirements are listed above; the models you choose need 3–25 GB of disk each.
+**You need:**
+- **Mac:** Apple Silicon (M1 or newer), macOS 14 Sonoma or later.
+- **Memory:** 16 GB for small models, 32 GB or more for the larger ones; 48 GB is recommended.
+- **Disk:** about 3 GB for the engines, plus 3–25 GB per model.
+- **Internet:** for setup, model downloads and web search. Everything else works offline.
 
-> Releases from 1.6.0 on are signed with a Developer ID and notarized by Apple, so they open without a
-> warning. An older DMG that macOS blocks can be opened from **System Settings → Privacy & Security → Open Anyway**.
+### Optional features
 
-### From source (developers)
+- **Search your files:** Settings → Search. It downloads its model (1.3 GB) and components (about 1 GB) once, then
+  indexes in the background.
+- **Computer use:** Settings → Computer access. It needs [CuaDriver](https://github.com/trycua/cua) 0.28.2 or newer,
+  with its Accessibility and Screen Recording permissions, and Google Chrome.
+- **Voice** *(preview):* add `"voice": {"enabled": true}` to
+  `~/Library/Application Support/Local Studio/data/settings.json`, then reopen the app. See the
+  [guide](docs/GUIDE.md#voice-preview).
 
-```sh
-git clone https://github.com/vinoth12940/local-studio.git ~/local-studio
-cd ~/local-studio
-./setup.sh --install        # engines only; or ./install.sh for engines + default models
-./start.sh                  # then open http://127.0.0.1:7860
-```
+### Handy shortcuts
 
-When run from a checkout, user data stays in the checkout folder. The Mac app keeps it in
-`~/Library/Application Support/Local Studio` and, on its first launch, copies existing images,
-chats and settings over from `~/local-studio`.
-
-## Mac app
-
-`Local Studio.app` is self-contained: the code ships inside the app bundle
-(`Contents/Resources/app`) and user data lives in `~/Library/Application Support/Local Studio`.
-
-- Opening the app checks that the engines are installed (and offers to install them), then starts
-  the engine and interface automatically.
-- Quitting (⌘Q) stops everything and frees the model's memory. Check
-  **Local Studio → Keep Running After Quit** to keep the servers running in the background.
-- **Local Studio → Repair or Update Engines…** re-runs the installer.
-- **Local Studio → Show Data Folder** opens your images, chats and logs.
-- Closing the window keeps the app in the Dock; click the icon to bring it back.
-
-### Building a release
-
-```sh
-macos/build.sh --install   # build Local Studio.app and copy it to /Applications
-macos/release.sh           # build, sign and notarize build/Local-Studio-<version>.dmg (+ .sha256)
-macos/release.sh --publish # the same, then publish it as GitHub release v<version> (on main only)
-```
-
-The app is signed with a **Developer ID Application** certificate when one is installed (otherwise
-your Apple Development certificate, which only works on your own Macs). [docs/RELEASING.md](docs/RELEASING.md)
-covers notarization credentials, cutting a release, the optional GitHub Actions release on a `v*` tag, and the
-Homebrew cask template.
-
-## Use
-
-```sh
-./start.sh          # engine + UI (from a source checkout), then open http://127.0.0.1:7860
-./start.sh --ui     # UI only; start the engine later from the UI to save memory
-./stop.sh           # stop everything and free memory
-```
-
-The servers listen on `127.0.0.1` only and are not reachable from other devices.
-
-## Search your files
-
-Turn on **Search** in Settings and Local Studio indexes your Documents, Desktop, Downloads,
-Pictures, Movies, Music and iCloud Drive in the background, on this Mac. You can then:
-
-- **Find** a file by describing it: "the invoice from the plumber", "photo of a desert plant at
-  night", "voice memo about the dentist". Text, images, spoken audio and videos (by what is on
-  screen and what is said, first 10 minutes) are all searchable.
-- **Preview** a result where it matched: the PDF page with the passage highlighted, the passage in
-  context for Word, Excel, notes and code, the picture, or the recording or video from the matching moment.
-  The best match is previewed as you type; the arrow keys move between results.
-- **Ask** in chat with the **My files** switch on. The active chat model answers from your files
-  and lists the ones it used.
-
-Search uses [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) on MLX. It is off
-until you turn it on; doing so downloads the model (1.3 GB) and its components (about 1 GB) once.
-Indexing pauses while you chat or generate images, and on battery power unless you allow it.
-Add or remove folders, see what could not be read, and rebuild or delete the index in
-Settings → Search. The index lives in `data/search/`.
-
-Not indexed: hidden files, `Library`, apps and other packages (including the Photos library),
-developer folders such as `node_modules` and `.git`, Python environments (recognised by their
-contents, whatever they are called), copied `node_modules` contents, and private keys. Unrecognised types and
-iCloud files that are not downloaded to this Mac are found by name only.
-
-## Agent Harness & actions in chat
-
-Chat includes a multi-step **Agent Harness** tailored for local models (up to 12 tool-calling
-rounds per turn) as well as live browser/macOS computer use. There is no separate task mode: ask
-naturally in regular chat, and each round renders its own collapsible **Thought for Xs · N words** block,
-intermediate notes, expandable tool inspector cards, approvals, and final answer in chronological order.
-
-### Workspace, coding & execution tools
-
-Click the **Workspace** folder pill in the composer to bind a conversation to any local project
-folder (or leave it on the default workspace):
-
-- **Explore & inspect**: `list_directory`, `find_files`, `grep_files`, and `read_file` let the model
-  browse directories, find files by glob or substring, search code with regexes, and read file line
-  ranges (with line numbers) or local PDFs/DOCX/XLSX.
-- **Create & edit files**: `write_file` and `edit_file` show a unified diff preview and require your
-  approval (**Yes**, **Yes, and don't ask again in this chat**, or **No** with a note on what to do
-  instead), unless *Accept edits* is on. Edits use whitespace- and
-  line-number-tolerant block matching so local models succeed reliably. Every file modification saves
-  an automatic backup first and displays a 1-click **Undo** button on the completed tool step.
-- **Run Python & shell commands**: `run_python` (20 s timeout) and `run_shell` (30 s timeout) run in
-  the active workspace after approval, streaming stdout/stderr into the expandable tool step.
-- **Safety fences**: sensitive paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, `Keychains`, `.env` files,
-  private keys, and macOS system directories) and destructive shell patterns (`sudo`, `rm -rf /`,
-  `curl | sh`, `dd if=`, `mkfs`, `launchctl`, keychain dumps) are blocked automatically.
-- **Task planning, memory & clarifying questions**: for multi-step work, the model can maintain a
-  live task checklist (`todo_write`), ask an interactive clarifying question with selectable option
-  chips (`ask_user`), and store or recall persistent cross-chat preferences and facts
-  (`memory_store`, `memory_recall`, viewable and deletable under **Settings → Agent memory**).
-
-### Clock, web & indexed personal documents
-
-Questions such as "What is today's date?", "Check the current Mac lineup", and "Find my most
-recent I-94" or "When is Mithran's passport expiring?" use clock (`get_current_datetime`), web
-(`web_search`, `read_webpage`) and local-file (`search_files`, `read_file`) tools directly in chat.
-Personal documents (passports, visas, I-94s, EADs, tax forms, receipts, notes) always search your
-local files first rather than the public web. Web snippets are leads to verify against source pages;
-unavailable or unreadable sources produce errors rather than assumed facts. Local-file tools
-compare labeled document dates when present and identify filename-only dates as less precise; file
-modification time alone does not prove which document is newest. Scanned PDFs and images are read
-with on-device Vision OCR (`DocumentReader`), and filled PDF form values are preserved when chat
-reads a document. The model checks the person and field label: an I-94 Admit Until Date is separate
-from the government form expiration date. **My files** uses the same search/read tools instead of
-limiting the answer to a few automatically retrieved snippets.
-
-### Browser & Mac app control (CuaDriver)
-
-Ask in the regular chat: "Open Calculator", "Look up the Apple Store hours", or "Fill in this
-form and stop before submitting." When a request needs live GUI or browser interaction, the model
-calls `use_computer()`. Computer access is off by default. The first action request offers **Enable computer access
-and continue** in the chat, or you can manage it in **Settings → Computer access**. Once enabled,
-you keep chatting normally. Risky actions still pause for Allow once, Deny or Stop. Password,
-card and one-time-code fields remain blocked. **Take over** brings the browser or app forward
-for you; Resume continues the same task. Native-app support remains experimental.
-
-Browser actions use an isolated Chrome profile. Pages and app contents go only to the local
-model. Text documents can provide background for a task; actions using image attachments are
-not supported yet, while ordinary image questions continue to work in chat.
-
-Requirements:
-
-- [CuaDriver](https://github.com/trycua/cua) 0.28.2 or newer, installed on the Mac. Local Studio
-  runs its own CuaDriver, separate from any other, and never changes its settings without your click.
-- macOS **Accessibility** and **Screen Recording** for CuaDriver. Settings → Computer access shows the
-  status and a Grant button.
-- Google Chrome, for the agent's isolated browser.
-
-Privacy: everything runs on this Mac, and pages and app contents go only to your local model.
-CuaDriver's own telemetry is **on by default**; Settings → Computer access shows its state and a
-**Turn off** button. The agent's browser profile lives in
-`~/Library/Application Support/CuaDriver/BrowserProfiles`; Settings has Reset browser profile.
-Runs and their screenshots are saved in `data/agent/runs/` and can be inspected from the chat and deleted from task history.
-
-Which Mac apps it may touch (Settings → Computer access, editable):
-
-| Tier | What it can do | Default apps |
-|---|---|---|
-| Read-only | Look, never act | Banking and finance apps, Keychain Access, System Settings, Terminal and other shells, password managers, Local Studio itself |
-| Ask first | Every changing click or keystroke asks | Mail, Messages, chat apps, Calendar, Finder, your own browsers (Safari, Chrome, Firefox, …) |
-| Allowed | Acts freely; risky wording such as send or delete still asks | Every other app |
-
-Limits in this release:
-
-- Downloads are not supported: Chrome opens its save dialog and the task waits there (you can Take over).
-- The agent can't open or read pages served by this Mac (such as Local Studio itself).
-- Controls that share a name are listed as "position uncertain", and it avoids clicking them blindly.
-- One task at a time, and chat and image generation wait while it runs. Tasks stop at a step
-  limit (40) or time limit (15 minutes, counted while the Mac is awake); a long research task may
-  end with an answer labelled **Partial answer**.
-- Mac-app control is **experimental** in this release: Calculator button actions are verified on a
-  live Mac; Notes creation is still tested with recorded app data. It depends on the app exposing
-  accessibility. With several app windows, CuaDriver may refuse background typing; use **Take over**
-  to complete that step, then **Resume**. If an app doesn't
-  respond, quit and reopen it, or switch CuaDriver off and on in System Settings → Privacy &
-  Security → Accessibility.
-- Small local models misread pages sometimes; check the answer, and watch tasks that matter.
-
-## Models
-
-Chat models (one-click in the Model library; sizes are download sizes):
-
-| Model | Engine | Size | Notes |
-|---|---|---|---|
-| Qwen3.8 27B (default) | MLX + DFlash 2 | 18.7 GB | Best all-rounder, vision, ~40 tok/s |
-| Qwen3.6 35B-A3B | MLX + DSpark | 23.5 GB | Fast MoE, vision, coding |
-| Nemotron 3.5 Lightning 30B-A3B | MLX + DSpark | 19.7 GB | Fast hybrid MoE |
-| Gemma 4 12B | MLX + DFlash | 14.2 GB | Multilingual writing, vision |
-| Qwen3 8B | MLX + DFlash | 10.8 GB | Light everyday model |
-| LFM2.5 24B-A2B | MLX | 13.6 GB | Reasoning MoE (2B active), agents and tool use, ~85 tok/s (measured) |
-| LFM2.5 1.2B | MLX + DSpark | 2.9 GB | Tiny, ~200 tok/s (measured) |
-| Qwen3 Coder 30B-A3B | llama.cpp (GGUF Q4_K_M) | 18.6 GB | Coding |
-| Qwen3.6 35B-A3B | llama.cpp (GGUF UD-Q4_K_M) | 23.0 GB | Vision via mmproj |
-| Gemma 4 12B | llama.cpp (GGUF Q4_K_M) | 7.3 GB | Vision via mmproj |
-| Qwen3.5 9B | llama.cpp (GGUF Q4_K_M) | 6.6 GB | Vision via mmproj |
-
-Image models: Qwen-Image 2.1 (default, 9.6 GB), Z-Image Turbo (5.9 GB, ~9 steps) and
-FLUX.2 Klein 4B (4.6 GB, 4 steps; a 1024 px image took 27 s on an M4 Pro).
-
-Anything else: Model library → Search Hugging Face. MLX repos run on the accelerated engine
-(without a drafter unless it's in mlx-dspark's registry); GGUF repos run on llama.cpp, and
-ticking "Vision" also downloads the repo's mmproj file. The catalog lives in `catalog.json`.
-
-## How the engines work
-
-Only one engine runs at a time, so memory stays free for the model:
-
-| Engine | Runs | Port |
-|---|---|---|
-| mlx-dspark | MLX chat models with DFlash/DSpark speculative decoding (text) | 8080 |
-| mlx-vlm | The same MLX model when a chat contains an image | 8081 |
-| llama.cpp (`llama-server`) | GGUF models, including images when an mmproj is present | 8082 |
-
-Switching models or engines takes about 5–30 s depending on model size; the chat shows a
-"Loading …" message meanwhile.
-
-## How attachments work
-
-Qwen3.8-27B is multimodal, but the fast DFlash engine (mlx-dspark) is text-only. Local Studio
-therefore runs one of two engines on the same weights, never both (each needs ~16 GB):
-
-| Engine | Used for | Speed (measured) |
-|---|---|---|
-| Text: mlx-dspark + DFlash 2 | Chats without images, including document attachments | ~40 tok/s |
-| Vision: mlx-vlm server | Chats that contain an image or scanned PDF | ~20 tok/s, ~10 s to read an image |
-
-The app switches automatically when a chat needs the other engine. GGUF models with an mmproj
-read images directly on llama.cpp, with no switch. Models without vision show a clear message.
-
-Documents are converted to text when you attach them (PDF via pypdf, Word via python-docx, Excel via
-openpyxl, text and code as-is) and added to your message. Each document is capped at about 20k
-tokens so the context window (128k by default, 100k minimum; change it in Settings → Context window) keeps room for the answer; longer files are marked "truncated". Images are
-downscaled to 1536 px. Scanned PDFs (no text layer) send their first 4 pages to the vision engine.
-Files stay in `uploads/` on this Mac.
-
-## Performance (M4 Pro, 48 GB)
-
-| | Result |
+| Keys | Does |
 |---|---|
-| Qwen3.8-27B 4-bit, plain decoding | 15.0 tok/s |
-| Same model with DFlash 2 | **41.7 tok/s (2.78×)**; chat 2.0×, code 3.1×, math 3.25× |
-| Chat engine memory | ~16 GB resident, ~19 GB peak |
-| Image, 1024px | ~10.5 s per step in low-RAM mode, ~10 GB peak |
+| <kbd>⇧</kbd><kbd>⌘</kbd><kbd>O</kbd> | New chat |
+| <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> | Answer an approval: yes, yes for this chat, no and say what to do instead |
+| <kbd>Esc</kbd> | Stop a reply, or decline an approval |
+| <kbd>⇧</kbd><kbd>Tab</kbd> | Accept edits inside the workspace until you quit |
+| <kbd>@</kbd> and <kbd>/</kbd> | Mention a file or folder; run a command such as `/review` or `/compact` |
 
-The "vs plain" figure under each reply compares against the engine's theoretical plain-decoding
-ceiling, so it reads slightly lower than the benchmark speed-up.
+## Privacy
 
-Image jobs run with mflux `--low-ram`. Without it, generation peaked at ~38 GB and pushed macOS
-into critical memory pressure while the chat engine was loaded. Chat and image generation share
-the GPU, so running both at once slows each down.
+**Stays on your Mac:** the models, your conversations, attached files, the file index and its previews, and voice audio
+(which is never saved). The interface is bundled with the app, fonts included.
 
-Re-run the benchmark yourself:
+**What goes out, and only when needed:**
+- Setup downloads the engines from PyPI, GitHub and astral.sh (uv), and models come from Hugging Face.
+- Web search queries go to DuckDuckGo, and pages are fetched when the model reads them.
+- Computer-use tasks browse the sites you ask for. CuaDriver's own telemetry is on by default; Settings → Computer access
+  turns it off.
 
-```sh
-mlx-dspark benchmark --model mlx-community/Qwen3.8-27B-4bit --modes dflash --caps auto --trials 3
-```
+**Safeguards:**
+- Every server listens on `127.0.0.1` only.
+- The file-search service also requires a private token, so other programs on the Mac can't read your index.
+- Edits, commands and risky computer actions wait for your approval, and file edits can be undone.
 
-## Image editing
+Details, threat model and opt-in hardening: [docs/security.md](docs/security.md).
 
-Editing (`mflux-generate-qwen-2.1-edit`) needs the full `Qwen/Qwen-Image-2.1` checkpoint
-(33.1 GB); the 4-bit export used here is text-to-image only, so the UI offers generation only.
-The backend accepts `mode=edit` on `POST /api/image` when started with
-`EDIT_MODEL=Qwen/Qwen-Image-2.1` (after downloading that checkpoint). Stop the chat engine while
-editing, as the full checkpoint needs a lot of memory.
-
-## Updating
-
-Settings → **Update engines** runs `uv tool upgrade mlx-dspark mflux` and `brew upgrade llama.cpp`
-and shows what changed. Restart the engine afterwards. Pull new app versions with `git pull` and
-rebuild the Mac app with `macos/build.sh --install`.
-
-## Configuration
-
-Environment variables read by `app.py`:
-
-| Variable | Default |
-|---|---|
-| `EDIT_MODEL` | unset (image editing disabled) |
-| `HF_HUB_CACHE` | `~/.cache/huggingface/hub` |
-
-The active chat and image models and any models added from Hugging Face are stored in
-`data/settings.json`.
-
-## Where things are stored
-
-| What | Location |
-|---|---|
-| Models (MLX and GGUF) | `~/.cache/huggingface/hub` |
-| Active models, custom models | `<data>/data/settings.json` |
-| llama.cpp (when installed without Homebrew) | `~/Library/Application Support/Local Studio/llama.cpp` |
-| Engine calibration | `~/.cache/mlx_dspark` |
-| Images | `<data>/gallery/` |
-| Conversations | `<data>/data/chats/` |
-| Attachments | `<data>/uploads/` |
-| Local file search index | `<data>/data/search/` |
-| Agent computer-use runs | `<data>/data/agent/runs/` |
-| Agent persistent memory | `<data>/data/agent/memory.json` |
-| Agent file-edit backups (Undo) | `<data>/data/agent/backups/` |
-| Logs | `<data>/logs/` |
-
-`<data>` is `~/Library/Application Support/Local Studio` for the Mac app, or the checkout folder
-when running from source. None of these folders are committed to git.
-
-## Uninstall
-
-From the UI: **Models & storage → Uninstall**. Or from the terminal:
+## For developers
 
 ```sh
-./uninstall.sh               # remove tools and models, keep this folder
-./uninstall.sh --remove-app  # also delete this folder (images and chats)
+git clone https://github.com/vinoth12940/local-studio.git && cd local-studio
+./setup.sh --install      # install the engines (or ./install.sh for engines plus default models)
+./start.sh                # then open http://127.0.0.1:7860
+./stop.sh                 # stop everything and free the memory
+macos/build.sh --install  # build Local Studio.app, run every check, copy it to /Applications
 ```
 
-This stops the servers, uninstalls llama.cpp (Homebrew), runs `uv tool uninstall` for mlx-dspark and mflux, deletes every model in the catalog
-or added from Hugging Face, removes `~/.cache/mlx_dspark`, and deletes `/Applications/Local Studio.app` if present. uv itself is left installed.
+| Path | What it is |
+|---|---|
+| `app.py`, `studio/` | The FastAPI backend: engines, the chat agent, tools, search, voice and computer use |
+| `index.html`, `frontend/` | The interface: vanilla JS modules, with fonts, marked and xterm.js bundled in `frontend/vendor/` |
+| `search.py`, `voice.py` | The file-search and voice services, each its own process |
+| `macos/` | The native app, the DocumentReader OCR tool, every check suite, and build and release scripts |
+| `docs/` | The [guide](docs/GUIDE.md), [security](docs/security.md), [releasing](docs/RELEASING.md) and design notes |
 
-## Project layout
+**Checks.** `macos/build.sh` runs every check, and CI runs it on every pull request. Releases are signed, notarized and
+published with `macos/release.sh --publish`; see [docs/RELEASING.md](docs/RELEASING.md).
 
-```
-app.py          FastAPI backend: engines, chat & agent harness, computer use, attachments, images, models
-catalog.json    Curated chat and image models
-index.html      Single-page UI (step-by-step thinking, tool inspector, computer-use cards, gallery, library)
-search.py       On-device semantic & lexical file search service (EmbeddingGemma 2 on MLX)
-setup.sh        Checks the Mac and installs the engines (used by the app's first-run screen)
-install.sh      Engines + default models, for source checkouts
-start.sh        Starts engine and UI
-stop.sh         Stops everything
-uninstall.sh    Removes tools, models and (optionally) this folder
-macos/          Native Mac app: main.swift, document_reader.swift, logos.py, check_*.py, build.sh, release.sh
-```
+**Architecture.** [CLAUDE.md](CLAUDE.md) describes the architecture and conventions; `AGENTS.md` is the short version.
+`macos/readme_screenshots.py` retakes these screenshots from a demo server.
 
-## Contributing
-
-Issues and pull requests are welcome. Before opening a pull request, run `macos/build.sh` (it checks
-that the UI script and `app.py` load cleanly) and try the change in the app. New models can be added
-to `catalog.json`.
+Issues and pull requests are welcome.
 
 ## License
 
-Local Studio is released under the [MIT License](LICENSE).
+Local Studio is released under the [MIT License](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for what changed in each
+release.
 
-It builds on [mlx-dspark](https://github.com/ARahim3/mlx-dspark), [MLX](https://github.com/ml-explore/mlx),
-[mlx-vlm](https://github.com/Blaizzy/mlx-vlm), [mflux](https://github.com/filipstrand/mflux) and
-[llama.cpp](https://github.com/ggml-org/llama.cpp), which are installed separately under their own licenses.
-Model weights are downloaded from Hugging Face under each model's license; check the model card
-before commercial use (some, such as Qwen-Image 2.1, are described as research/non-commercial).
+**Credits.** It builds on [mlx-dspark](https://github.com/ARahim3/mlx-dspark), [MLX](https://github.com/ml-explore/mlx),
+[mlx-vlm](https://github.com/Blaizzy/mlx-vlm), [mflux](https://github.com/filipstrand/mflux),
+[llama.cpp](https://github.com/ggml-org/llama.cpp), [Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) and
+Phonon. These are installed separately under their own licenses.
+
+**Model licenses.** Model weights come from Hugging Face under each model's license. Check the model card before
+commercial use; some, such as Qwen-Image 2.1, are described as research or non-commercial.

@@ -452,6 +452,8 @@ the version (badge and DMG filename), so update those together. Commit messages 
 that changes behavior and add its entry to `CHANGELOG.md` (dated before `release.sh --publish`, which refuses an
 `unreleased` entry, a non-notarized DMG, anything but `main` as pushed, and an existing tag); the release gate audits
 `requirements-app.txt`, `search-requirements.txt` and `voice-requirements.txt` and stops on any known vulnerability; Settings shows the version with the build number from `Info.plist`.
+When the UI changes visibly, retake the README screenshots with `macos/readme_screenshots.py` (demo server and demo content
+only; its docstring has the setup) rather than capturing the live app, which would show the user's own chats and files.
 
 CI (`.github/workflows/checks.yml`) runs `macos/build.sh` itself on an Apple Silicon runner for every pull request and push
 to `main`, so a check added to build.sh runs in CI too. Its actions are pinned to commit SHAs. Checks there have no models,
