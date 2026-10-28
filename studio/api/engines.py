@@ -112,7 +112,10 @@ def engine_start():
     m = chat_model()
     if not models.model_installed(m):
         raise HTTPException(409, f"Download {m['name']} first (Model library).")
-    mode = "gguf" if m.get("backend") == "gguf" else "text"
+    too_old = engines.engine_too_old(m)
+    if too_old:
+        raise HTTPException(409, too_old)
+    mode = models.engine_mode(m)
     threading.Thread(target=_ensure_quiet, args=(mode, m), daemon=True).start()
     return {"status": "starting", "mode": mode, "model_id": m["id"]}
 

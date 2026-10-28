@@ -5,6 +5,7 @@ Moved from app.py in the refactor's P1 split.
 
 import json
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -79,6 +80,44 @@ def _engine_ready(mode):
         return False
 
 
+_engine_versions: dict = {}        # engine -> installed version, read once per process (an engine update clears it)
+
+
+def _installed_version(engine):
+    """mlx-vlm's version in the mlx-dspark env, or llama.cpp's build ("b11960"); None when it can't be read."""
+    if engine not in _engine_versions:
+        version = None
+        try:
+            if engine == "mlx-vlm":
+                out = subprocess.run([str(DSPARK_PY), "-c", "import importlib.metadata as m; print(m.version('mlx-vlm'))"],
+                                     capture_output=True, text=True, timeout=20)
+                version = out.stdout.strip() or None
+            elif engine == "llama.cpp":
+                out = subprocess.run([LLAMA_SERVER, "--version"], capture_output=True, text=True, timeout=10)
+                version = _llama_build(out.stdout + out.stderr)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        _engine_versions[engine] = version
+    return _engine_versions[engine]
+
+
+def _llama_build(text):
+    """The build in `llama-server --version`: "version: 0.7.0 (build 11669, …)", or "version: 6123 (…)" before 0.x."""
+    found = re.search(r"build (\d+)", text) or re.search(r"version: (\d+) ", text)
+    return f"b{found.group(1)}" if found else None
+
+
+def engine_too_old(m):
+    """Why this model can't run on the installed engines (its catalog `min_engine`), or None."""
+    def key(v):
+        return tuple(int(x) for x in re.findall(r"\d+", v))
+    for engine, want in (m.get("min_engine") or {}).items():
+        have = _installed_version(engine)
+        if have and key(have) < key(want):
+            return f"{m['name']} needs {engine} {want} or newer, and this Mac has {have}. Use Settings → Update engines, then try again."
+    return None
+
+
 def _uses_mlx_lm(repo):
     """mlx-dspark routes multimodal configs to mlx-vlm except qwen3_5-family; --kv-bits only
     applies on the mlx-lm route."""
@@ -143,6 +182,9 @@ def ensure_engine(mode, m, timeout=300):
         window_changed = st.get("context_window", studio_config.LEGACY_CONTEXT) != effective_context(m)
         if st.get("mode") == mode and st.get("model_id") == m["id"] and _engine_ready(mode) and not window_changed:
             return False
+        too_old = engine_too_old(m)                   # before stopping anything: the running model keeps working
+        if too_old:
+            raise RuntimeError(too_old)
         for other in ENGINES:
             if _proc_running(ENGINES[other]["pattern"]) and (other != mode or st.get("model_id") != m["id"] or window_changed):
                 _stop_engine(other)

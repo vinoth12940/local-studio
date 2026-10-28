@@ -112,7 +112,7 @@ def set_active(id: str = Body(..., embed=True), kind: str = Body("chat", embed=T
     save_settings(s)
     eng = engines.engine_state()
     if eng.get("mode") and eng.get("model_id") != id:      # swap the running engine in the background
-        mode = "gguf" if m.get("backend") == "gguf" else "text"
+        mode = services_models.engine_mode(m)
         threading.Thread(target=_ensure_quiet, args=(mode, m), daemon=True).start()
     return {"ok": True}
 

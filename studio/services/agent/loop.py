@@ -38,7 +38,7 @@ from studio.services.agent.cua import (
 from studio.services.agent.views import (
     _dom_attrs, _dom_join, _line_score, _query_words, _snap_more, _view_controls, fold_history, VIEW_REPEATED_HEAD,
 )
-from studio.services.models import chat_models
+from studio.services.models import chat_models, engine_mode
 from studio.storage.settings import load_settings
 
 
@@ -1602,7 +1602,7 @@ def run_agent(run, held=False):
         m = next((x for x in chat_models() if x["id"] == run.model_id), None)
         if m is None:
             raise _AgentEnd("failed", "model", "That model is no longer available.")
-        mode = "gguf" if m.get("backend") == "gguf" else "text"
+        mode = engine_mode(m)
         client = _agent_client()                             # before the engine: a run CuaDriver can't serve never switches models
         if _perm_missing(agent_check_permissions(client)):
             raise _AgentEnd("failed", "permissions", AGENT_PERM_MSG)

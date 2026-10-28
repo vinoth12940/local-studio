@@ -60,7 +60,7 @@ def main(argv=None):
         os.environ["LOCAL_STUDIO_EVAL_ATTACH"] = "1"
     from studio.config import ENGINES
     from studio.services import engines
-    from studio.services.models import chat_model
+    from studio.services.models import chat_model, engine_mode
 
     model_id, mode, served, model_check = args.model, "text", None, None
     if args.attach:
@@ -68,7 +68,7 @@ def main(argv=None):
         if entry["id"] != model_id:
             print(f"Unknown chat model id {model_id!r}; chat_model() would silently substitute {entry['id']!r}.", file=sys.stderr)
             return 2
-        mode = "gguf" if entry.get("backend") == "gguf" else "text"
+        mode = engine_mode(entry)
         if not engines._engine_ready(mode):
             print(f"BLOCKED: no {mode} engine answers at {ENGINES[mode]['url']}. Load {entry['name']} in Local Studio, then rerun.", file=sys.stderr)
             return 3

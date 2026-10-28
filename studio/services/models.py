@@ -105,6 +105,14 @@ def effective_context(m):
     return min(config.CONTEXT, native) if native else config.CONTEXT
 
 
+def engine_mode(m, needs_vision=False):
+    """The engine that serves this model: llama.cpp for GGUF; for MLX, mlx-vlm when the request carries an image or the
+    model runs only there (`"engine": "vlm"`: a family mlx-dspark serve can't load, such as LFM3), else mlx-dspark."""
+    if m.get("backend") == "gguf":
+        return "gguf"
+    return "vision" if needs_vision or m.get("engine") == "vlm" else "text"
+
+
 def _repo_bytes(repo):
     """Bytes on disk for a repo, counting partial downloads."""
     d = repo_dir(repo)

@@ -49,7 +49,8 @@ for b in bodies:
                 except ValueError: pass
 out = {}
 for snap in sys.argv[2:]:
-    tok = AutoTokenizer.from_pretrained(snap)
+    # never the checkpoint's own Python (LFM3 ships an auto_map); without this, transformers asks [y/N] on stdout
+    tok = AutoTokenizer.from_pretrained(snap, trust_remote_code=False)
     results = []
     for b in bodies:
         try:

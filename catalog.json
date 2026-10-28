@@ -92,6 +92,48 @@
       "thinking": false
     },
     {
+      "id": "lfm3-1.7b",
+      "name": "LFM3 1.7B",
+      "backend": "mlx",
+      "repo": "LiquidAI/LFM3-1.7B-MLX-8bit",
+      "engine": "vlm",
+      "min_engine": {
+        "mlx-vlm": "0.7.11"
+      },
+      "accel": "MLX",
+      "vision": false,
+      "size_gb": 1.9,
+      "ram_gb": 4,
+      "sampling": {
+        "temperature": 0.1,
+        "top_k": 50,
+        "repetition_penalty": 1.1
+      },
+      "blurb": "Liquid AI's tiny agent model: trained for tool use and agent work, with a 256K context. About 2 GB, so it leaves room for everything else."
+    },
+    {
+      "id": "lfm3-vl-2b",
+      "name": "LFM3-VL 2B",
+      "backend": "mlx",
+      "repo": "LiquidAI/LFM3-VL-2B-MLX-8bit",
+      "engine": "vlm",
+      "min_engine": {
+        "mlx-vlm": "0.7.11"
+      },
+      "accel": "MLX",
+      "vision": true,
+      "size_gb": 2.2,
+      "ram_gb": 5,
+      "sampling": {
+        "temperature": 0.1,
+        "top_p": 1.0,
+        "top_k": 50,
+        "min_p": 0.0,
+        "repetition_penalty": 1.1
+      },
+      "blurb": "Liquid AI's small vision model: reads photos, charts and screenshots, finds objects, and thinks before it answers."
+    },
+    {
       "id": "gguf-qwen3-coder-30b",
       "name": "Qwen3 Coder 30B-A3B",
       "backend": "gguf",
@@ -142,6 +184,51 @@
       "size_gb": 6.6,
       "ram_gb": 8,
       "blurb": "Small, capable and multimodal. Runs on llama.cpp."
+    },
+    {
+      "id": "gguf-lfm3-1.7b",
+      "name": "LFM3 1.7B (GGUF)",
+      "backend": "gguf",
+      "repo": "LiquidAI/LFM3-1.7B-GGUF",
+      "file": "LFM3-1.7B-QAD-Q4_0.gguf",
+      "min_engine": {
+        "llama.cpp": "b11960"
+      },
+      "accel": "llama.cpp",
+      "vision": false,
+      "size_gb": 1.1,
+      "ram_gb": 3,
+      "context": 262144,
+      "sampling": {
+        "temperature": 0.1,
+        "top_k": 50,
+        "repetition_penalty": 1.1
+      },
+      "blurb": "Liquid AI's QAD Q4_0 build, trained to keep its accuracy at 4 bits: about 1 GB. Runs on llama.cpp."
+    },
+    {
+      "id": "gguf-lfm3-vl-2b",
+      "name": "LFM3-VL 2B (GGUF)",
+      "backend": "gguf",
+      "repo": "LiquidAI/LFM3-VL-2B-GGUF",
+      "file": "LFM3-VL-2B-QAD-Q4_0.gguf",
+      "mmproj": "mmproj-LFM3-VL-2B-F16.gguf",
+      "min_engine": {
+        "llama.cpp": "b11960"
+      },
+      "accel": "llama.cpp",
+      "vision": true,
+      "size_gb": 1.4,
+      "ram_gb": 3,
+      "context": 128000,
+      "sampling": {
+        "temperature": 0.1,
+        "top_p": 1.0,
+        "top_k": 50,
+        "min_p": 0.0,
+        "repetition_penalty": 1.1
+      },
+      "blurb": "QAD Q4_0 build of LFM3-VL with its vision projector: about 1.4 GB. Runs on llama.cpp."
     }
   ],
   "image": [

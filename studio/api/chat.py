@@ -256,7 +256,9 @@ async def chat(request: Request):
     body["stream"] = True
     body.setdefault("stream_options", {"include_usage": True})
     gguf = m.get("backend") == "gguf"
-    mode = "gguf" if gguf else ("vision" if needs_vision else "text")
+    for key, value in (m.get("sampling") or {}).items():       # the model card's sampling, unless the request chose its own
+        body.setdefault("repeat_penalty" if gguf and key == "repetition_penalty" else key, value)
+    mode = models.engine_mode(m, needs_vision)
     durable_attempt = 0
     if durable_enabled:
         try:

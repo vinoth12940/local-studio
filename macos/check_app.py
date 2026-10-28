@@ -1268,6 +1268,85 @@ def image_jobs_check_memory_and_never_stop_the_chat_model_without_consent():
         for sidecar in app.GALLERY.glob("*.json"): sidecar.unlink()
 
 
+@check
+def lfm3_runs_on_mlx_vlm_with_its_own_sampling_and_waits_for_new_enough_engines():
+    """LFM3's MLX checkpoints carry an auto_map, which mlx-dspark serve refuses, and mlx-lm has no lfm3 module: they run on the
+    mlx-vlm engine even for text. LFM3 arrived in mlx-vlm 0.7.11 and llama.cpp b11960; on older engines the user is told to
+    update, and the model that is running keeps running."""
+    sys.path.insert(0, str(REPO / "macos" / "evals"))
+    import evalkit
+    from fastapi.testclient import TestClient
+    engines, models = studio.services.engines, studio.services.models
+    chat = {m["id"]: m for m in app.CATALOG["chat"]}
+    lfm3 = [m for m in chat.values() if m["id"].removeprefix("gguf-").startswith("lfm3")]
+    assert sorted(m["id"] for m in lfm3) == ["gguf-lfm3-1.7b", "gguf-lfm3-vl-2b", "lfm3-1.7b", "lfm3-vl-2b"], lfm3
+    for m in lfm3:
+        want = "gguf" if m["backend"] == "gguf" else "vision"
+        assert models.engine_mode(m) == want and models.engine_mode(m, True) == want, m["id"]
+        assert m["min_engine"] and m["sampling"]["temperature"] == 0.1 and not m.get("default"), m["id"]
+    assert models.engine_mode(chat["qwen3-8b"]) == "text" and models.engine_mode(chat["qwen3-8b"], True) == "vision"
+    assert models.engine_mode(chat["gguf-qwen3.5-9b"], True) == "gguf"
+    assert engines._llama_build("version: 0.7.0 (build 11669, commit 620d2225c)\nbuilt with AppleClang") == "b11669"
+    assert engines._llama_build("version: 6123 (abc1234)") == "b6123" and engines._llama_build("version: 0.8.0") is None
+
+    saved_versions = dict(engines._engine_versions)
+    saved = (engines.engine_state, engines._engine_ready, engines._proc_running, engines._stop_engine, engines._start_engine)
+    touched = []
+    try:
+        engines._engine_versions.update({"mlx-vlm": "0.7.10", "llama.cpp": "b11669"})
+        for m in lfm3:
+            why = engines.engine_too_old(m)
+            assert why and m["name"] in why and "Update engines" in why, (m["id"], why)
+        assert engines.engine_too_old(chat["qwen3-8b"]) is None, "a model without min_engine never waits on a version"
+        engines.engine_state = lambda: {"mode": "text", "model_id": "qwen3-8b"}
+        engines._engine_ready = lambda mode: True
+        engines._proc_running = lambda pattern: True
+        engines._stop_engine = engines._start_engine = lambda *a: touched.append(a)
+        try:
+            engines.ensure_engine("vision", chat["lfm3-1.7b"])
+            raise AssertionError("LFM3 was started on mlx-vlm 0.7.10")
+        except RuntimeError as e:
+            assert "mlx-vlm 0.7.11" in str(e), e
+        assert not touched, f"the running engine was stopped for a model that can't start: {touched}"
+        for m in lfm3:
+            _fake_install(m["repo"])
+            for repo, files in models.model_parts(m):
+                for f in files or []:
+                    (app.HF_HUB / ("models--" + repo.replace("/", "--")) / "snapshots" / "abc" / f).write_text("")
+        _with_settings({"chat_model": "gguf-lfm3-1.7b"})
+        r = TestClient(app.app, base_url="http://127.0.0.1:7860").post("/api/engine/start")
+        assert r.status_code == 409 and "llama.cpp b11960" in r.json()["detail"] and not touched, r.text
+        for versions in ({"mlx-vlm": "0.7.11", "llama.cpp": "b11960"}, {"mlx-vlm": "0.10.0", "llama.cpp": "b12001"},
+                         {"mlx-vlm": None, "llama.cpp": None}):              # unreadable: the engine reports its own error
+            engines._engine_versions.update(versions)
+            assert all(engines.engine_too_old(m) is None for m in lfm3), versions
+    finally:
+        engines._engine_versions.clear()
+        engines._engine_versions.update(saved_versions)
+        (engines.engine_state, engines._engine_ready, engines._proc_running, engines._stop_engine, engines._start_engine) = saved
+
+    # The model card's sampling reaches the engine (llama.cpp spells the penalty repeat_penalty); the user's temperature wins.
+    client = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    sent = {}
+    try:
+        for mid, extra in (("lfm3-1.7b", {}), ("gguf-lfm3-vl-2b", {}), ("lfm3-vl-2b", {"temperature": 0.7}), ("qwen3-8b", {})):
+            _with_settings({"chat_model": mid})
+            with evalkit.Scripted([{"text": "Hi."}]) as scripted:
+                r = client.post("/api/chat", json={"model_id": mid, "chat_id": "0123456789abcdef", **extra,
+                                                   "messages": [{"role": "user", "content": "Hi"}]})
+            assert r.status_code == 200 and not [e for e in evalkit.parse_stream(r.text) if isinstance(e, dict) and e.get("error")], r.text[:300]
+            sent[mid] = scripted.seen[0]
+    finally:
+        client.delete("/api/chats/0123456789abcdef")
+        app.SETTINGS.unlink(missing_ok=True)
+    assert sent["lfm3-1.7b"]["model"] == chat["lfm3-1.7b"]["repo"], "mlx-vlm serves the repo it loaded"
+    assert (sent["lfm3-1.7b"]["temperature"], sent["lfm3-1.7b"]["top_k"], sent["lfm3-1.7b"]["repetition_penalty"]) == (0.1, 50, 1.1)
+    assert sent["gguf-lfm3-vl-2b"]["repeat_penalty"] == 1.1 and "repetition_penalty" not in sent["gguf-lfm3-vl-2b"]
+    assert sent["gguf-lfm3-vl-2b"]["model"] == "gguf-lfm3-vl-2b" and sent["gguf-lfm3-vl-2b"]["min_p"] == 0.0
+    assert sent["lfm3-vl-2b"]["temperature"] == 0.7 and sent["lfm3-vl-2b"]["repetition_penalty"] == 1.1
+    assert not {"temperature", "top_k", "repetition_penalty", "repeat_penalty"} & set(sent["qwen3-8b"]), "other models are unchanged"
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:
