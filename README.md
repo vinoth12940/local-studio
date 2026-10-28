@@ -90,20 +90,21 @@ The [guide](docs/GUIDE.md) covers every tool, limit and setting.
 The DMG is signed with a Developer ID and notarized by Apple, so it opens without a warning. Each release lists its
 SHA-256.
 
-| You need | |
-|---|---|
-| Mac | Apple Silicon (M1 or newer), macOS 14 Sonoma or later |
-| Memory | 16 GB for small models, 32 GB or more for the larger ones (48 GB recommended) |
-| Disk | About 3 GB for the engines, plus 3–25 GB per model |
-| Internet | For setup, model downloads and web search; everything else works offline |
+**You need:**
+- **Mac:** Apple Silicon (M1 or newer), macOS 14 Sonoma or later.
+- **Memory:** 16 GB for small models, 32 GB or more for the larger ones; 48 GB is recommended.
+- **Disk:** about 3 GB for the engines, plus 3–25 GB per model.
+- **Internet:** for setup, model downloads and web search. Everything else works offline.
 
 ### Optional features
 
-| Feature | Turn it on |
-|---|---|
-| **Search your files** | Settings → Search. It downloads its model (1.3 GB) and components (about 1 GB) once, then indexes in the background. |
-| **Computer use** | Settings → Computer access. Needs [CuaDriver](https://github.com/trycua/cua) 0.28.2 or newer, its Accessibility and Screen Recording permissions, and Google Chrome. |
-| **Voice** *(preview)* | Add `"voice": {"enabled": true}` to `~/Library/Application Support/Local Studio/data/settings.json` and reopen the app. See the [guide](docs/GUIDE.md#voice-preview). |
+- **Search your files:** Settings → Search. It downloads its model (1.3 GB) and components (about 1 GB) once, then
+  indexes in the background.
+- **Computer use:** Settings → Computer access. It needs [CuaDriver](https://github.com/trycua/cua) 0.28.2 or newer,
+  with its Accessibility and Screen Recording permissions, and Google Chrome.
+- **Voice** *(preview):* add `"voice": {"enabled": true}` to
+  `~/Library/Application Support/Local Studio/data/settings.json`, then reopen the app. See the
+  [guide](docs/GUIDE.md#voice-preview).
 
 ### Handy shortcuts
 
@@ -117,14 +118,8 @@ SHA-256.
 
 ## Privacy
 
-**On your Mac:**
-- the models;
-- your conversations;
-- attached files;
-- the file index and the previews it shows;
-- voice audio, which is never saved.
-
-The interface itself is bundled with the app, fonts included.
+**Stays on your Mac:** the models, your conversations, attached files, the file index and its previews, and voice audio
+(which is never saved). The interface is bundled with the app, fonts included.
 
 **What goes out, and only when needed:**
 - Setup downloads the engines from PyPI, GitHub and astral.sh (uv), and models come from Hugging Face.
