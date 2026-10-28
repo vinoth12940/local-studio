@@ -5227,6 +5227,25 @@ def news_search_keeps_only_the_window_newest_first():
 
 
 @check
+def web_fast_one_hostile_source_is_a_refusal_never_a_dead_turn():
+    atom = ('<feed xmlns="http://www.w3.org/2005/Atom"><title>X</title><entry><title>Old</title><link href="https://x.example/a"/>'
+            '<updated>0001-01-01T00:00:00+05:30</updated></entry></feed>')
+    assert studio.services.web.feed_items(atom)[0]["published_at"] is None, "an out-of-range date is no date"
+    real, original = studio.services.web._fetch_public_web, app.load_settings()
+    def boom(url):
+        raise RuntimeError("the parser exploded")
+    studio.services.web._fetch_public_web = boom
+    try:
+        assert "the parser exploded" in studio.services.harness._read_page("https://x.example/")["refused"]
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        news = app._chat_read_tool("news_search", {"query": "latest cricket news"}, "UTC")
+        assert "Nothing found" in news["error"], news
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+
+
+@check
 def chat_answers_after_one_fast_search_round():
     real, original = app._chat_read_tool, app.load_settings()
     def evidence(name, args, timezone=None):

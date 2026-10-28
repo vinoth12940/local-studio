@@ -510,8 +510,34 @@ def decide_reads_d1_answers_and_falls_back_to_rules():
         def slow(*a, **k): raise httpx.ReadTimeout("warming up")
         decide.httpx.post = slow
         assert decide.preflight("Bitcoin price now?", None)["source"] == "rules"
+        real_token = decide._decide_token
+        def unreadable(): raise PermissionError("data/decide.token")
+        decide._decide_token = unreadable
+        try:
+            assert decide.preflight("Bitcoin price now?", None)["source"] == "rules", "a token problem is a fallback, not a dead turn"
+        finally:
+            decide._decide_token = real_token
     finally:
         decide.httpx.post = real
+
+
+@check
+def voice_starts_even_when_d1_cannot():
+    from studio.services import decide
+    saved = (services_voice.voice_deps_installed, services_voice._start_voice, services_voice._voice_running, decide.start_decide, services_voice.flag)
+    def broken(): raise FileNotFoundError("hf CLI is missing")
+    services_voice.voice_deps_installed = lambda: True
+    services_voice._start_voice = lambda: None
+    services_voice._voice_running = lambda: True
+    services_voice.flag = lambda name: name in ("voice.enabled", "voice.decide")
+    decide.start_decide = broken
+    try:
+        services_voice._enable_voice()
+        assert services_voice.voice_job["status"] == "done", services_voice.voice_job
+    finally:
+        (services_voice.voice_deps_installed, services_voice._start_voice, services_voice._voice_running, decide.start_decide,
+         services_voice.flag) = saved
+        services_voice.voice_job.clear(); services_voice.voice_job.update(status="idle")
 
 
 @check

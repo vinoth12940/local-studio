@@ -209,12 +209,15 @@ def _utc(value, parse):
     """An ISO 8601 UTC time ("…Z") from a feed date, or None when it is missing or unreadable."""
     try:
         moment = parse(value.strip())
-    except (TypeError, ValueError, IndexError, AttributeError):
+    except (TypeError, ValueError, IndexError, AttributeError, OverflowError):
         return None
     if moment is None:
         return None
     moment = moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except OverflowError:                            # year 1 in a timezone east of UTC
+        return None
 
 
 def feed_items(xml):

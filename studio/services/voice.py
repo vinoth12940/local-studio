@@ -121,7 +121,10 @@ def _enable_voice():
             raise RuntimeError("Voice didn't start. See logs/voice.log.")
         if flag("voice.decide"):
             voice_job.update(step="Starting the live-facts check (d1)")
-            decide.start_decide()                     # falls back to word rules when memory is short or d1 is missing
+            try:
+                decide.start_decide()                 # falls back to word rules when memory is short or d1 is missing
+            except Exception as e:                    # d1 is an extra: Voice works with the word rules without it
+                print(f"voice: the d1 check did not start: {e}", flush=True)
         voice_job.update(status="done", step=None)
     except Exception as e:
         voice_job.update(status="error", error=str(e), step=None)

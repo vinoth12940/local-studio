@@ -89,7 +89,7 @@ def preflight(text, previous=None, timeout=0.25):
         answers = r.json()["answers"]
         plan = {name: float(answers[name]["noul"]) for name in QUESTIONS}
         return {**plan, "source": "d1", "ms": int((time.perf_counter() - started) * 1000)}
-    except (httpx.HTTPError, KeyError, ValueError, TypeError):
+    except (httpx.HTTPError, KeyError, ValueError, TypeError, OSError):
         return {**rules(text), "ms": int((time.perf_counter() - started) * 1000)}
 
 

@@ -833,8 +833,8 @@ def _read_page(url, limit=2000):
         page = services_web.main_text(text, limit)
         return {"url": final, "title": page["title"], "text": page["text"],
                 **{k: page[k] for k in ("published_at", "modified_at") if page.get(k)}}
-    except (ValueError, OSError, httpx.HTTPError) as error:
-        return {"url": url, "refused": str(error)}
+    except Exception as error:                        # best effort: one hostile page is a refusal, never a dead turn
+        return {"url": url, "refused": str(error) or type(error).__name__}
 
 
 def _read_top_pages(results, count=2):
@@ -881,7 +881,7 @@ def _news_search(query, since, timezone):
         try:
             _, _, text = services_web._fetch_public_web(url)
             return services_web.feed_items(text)
-        except (ValueError, OSError, httpx.HTTPError):
+        except Exception:                             # best effort: one failing feed never stops the others
             return []
     with ThreadPoolExecutor(max_workers=len(urls)) as pool:
         found = [item for items in pool.map(read, urls) for item in items]
