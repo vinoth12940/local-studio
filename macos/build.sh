@@ -14,7 +14,7 @@ rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 
 echo "==> Checking UI script"
 if command -v node >/dev/null 2>&1; then node "$HERE/check_ui.js" "$ROOT/index.html" && node "$HERE/check_sanitizer.mjs" && node "$HERE/check_chat_stream.mjs" && node "$HERE/check_chat_resume.mjs" && node "$HERE/check_voice_ui.mjs"; else echo "   (node not found, skipped)"; fi
-python3 -c "import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]" "$ROOT/app.py" "$ROOT/voice.py" "$ROOT"/studio/**/*.py(N) \
+python3 -c "import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]" "$ROOT/app.py" "$ROOT/voice.py" "$ROOT/decide.py" "$ROOT"/studio/**/*.py(N) \
   && echo "   app.py and studio/ OK"
 UV=$(command -v uv || echo ~/.local/bin/uv)
 $UV run -q --no-project --python 3.12 --with numpy python "$HERE/check_search.py"
@@ -43,7 +43,7 @@ $UV run -q --no-project --python 3.12 --with reportlab --with pillow python "$HE
 $UV run -q --no-project --python 3.12 --with-requirements "$ROOT/requirements-app.txt" python "$HERE/check_harness_ocr.py"
 
 echo "==> Bundling code"
-for f in app.py index.html catalog.json requirements-app.txt search.py search-requirements.txt voice.py voice-requirements.txt setup.sh start.sh stop.sh uninstall.sh; do
+for f in app.py index.html catalog.json requirements-app.txt search.py search-requirements.txt voice.py voice-requirements.txt decide.py setup.sh start.sh stop.sh uninstall.sh; do
   cp "$ROOT/$f" "$APP/Contents/Resources/app/"
 done
 rsync -a --exclude __pycache__ --exclude '*.pyc' "$ROOT/studio" "$APP/Contents/Resources/app/"   # the backend package

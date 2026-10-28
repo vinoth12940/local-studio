@@ -3,7 +3,7 @@
 CODE="${0:A:h}"
 STATE="${LOCAL_STUDIO_HOME:-$CODE}"
 STATE="${STATE:a}"          # absolute, as the agent daemon's socket path is
-for name in llm vlm gguf search voice ui; do
+for name in llm vlm gguf search voice decide ui; do
   if [[ -f "$STATE/logs/$name.pid" ]]; then
     kill $(cat "$STATE/logs/$name.pid") 2>/dev/null && echo "stopped $name"
     rm -f "$STATE/logs/$name.pid"
@@ -16,6 +16,7 @@ pkill -f "^[^ ]*uv run .*python search.py --port 8083" 2>/dev/null
 pkill -f "^[^ ]*python[^ ]* search.py --port 8083" 2>/dev/null
 pkill -f "^[^ ]*uv run .*python voice.py --port 8084" 2>/dev/null
 pkill -f "^[^ ]*python[^ ]* voice.py --port 8084" 2>/dev/null
+pkill -f "^[^ ]*python[^ ]* decide.py --port 8085" 2>/dev/null
 pkill -f "cua-driver serve --socket $STATE/data/agent/cua.sock" 2>/dev/null
 pkill -f "^[^ ]*uv run .*uvicorn app:app .*--port 7860" 2>/dev/null
 pkill -f "^[^ ]*python[^ ]* [^ ]*uvicorn app:app .*--port 7860" 2>/dev/null

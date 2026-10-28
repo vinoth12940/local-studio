@@ -16,6 +16,7 @@ from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp(prefix="lsvoice"))
 os.environ["LOCAL_STUDIO_HOME"] = str(TMP / "state")      # never touch real user data
+os.environ["LOCAL_STUDIO_DECIDE_PORT"] = "9"               # nothing listens: never the running app's d1
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
@@ -334,7 +335,8 @@ def launcher_and_stop_patterns_agree_with_stop_sh():
     stop_sh = (REPO / "stop.sh").read_text()
     for argv in ran:
         assert argv[0] == "pkill"
-        assert f'pkill -f "{argv[2]}"' in stop_sh.replace("8084", str(config.VOICE_PORT)), f"stop.sh lacks {argv[2]}"
+        assert f'pkill -f "{argv[2]}"' in stop_sh.replace("8084", str(config.VOICE_PORT)).replace("8085", str(config.DECIDE_PORT)), \
+            f"stop.sh lacks {argv[2]}"                 # _stop_voice also stops the d1 check that runs beside it
     assert re.search(r"for name in [^;]*\bvoice\b[^;]*; do", stop_sh), "stop.sh must also stop voice by its pid file"
 
 
@@ -507,6 +509,76 @@ def decide_reads_d1_answers_and_falls_back_to_rules():
         assert decide.preflight("Bitcoin price now?", None)["source"] == "rules"
     finally:
         decide.httpx.post = real
+
+
+@check
+def decide_launcher_and_stop_patterns_agree_and_never_look_like_the_vision_engine():
+    from studio.services import decide
+    import studio.config as c
+    cmd = " ".join(decide.decide_command())
+    assert re.search(decide.DECIDE_PATTERN, cmd) and not re.search(c.ENGINES["vision"]["pattern"], cmd)
+    assert decide.decide_command()[1] == "decide.py", "a relative name with cwd=ROOT: the bundled path contains a space"
+    stop = (REPO / "stop.sh").read_text()
+    assert f'pkill -f "{decide.DECIDE_PATTERN}"' in stop.replace("8085", str(c.DECIDE_PORT))
+    assert re.search(r"for name in [^;]*\bdecide\b[^;]*; do", stop), "stop.sh must also stop d1 by its pid file"
+    build = (REPO / "macos/build.sh").read_text()
+    assert re.search(r"^for f in .* decide\.py .*; do", build, re.M), "decide.py must be copied into the app bundle"
+
+
+@check
+def decide_waits_for_memory_and_reports_rules_when_down():
+    from studio.services import decide
+    saved = (decide.system_memory, decide._spawn, decide.flag, decide._model_present)
+    spawned = []
+    decide.flag = lambda name: name == "voice.decide"
+    decide._spawn = lambda: spawned.append(1)
+    try:
+        decide.system_memory = lambda: {"total_bytes": 48 << 30, "used_bytes": 44 << 30, "free_percent": 12}
+        out = decide.start_decide()
+        assert out == {"mode": "rules", "reason": "memory: 12% free"} and not spawned
+        decide.system_memory = lambda: {"total_bytes": 48 << 30, "used_bytes": 20 << 30, "free_percent": 40}
+        decide._model_present = lambda: True
+        decide.start_decide()
+        assert spawned == [1]
+        assert decide.mode()["mode"] == "rules" and "not running" in decide.mode()["reason"]   # nothing answers on the test port
+        decide.flag = lambda name: False
+        assert decide.mode() == {"mode": "off", "reason": ""}
+    finally:
+        (decide.system_memory, decide._spawn, decide.flag, decide._model_present) = saved
+
+
+@check
+def decide_service_answers_only_the_backend():
+    import decide as service
+    class FakeD1:
+        def system_one(self, state, questions):
+            return {"answers": {k: {"type": "noul", "noul": 0.9 if "latest" in state else 0.1} for k in questions}, "usage": {}}
+    try:
+        service.Decider("")
+        raise AssertionError("a decision service without a token started")
+    except ValueError:
+        pass
+    decider = service.Decider(TOKEN, load=lambda repo: FakeD1())
+    srv = service.serve(decider, 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    body = json.dumps({"state": "What is the latest news?", "questions": {"live_facts": {"type": "noul", "instructions": "Live?"}}})
+    try:
+        status, _, data = _req(port, "GET", "/health", token=False)
+        assert status == 200 and json.loads(data)["loaded"] is False, "not loaded until warm() has run"
+        assert _req(port, "POST", "/decide", body=body)[0] == 503
+        decider.warm()
+        assert json.loads(_req(port, "GET", "/health", token=False)[2])["loaded"] is True
+        status, _, data = _req(port, "POST", "/decide", body=body)
+        assert status == 200 and json.loads(data)["answers"]["live_facts"]["noul"] == 0.9
+        assert _req(port, "POST", "/decide", body=body, token=False)[0] == 401
+        assert _req(port, "POST", "/decide", body=body, headers={"Origin": "https://evil.example"})[0] == 403
+        assert _req(port, "POST", "/decide", body=body, headers={"Sec-Fetch-Site": "cross-site"})[0] == 403
+        assert _req(port, "POST", "/decide", body=body, headers={"Host": "evil.example"})[0] == 403, "DNS rebinding"
+        assert _req(port, "POST", "/decide", body=json.dumps({"state": "x" * 5000, "questions": {}}))[0] == 400
+        assert _req(port, "POST", "/decide", body="not json")[0] == 400
+    finally:
+        srv.shutdown(); srv.server_close()
 
 
 if __name__ == "__main__":

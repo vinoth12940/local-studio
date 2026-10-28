@@ -126,7 +126,7 @@ STATE = TMP / "state"
 (STATE / "data").mkdir(parents=True)
 (STATE / "logs").mkdir(parents=True)
 os.environ.update(LOCAL_STUDIO_HOME=str(STATE), LOCAL_STUDIO_EVAL_ATTACH="1", LOCAL_STUDIO_SEARCH_PORT="8099",
-                  LOCAL_STUDIO_VOICE_PORT="8092")
+                  LOCAL_STUDIO_VOICE_PORT="8092", LOCAL_STUDIO_DECIDE_PORT="8091")
 SETTINGS = {"voice": {"enabled": True}, "chat_model": args.model_id}
 for name in args.flag:                                    # "harness.web_fast" -> {"harness": {"web_fast": true}}
     section, key = name.split(".", 1)

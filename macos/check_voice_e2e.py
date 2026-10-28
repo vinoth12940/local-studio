@@ -34,7 +34,7 @@ VOICE_PORT, APP_PORT = 8095, 7881
 LIVE = Path.home() / "Library" / "Application Support" / "Local Studio"
 
 os.environ.update(LOCAL_STUDIO_HOME=str(STATE), LOCAL_STUDIO_VOICE_PORT=str(VOICE_PORT), LOCAL_STUDIO_EVAL_ATTACH="1",
-                  LOCAL_STUDIO_SEARCH_PORT="8096")
+                  LOCAL_STUDIO_SEARCH_PORT="8096", LOCAL_STUDIO_DECIDE_PORT="8098")
 (STATE / "data").mkdir(parents=True)
 (STATE / "logs").mkdir(parents=True)
 

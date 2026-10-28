@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from studio.services import voice as services_voice
+from studio.services import decide as services_decide
 
 router = APIRouter()
 MAX_UPLOAD = 16_000_000                               # same limit as voice.py's /stt
@@ -21,6 +22,7 @@ def _need_voice():
 def voice_status():
     out = {"available": services_voice.voice_available(), "installed": services_voice.voice_deps_installed(),
            "running": False, "setup": {k: services_voice.voice_job.get(k) for k in ("status", "step", "error")}}
+    out["decide"] = services_decide.mode()
     if out["available"] and services_voice._voice_running():
         try:
             out.update(services_voice.voice_request("GET", "/status", timeout=3).json(), running=True)

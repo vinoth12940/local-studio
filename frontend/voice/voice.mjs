@@ -107,6 +107,13 @@ function trBot(text) {
 }
 
 // ---------------------------------------------------------------- start and stop
+// Which live-facts check spoken turns use (voice.decide): d1-2B, or the word rules and why. Hidden while the flag is off.
+function showDecide(d) {
+  const el = $("vvDecide"); if (!el) return;
+  el.hidden = !d || d.mode === "off";
+  el.textContent = !d || d.mode === "off" ? "" : d.mode === "d1" ? "Live-facts check: d1-2B" : `Live-facts check: rules${d.reason ? ` (${d.reason})` : ""}`;
+}
+
 async function startVoice() {
   if (v.on) return;
   v.on = true; setState("starting"); saying(""); asked("");
@@ -125,6 +132,7 @@ async function startVoice() {
       if (!st.running) throw new Error("Voice didn't start. See logs/voice.log.");
     }
     if (!v.on) return;
+    showDecide(st.decide);
     const r = await post("/api/voice/mic/open");
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "The microphone could not be opened.");
     v.es = new EventSource("/api/voice/events");

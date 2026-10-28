@@ -842,9 +842,9 @@ def _backend_sources():
 
 
 # "type" values of dict literals that are not agent-run events: tool schemas, OpenAI content parts, ASGI messages, file entries,
-# trigger schedule kinds
+# trigger schedule kinds, d1 yes/no questions
 _NOT_RUN_EVENTS = {"string", "object", "function", "integer", "boolean", "array", "number", "null", "text", "image_url",
-                   "websocket.close", "dir", "file", "interval", "daily"}
+                   "websocket.close", "dir", "file", "interval", "daily", "noul"}
 
 
 def _dict_shape(d):

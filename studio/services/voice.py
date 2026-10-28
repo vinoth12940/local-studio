@@ -20,6 +20,7 @@ from studio import config
 from studio.config import LOGS, ROOT, STATE, UV, VOICE_DEPS_OK, VOICE_PORT, VOICE_REQS, VOICE_TOKEN
 from studio.infra.logs import open_log
 from studio.infra.system import _pid_alive, _read_pid
+from studio.services import decide
 from studio.storage.flags import flag
 
 voice_job: dict = {"status": "idle"}
@@ -83,7 +84,8 @@ def _start_voice():
 
 
 def _stop_voice():
-    """Stop voice.py; it closes the microphone on SIGTERM."""
+    """Stop voice.py (it closes the microphone on SIGTERM) and the d1 check that runs beside it."""
+    decide.stop_decide()
     pid = _read_pid("voice")
     if pid and _pid_alive(pid):
         try:
@@ -117,6 +119,9 @@ def _enable_voice():
             time.sleep(1)
         else:
             raise RuntimeError("Voice didn't start. See logs/voice.log.")
+        if flag("voice.decide"):
+            voice_job.update(step="Starting the live-facts check (d1)")
+            decide.start_decide()                     # falls back to word rules when memory is short or d1 is missing
         voice_job.update(status="done", step=None)
     except Exception as e:
         voice_job.update(status="error", error=str(e), step=None)

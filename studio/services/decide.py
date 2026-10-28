@@ -9,26 +9,27 @@ documents only ever searches their files, never the web. Any d1 error or timeout
 import os
 import re
 import secrets
+import signal
+import subprocess
 import time
 
 import httpx
 
 from studio import config
-
-def _yes_no(instructions):
-    # d1's yes/no question ("noul": the probability of yes). Built with dict() rather than a literal: check_app's SSE contract
-    # reads every {"type": ...} literal under studio/ as an agent run event.
-    return dict(type="noul", instructions=instructions)
-
+from studio.config import DSPARK_PY, HF_CLI, LOGS, ROOT
+from studio.infra.logs import open_log
+from studio.infra.system import _pid_alive, _read_pid, system_memory
+from studio.services.models import snapshot_file
+from studio.storage.flags import flag
 
 QUESTIONS = {
-    "live_facts": _yes_no("Does answering need live or changing public information, such as news, prices, weather, scores, "
-                          "releases, or anything latest, today or now?"),
-    "my_files": _yes_no("Is the user asking about their own documents or files on this computer?"),
-    "small_talk": _yes_no("Is this small talk or a greeting that needs no facts?"),
-    "standalone": _yes_no("Can the last message be understood on its own, without the earlier conversation?"),
-    "news": _yes_no("Is the user asking for news headlines?"),
-}
+    "live_facts": {"type": "noul", "instructions": "Does answering need live or changing public information, such as news, prices, "
+                                                   "weather, scores, releases, or anything latest, today or now?"},
+    "my_files": {"type": "noul", "instructions": "Is the user asking about their own documents or files on this computer?"},
+    "small_talk": {"type": "noul", "instructions": "Is this small talk or a greeting that needs no facts?"},
+    "standalone": {"type": "noul", "instructions": "Can the last message be understood on its own, without the earlier conversation?"},
+    "news": {"type": "noul", "instructions": "Is the user asking for news headlines?"},
+}                                                     # "noul": d1's yes/no question, answered with the probability of yes
 # Measured on 28 Oct with d1-2B on the 51 labeled questions in macos/fixtures/route_questions.json: live >= 0.3 caught 29 of 30
 # with 0 of 21 false alarms (a needless search costs a second; a missed one costs a refusal); everyday questions score at most
 # 0.18 for my_files, personal ones 0.42-0.69; follow-ups score 0.35-0.36 for standalone, "my passport" 0.49.
@@ -103,3 +104,87 @@ def prefetch_call(plan, text, web_fast, files=False):
     if web_fast and plan["news"] >= 0.5:
         return "news_search", {"query": query, "since": "1d"}
     return "web_search", {"query": query}
+
+
+# ---------------------------------------------------------------- the decide.py process
+
+DECIDE_PATTERN = rf"^[^ ]*python[^ ]* decide.py --port {config.DECIDE_PORT}"   # stop.sh has the same pattern: keep in sync
+MIN_FREE_PERCENT = 20                     # macOS's free percentage (it counts reclaimable pages); 40 % on 28 Oct with Qwen at 256K
+_last = {"reason": ""}                    # why the last start did not run d1, for the Voice view
+
+
+def decide_command():
+    # Relative file name with cwd=ROOT: the bundled path contains a space, which would defeat stop.sh's pkill pattern.
+    return [str(DSPARK_PY), "decide.py", "--port", str(config.DECIDE_PORT)]
+
+
+def _model_present():
+    return snapshot_file(config.DECIDE_MODEL, "config.json") is not None
+
+
+def _fetch_model():
+    """Fetch d1-2B (1.35 GB) into the shared Hugging Face cache, once, when the owner turns the feature on."""
+    with open_log(LOGS / "decide-setup.log", "w") as log:
+        return subprocess.run([str(HF_CLI), "download", config.DECIDE_MODEL], stdout=log, stderr=subprocess.STDOUT).returncode == 0
+
+
+def _spawn():
+    log = open_log(LOGS / "decide.log", "a")
+    proc = subprocess.Popen(decide_command(), cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                            env={**os.environ, "LOCAL_STUDIO_DECIDE_TOKEN": _decide_token(), "LOCAL_STUDIO_DECIDE_MODEL": config.DECIDE_MODEL,
+                                 "HF_HUB_OFFLINE": "1", "PYTHONDONTWRITEBYTECODE": "1"})
+    (LOGS / "decide.pid").write_text(str(proc.pid))
+
+
+def _process():
+    return subprocess.run(["pgrep", "-f", DECIDE_PATTERN], capture_output=True).returncode == 0
+
+
+def _health():
+    try:
+        r = httpx.get(config.DECIDE_URL + "/health", timeout=1)
+        return r.json() if r.status_code == 200 else None
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
+def start_decide():
+    """Start d1 beside Voice when the flag is on and memory allows; returns mode(). The 256K window is never lowered for it."""
+    if not flag("voice.decide"):
+        return mode()
+    try:
+        free = system_memory().get("free_percent")
+    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+        free = None                           # an unreadable report never blocks d1
+    if free is not None and free < MIN_FREE_PERCENT:
+        _last["reason"] = f"memory: {free}% free"
+        return {"mode": "rules", "reason": _last["reason"]}
+    if not _model_present() and not _fetch_model():
+        _last["reason"] = "d1 could not be downloaded (see logs/decide-setup.log)"
+        return {"mode": "rules", "reason": _last["reason"]}
+    _last["reason"] = ""
+    if not _process():
+        _spawn()
+    return mode()
+
+
+def stop_decide():
+    pid = _read_pid("decide")
+    if pid and _pid_alive(pid):
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    subprocess.run(["pkill", "-f", DECIDE_PATTERN])
+    (LOGS / "decide.pid").unlink(missing_ok=True)
+
+
+def mode():
+    """Which live-facts check spoken turns use now: {"mode": "d1" | "rules" | "off", "reason"}."""
+    if not flag("voice.decide"):
+        return {"mode": "off", "reason": ""}
+    health = _health()
+    if health and health.get("loaded"):
+        return {"mode": "d1", "reason": ""}
+    reason = _last["reason"] or (health.get("error") or "d1 is loading" if health else "d1 is not running")
+    return {"mode": "rules", "reason": reason}
