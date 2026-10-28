@@ -56,6 +56,8 @@ if "--fake-cua" in sys.argv:
     _fake_cua(sys.argv[sys.argv.index("--fake-cua") + 1])
     sys.exit()
 
+import datetime
+import email.utils
 import re
 import tempfile
 import time
@@ -5181,6 +5183,44 @@ def web_fast_search_reads_two_distinct_hosts_in_parallel_and_reports_refusals():
         assert result["next_step"].startswith("Answer from pages")
         app.save_settings(original)
         assert "pages" not in app._chat_read_tool("web_search", {"query": "bitcoin price"}), "flag off: old behavior"
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+
+
+@check
+def news_search_keeps_only_the_window_newest_first():
+    real, original = studio.services.web._fetch_public_web, app.load_settings()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    rfc = lambda hours: email.utils.format_datetime(now - datetime.timedelta(hours=hours))
+    google = ('<rss><channel><title>Google News</title>'
+              f'<item><title>Test drawn in Cape Town</title><link>https://news.google.com/rss/articles/1</link><pubDate>{rfc(2)}</pubDate><source url="https://x">Reuters</source></item>'
+              f'<item><title>Old series preview</title><link>https://news.google.com/rss/articles/2</link><pubDate>{rfc(30)}</pubDate><source url="https://y">BBC</source></item>'
+              '<item><title>Undated rumour</title><link>https://news.google.com/rss/articles/3</link></item></channel></rss>')
+    espn = f'<rss><channel><title>ESPNcricinfo</title><item><title>Stokes named captain</title><link>https://www.espncricinfo.com/s</link><pubDate>{rfc(1)}</pubDate></item></channel></rss>'
+    fetched = []
+    def fetch(url):
+        fetched.append(url)
+        return url, "application/rss+xml", espn if "espncricinfo" in url else google
+    studio.services.web._fetch_public_web = fetch
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        result = app._chat_read_tool("news_search", {"query": "latest cricket news"}, "Asia/Kolkata")
+        assert [i["title"] for i in result["items"]] == ["Stokes named captain", "Test drawn in Cape Town"]
+        assert result["items"][0]["age"] == "1 hour ago" and result["items"][1]["source"] == "Reuters"
+        assert any("news.google.com/rss/search" in u and "when%3A1d" in u and "gl=IN" in u for u in fetched)
+        assert not any("/rss/articles/" in u for u in fetched), "redirect wrappers are listed, never fetched"
+        assert app._chat_tool_summary("news_search", {"query": "latest cricket news"}) == "Checking the news: latest cricket news"
+        hour = app._chat_read_tool("news_search", {"query": "latest cricket news", "since": "1h"}, "UTC")
+        assert [i["title"] for i in hour["items"]] == ["Stokes named captain"]
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+    studio.services.web._fetch_public_web = lambda url: (url, "application/rss+xml", google.replace(rfc(2), rfc(50)))
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        empty = app._chat_read_tool("news_search", {"query": "world news", "since": "1d"}, "UTC")
+        assert "Nothing found from the last day" in empty["error"] and empty["verified"] is False and "items" not in empty
     finally:
         studio.services.web._fetch_public_web = real
         app.save_settings(original)

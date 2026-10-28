@@ -179,6 +179,11 @@ CHAT_READ_TOOLS = [
                  {"query": {"type": "string"}}),
 ]
 
+NEWS_SEARCH_TOOL = _chat_schema("news_search", "Latest news headlines with their publisher and time, from dated feeds. Use for news; answer from the headlines and say each item's source and age.",
+                                {"query": {"type": "string"}, "since": {"type": "string", "enum": ["1h", "1d", "7d"]}}, ("query",))
+NEWS_WINDOWS = {"1h": (3600, "hour"), "1d": (86400, "day"), "7d": (7 * 86400, "7 days")}
+PUBLISHER_FEEDS = {"cricket": ["https://www.espncricinfo.com/rss/content/story/feeds/0.xml"]}   # read when the word is in the query
+
 CHAT_ACTION_TOOLS = [
     _chat_schema("write_file", "Create or overwrite a local file with syntax check and diff preview.",
                  {"path": {"type": "string"}, "content": {"type": "string"}}, ("path", "content")),
@@ -830,6 +835,58 @@ def _read_top_pages(results, count=2):
         return list(pool.map(_read_page, picked))
 
 
+def _news_edition(timezone):
+    """Google News edition for the user's timezone (en only): India, Britain, Australia, else the US."""
+    tz = str(timezone or "")
+    return "IN" if tz == "Asia/Kolkata" else "GB" if tz == "Europe/London" else "AU" if tz.startswith("Australia/") else "US"
+
+
+def _age(seconds):
+    if seconds < 3600:
+        n, unit = max(1, int(seconds // 60)), "minute"
+    elif seconds < 86400:
+        n, unit = int(seconds // 3600), "hour"
+    else:
+        n, unit = int(seconds // 86400), "day"
+    return f"{n} {unit}{'' if n == 1 else 's'} ago"
+
+
+def _news_search(query, since, timezone):
+    """Dated headlines inside the window, newest first: Google News RSS plus publisher feeds the query names. Items are
+    listed with their links, never fetched (Google News links are redirect wrappers that need JavaScript)."""
+    if not isinstance(query, str) or not query.strip() or len(query) > 300:
+        raise ValueError("news_search needs a query of 1–300 characters")
+    window, words = NEWS_WINDOWS.get(since or "1d", NEWS_WINDOWS["1d"])
+    edition = _news_edition(timezone)
+    urls = ["https://news.google.com/rss/search?" + urlencode({"q": f"{query} when:{since or '1d'}", "hl": "en-" + edition,
+                                                                "gl": edition, "ceid": f"{edition}:en"})]
+    urls += [feed for word, feeds in PUBLISHER_FEEDS.items() if re.search(rf"\b{word}\b", query, re.I) for feed in feeds]
+    def read(url):
+        try:
+            _, _, text = services_web._fetch_public_web(url)
+            return services_web.feed_items(text)
+        except (ValueError, OSError, httpx.HTTPError):
+            return []
+    with ThreadPoolExecutor(max_workers=len(urls)) as pool:
+        found = [item for items in pool.map(read, urls) for item in items]
+    now, seen, items = time.time(), set(), []
+    for item in found:
+        if not item["published_at"] or not item["title"]:
+            continue
+        age = now - datetime.fromisoformat(item["published_at"].replace("Z", "+00:00")).timestamp()
+        key = item["title"].casefold()
+        if -300 <= age <= window + 300 and key not in seen:          # 5 minutes either side: clock skew, feeds rounding times
+            seen.add(key)
+            items.append({**item, "age": _age(max(0, age)), "_age": age})
+    items.sort(key=lambda i: i["_age"])
+    if not items:
+        raise ValueError(f"Nothing found from the last {words}; say so instead of answering from older news")
+    return {"query": query, "since": since or "1d", "fetched_at": _chat_datetime(timezone),
+            "items": [{k: i[k] for k in ("title", "source", "published_at", "age", "url")} for i in items[:8]],
+            "note": "Answer from these dated headlines; name each item's source and how old it is. Items outside the window were dropped.",
+            "untrusted_source_text": True}
+
+
 def _chat_read_tool(name, args, timezone=None):
     """Read-only chat tools. Returns evidence or an explicit error, never a made-up answer."""
     if not isinstance(args, dict): return {"error": "Tool arguments must be a JSON object"}
@@ -880,6 +937,8 @@ def _chat_read_tool(name, args, timezone=None):
                 found["pages"] = _read_top_pages(results)
                 found["next_step"] = "Answer from pages when they cover the question; call read_webpage only for a result that was not read."
             return found
+        if name == "news_search":
+            return _news_search(args.get("query"), args.get("since"), timezone)
         if name == "read_webpage" and flag("harness.web_fast"):
             url, kind, text = services_web._fetch_public_web(args.get("url"))
             if kind in ("application/rss+xml", "application/xml", "text/xml"):
@@ -1056,6 +1115,7 @@ def _chat_tool_summary(name, args):
     if name == "get_current_datetime": return "Checking the current date and time"
     if name == "web_search": return "Searching the web: " + str(args.get("query", ""))[:180]
     if name == "read_webpage": return "Reading: " + str(args.get("url", ""))[:180]
+    if name == "news_search": return "Checking the news: " + str(args.get("query", ""))[:180]
     if name == "search_files": return "Searching local files: " + str(args.get("query", ""))[:180]
     if name == "read_file":
         return f"Reading file: {Path(str(args['path'])).name}" if args.get("path") else "Reading a local document"
