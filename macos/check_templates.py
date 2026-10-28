@@ -92,6 +92,8 @@ def scenarios():
     out["spoken tool round"] = capture({"messages": hist + [{"role": "user", "content": "What time is it?"}], "voice": True,
                                         "voice_style": "a calm British butler"},
                                        [{"tool": "get_current_datetime", "args": {}}, {"text": "It is noon."}])
+    out["voice warm-up"] = capture({"messages": [{"role": "user", "content": "Hello."}], "warm": True, "voice": True,
+                                    "voice_style": "a calm British butler"}, [{"text": "Hi"}])
     # Notes the loop adds mid-conversation (workflow policy, the verification gate, a resumed run) must reach the engine
     # folded into the leading system message: built the way the route builds them, then through the engine boundary.
     late = [{"role": "system", "content": "agent note"}, {"role": "user", "content": "Fix it."},
@@ -115,6 +117,15 @@ def structure(all_bodies):
     from studio.services import harness
     assert harness.VOICE_NOTE in spoken[0]["content"] and spoken[-1]["content"].endswith(harness.VOICE_TURN_REMINDER)
     print("   ok spoken turns carry the voice note and the reminder")
+    # The clock changes every minute, so it is the system text's last line: everything before it stays in the engine's cache.
+    for name in ("typed", "spoken", "voice warm-up"):
+        system = all_bodies[name][0]["messages"][0]["content"]
+        assert system.rstrip().splitlines()[-1].startswith(harness.CLOCK_LINE), (name, system[-200:])
+    warm, turn = all_bodies["voice warm-up"][0], all_bodies["spoken"][0]
+    assert warm["max_tokens"] == 1, warm["max_tokens"]
+    cut = lambda b: b["messages"][0]["content"].rsplit("\n\n" + harness.CLOCK_LINE, 1)[0]
+    assert cut(warm) == cut(turn) and warm["tools"] == turn["tools"], "the warm-up must prime exactly what a spoken turn sends"
+    print("   ok the clock is the last line; the voice warm-up is one token and primes a spoken turn's tools and instructions")
 
 
 def installed_templates():

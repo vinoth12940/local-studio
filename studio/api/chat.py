@@ -220,6 +220,7 @@ async def chat(request: Request):
     raw_messages = json.loads(json.dumps(body.get("messages", [])))
     use_files = bool(body.pop("use_files", False))
     voice_note = harness.apply_voice_mode(body)          # a spoken turn: short plain sentences, no thinking
+    warm = bool(body.pop("warm", False))                 # the Voice view, on opening: fill the engine's prompt cache, one token
     messages, needs_vision = build_messages(body.get("messages", []))
     messages, mentioned_sources = await asyncio.to_thread(_expand_workspace_mentions, messages, workspace)
     messages = await asyncio.to_thread(_expand_slash_command, messages, workspace)
@@ -251,7 +252,7 @@ async def chat(request: Request):
             prompt_chars += len(c or "")
     window = models.effective_context(m)
     room = window - int(prompt_chars / 3.2) - images * 1200 - 512
-    body["max_tokens"] = max(512, min(int(body.get("max_tokens") or 16384), room))
+    body["max_tokens"] = 1 if warm else max(512, min(int(body.get("max_tokens") or 16384), room))
     body["stream"] = True
     body.setdefault("stream_options", {"include_usage": True})
     gguf = m.get("backend") == "gguf"

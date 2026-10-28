@@ -8,7 +8,7 @@
 //    lets it carry on; it waits when you sound mid-thought (turn.mjs).
 import { $, store, toast } from "../core/util.mjs";
 import { listState } from "../chat/list.mjs";
-import { send } from "../chat/live.mjs";
+import { promptShape, send } from "../chat/live.mjs";
 import { showView, view } from "../ui/views.mjs";
 import { CHARACTERS, DEFAULT_CHARACTER } from "./characters.mjs";
 import { endpointWait, isBackchannel, looksLikeOwnVoice, takeSentences } from "./turn.mjs";
@@ -147,6 +147,7 @@ async function selfCheck() {
   try {
     const h = await fetch("/api/llm/health");
     if (!h.ok) failed.push(["No chat model is loaded. Load one in the sidebar.", "model not ready"]);
+    else warmModel();                                    // only a loaded model: opening Voice never starts one
   } catch {}
   try {
     const wav = await fetch("/api/voice/say", { method: "POST", headers: { "content-type": "application/json" },
@@ -161,6 +162,15 @@ async function selfCheck() {
   if (!v.micChunks) failed.push(["The microphone isn't sending any sound.", "check System Settings, Privacy & Security, Microphone"]);
   v.check = failed.length ? failed.map((f) => f[0]) : ["ok"];
   if (failed.length) failed.forEach(([t, d]) => problem(t, d));
+}
+// One token, built like a spoken turn: the engine processes the tools and instructions now (about 3 s when its cache was
+// dropped), not when you ask your first question. Nothing is saved; a failure only means the first turn is slower.
+function warmModel() {
+  const b = promptShape();
+  b.messages.push({ role: "user", content: "Hello." });
+  fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...b, warm: true, voice: true, voice_style: character().style, enable_thinking: false }) })
+    .then((r) => r.text()).catch(() => {});
 }
 async function stopVoice() {
   const wasOn = v.on;

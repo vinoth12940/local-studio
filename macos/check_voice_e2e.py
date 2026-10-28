@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -64,14 +65,17 @@ _CHARS = re.search(r"CHARACTERS = (\[.*?\]);", (ROOT / "frontend/voice/character
 STYLE = next(c["style"] for c in json.loads(re.sub(r",\s*\]$", "]", _CHARS)) if c["id"] == "jarvis")   # the Voice view's default character
 VOICE = "Edwin"
 
-# (conversation, what is said, words the recognizer must hear, what the answer must contain, must it use the web)
+# (conversation, what is said, words the recognizer must hear, what the answer must contain, must it use the web).
+# Words in WARN_WORDS are proper names the recognizer cannot know: hearing them wrong is reported, not failed. The memory case
+# expects the name *as it was heard* ("{name}"): whether the model remembers is the point, not the recognizer's spelling.
 CASES = [
     ("a", "What is the capital of France?", ["capital", "france"], r"\bparis\b", False),
     ("b", "My name is Vinoth and I live in Chennai.", ["vinoth", "chennai"], r".", False),
-    ("b", "What is my name?", ["name"], r"\bvinoth\b", False),
+    ("b", "What is my name?", ["name"], "{name}", False),
     ("c", "What is seven times eight?", [("seven", "7"), ("eight", "8")], r"\b(56|fifty[- ]six)\b", False),
-    ("d", "What is the latest release of llama dot cpp?", [("llama",), ("release", "version")], r"\bb\d{4,}\b|release|version", True),
+    ("d", "What is the latest release of llama dot cpp?", [("llama", "lama"), ("release", "version")], r"\bb\d{4,}\b|release|version", True),
 ]
+WARN_WORDS = {"vinoth", "chennai"}
 MARKDOWN = re.compile(r"(^|\s)#{1,6}\s|\*\*|`|\|.*\||^\s*[-*•]\s|^\s*\d+\.\s", re.M)
 
 
@@ -79,9 +83,9 @@ def norm(s):
     return re.sub(r"[^a-z0-9 ]", " ", s.lower())
 
 
-def heard_ok(transcript, words):
+def heard_missing(transcript, words):
     t = norm(transcript).split()
-    return all(any(alt in t for alt in (w if isinstance(w, tuple) else (w,))) for w in words)
+    return [w for w in words if not any(alt in t for alt in (w if isinstance(w, tuple) else (w,)))]
 
 
 def sentences(text):
@@ -109,7 +113,9 @@ def chat(client, messages, chat_id):
     t0, first, first_sentence, text, tools, errors = time.monotonic(), None, None, "", [], []
     round_text = ""
     with client.stream("POST", f"http://127.0.0.1:{APP_PORT}/api/chat", json=body, timeout=300) as r:
-        r.raise_for_status()
+        if r.status_code != 200:
+            return {"reply": "", "first_token_s": None, "first_sentence_s": time.monotonic() - t0, "total_s": time.monotonic() - t0,
+                    "tools": [], "errors": [f"HTTP {r.status_code}: {r.read().decode(errors='replace')[:300]}"]}
         for line in r.iter_lines():
             if not line.startswith("data:") or line[5:].strip() == "[DONE]":
                 continue
@@ -167,22 +173,36 @@ def main():
             time.sleep(0.5)
         else:
             raise RuntimeError("the test voice service did not become ready (see " + str(STATE / "logs/voice.log") + ")")
-        convos = {}
+        convos, chat_ids, names = {}, {}, {}
+        # As the Voice view does on opening: one token built like a spoken turn, so the first question finds its prompt cached.
+        t = time.monotonic()
+        client.post(f"http://127.0.0.1:{APP_PORT}/api/chat", timeout=300, json={"messages": [{"role": "user", "content": "Hello."}],
+                    "warm": True, "voice": True, "voice_style": STYLE, "enable_thinking": False, "model_id": MODEL_ID})
+        report["warm_up_s"] = round(time.monotonic() - t, 2)
+        print(f"   warm-up {report['warm_up_s']}s")
         for conv, spoken, words, expect, needs_web in CASES:
             wav, synth_s = say(client, spoken)
             heard, stt_s = transcribe(client, wav)
+            m = re.search(r"my name is (\w+)", heard, re.I)
+            if m:
+                names[conv] = m.group(1)
+            if "{name}" in expect:
+                expect = r"\b" + re.escape(names.get(conv, "Vinoth")) + r"\b"
             msgs = convos.setdefault(conv, [])
             msgs.append({"role": "user", "content": heard})
-            out = chat(client, list(msgs), f"e2e{conv}{len(msgs)}")
+            out = chat(client, list(msgs), chat_ids.setdefault(conv, uuid.uuid4().hex[:16]))   # the id shape the app uses
             msgs.append({"role": "assistant", "content": out["reply"]})
             first = sentences(out["reply"])[0] if out["reply"] else ""
             tts_first_s = say(client, first)[1] if first else None
             case = {"said": spoken, "heard": heard, "stt_s": round(stt_s, 2), **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in out.items()},
                     "tts_first_s": round(tts_first_s, 2) if tts_first_s else None,
                     "first_audio_s": round(stt_s + out["first_sentence_s"] + (tts_first_s or 0), 2)}
-            problems = []
-            if not heard_ok(heard, words):
+            problems, warnings = [], []
+            missing = heard_missing(heard, words)
+            if any(w not in WARN_WORDS for w in missing):
                 problems.append(f"misheard: {heard!r}")
+            elif missing:
+                warnings.append(f"name heard as {heard!r} (the recognizer has no way to know it)")
             if out["errors"]:
                 problems.append("error: " + out["errors"][0])
             if not out["reply"]:
@@ -195,7 +215,7 @@ def main():
                 problems.append(f"{len(sentences(out['reply']))} sentences (too long to speak)")
             if needs_web and not any(t in ("web_search", "read_webpage") for t in out["tools"]):
                 problems.append("answered a current-facts question without looking it up")
-            case["problems"] = problems
+            case["problems"], case["warnings"] = problems, warnings
             report["cases"].append(case)
             mark = "ok  " if not problems else "FAIL"
             print(f"   {mark} \"{spoken}\" heard \"{heard}\" ({stt_s:.2f}s) -> \"{out['reply'][:110]}\"")
@@ -204,6 +224,8 @@ def main():
             for p in problems:
                 print(f"        - {p}")
                 failures.append((spoken, p))
+            for w in warnings:
+                print(f"        ~ {w}")
     finally:
         services_voice._stop_voice()                    # the test port's service only (its patterns name port 8095)
         server.should_exit = True
