@@ -6,6 +6,9 @@ Moved from app.py in the refactor's P1 split.
 import ipaddress
 import re
 import socket
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, urljoin, parse_qs
 
@@ -115,3 +118,130 @@ class _WebSearchResults(HTMLParser):
 
     def handle_data(self, value):
         if self.field: self.parts.append(value)
+
+
+_DATE_META = {"article:published_time": "published_at", "article:modified_time": "modified_at", "datepublished": "published_at", "datemodified": "modified_at"}
+_BLOCKS = frozenset(("p", "div", "li", "h1", "h2", "h3", "h4", "tr", "br", "section", "article", "main", "td", "blockquote"))
+
+
+class _MainText(HTMLParser):
+    """A page's article text in blocks: inside <article>/<main> when the page has one, never menus, headers or footers."""
+    SKIP = frozenset(("script", "style", "noscript", "svg", "nav", "footer", "header", "aside", "form", "button", "select", "template", "iframe"))
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.hidden = self.scope = self.link = 0
+        self.in_title, self.title, self.dates, self.blocks, self.size = False, [], {}, [], 0
+        self.has_scope = False
+        self.block = {"text": [], "link": 0, "scoped": False, "heading": False}
+
+    def _flush(self, heading=False):
+        if "".join(self.block["text"]).strip():
+            self.blocks.append(self.block)
+        self.block = {"text": [], "link": 0, "scoped": False, "heading": heading}
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        date_key = _DATE_META.get((attrs.get("property") or attrs.get("name") or attrs.get("itemprop") or "").lower())
+        if tag == "meta" and date_key and attrs.get("content"): self.dates.setdefault(date_key, attrs["content"][:200])
+        if tag in self.SKIP: self.hidden += 1
+        if tag == "title": self.in_title = True
+        if tag in ("article", "main"): self.scope += 1; self.has_scope = True
+        if tag == "a": self.link += 1
+        if tag in _BLOCKS: self._flush(heading=tag in ("h1", "h2", "h3"))
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP: self.hidden = max(0, self.hidden - 1)
+        if tag == "title": self.in_title = False
+        if tag in ("article", "main"): self.scope = max(0, self.scope - 1)
+        if tag == "a": self.link = max(0, self.link - 1)
+        if tag in _BLOCKS: self._flush()
+
+    def handle_data(self, value):
+        if self.in_title: self.title.append(value); return
+        if self.hidden or self.size > 200000: return
+        self.block["text"].append(value)
+        self.block["scoped"] = self.block["scoped"] or self.scope > 0
+        if self.link: self.block["link"] += len(value.strip())
+        self.size += len(value)
+
+
+def main_text(html, limit):
+    """The readable article of a page, capped at `limit` characters, with its title and published/modified dates.
+
+    Blocks that are mostly link text, and short lines with no number (menus, buttons, bylines of one word), are dropped;
+    headings stay. Raises ValueError when almost nothing readable is left (an app shell, a sign-in wall)."""
+    parser = _MainText()
+    parser.feed(html)
+    parser.close()
+    parser._flush()
+    lines, seen = [], set()
+    for block in parser.blocks:
+        if parser.has_scope and not block["scoped"]:
+            continue
+        text = " ".join("".join(block["text"]).split())
+        if not text or block["link"] > len(text) / 2:
+            continue
+        if not block["heading"] and len(text.split()) < 5 and not re.search(r"\d", text):
+            continue
+        if text not in seen:
+            seen.add(text)
+            lines.append(text)
+    text = "\n".join(lines)
+    if len(text) < 80:
+        raise ValueError("The page has too little readable text. It may require JavaScript or sign-in; use the browser or another source")
+    return {"title": " ".join("".join(parser.title).split()), "text": text[:limit], "truncated": len(text) > limit, **parser.dates}
+
+
+def _local(tag):
+    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
+
+
+def _child(element, name):
+    return next((c for c in element if _local(c.tag) == name), None)
+
+
+def _words(element):
+    return " ".join("".join(element.itertext()).split()) if element is not None else ""
+
+
+def _utc(value, parse):
+    """An ISO 8601 UTC time ("…Z") from a feed date, or None when it is missing or unreadable."""
+    try:
+        moment = parse(value.strip())
+    except (TypeError, ValueError, IndexError, AttributeError):
+        return None
+    if moment is None:
+        return None
+    moment = moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def feed_items(xml):
+    """RSS 2.0, RSS 1.0 and Atom items as {title, url, source, published_at}; published_at is None when the feed gives no
+    readable date. Python's expat refuses entity-expansion bombs and ElementTree never fetches external entities."""
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError as error:
+        raise ValueError("This feed could not be read") from error
+    container = _child(root, "channel") if _local(root.tag) == "rss" else root
+    feed_title = _words(_child(container, "title")) if container is not None else ""
+    items = []
+    for element in root.iter():
+        kind = _local(element.tag)
+        if kind not in ("item", "entry"):
+            continue
+        if kind == "entry":
+            links = [c for c in element if _local(c.tag) == "link"]
+            link = next((c for c in links if c.get("rel") in (None, "alternate")), links[0] if links else None)
+            url = (link.get("href") or "").strip() if link is not None else ""
+            stamp = _child(element, "published") if _child(element, "published") is not None else _child(element, "updated")
+            published = _utc(stamp.text if stamp is not None else None, datetime.fromisoformat)
+        else:
+            url = _words(_child(element, "link"))
+            stamp = _child(element, "pubDate") if _child(element, "pubDate") is not None else _child(element, "date")
+            parse = parsedate_to_datetime if stamp is not None and _local(stamp.tag) == "pubDate" else datetime.fromisoformat
+            published = _utc(stamp.text if stamp is not None else None, parse)
+        items.append({"title": _words(_child(element, "title")), "url": url,
+                      "source": _words(_child(element, "source")) or feed_title, "published_at": published})
+    return items

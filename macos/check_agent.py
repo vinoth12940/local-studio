@@ -5123,6 +5123,41 @@ def web_page_evidence_keeps_publication_dates_and_bounds_prompt_size():
 
 
 @check
+def web_main_text_drops_menus_and_keeps_the_dated_article():
+    html = ('<title>Ashes: day one</title><meta property="article:published_time" content="2026-10-28T09:00:00Z">'
+            '<header><a href="/">Home</a><a href="/live">Live</a></header>'
+            '<ul class="menu"><li><a href="/a">Scores</a></li><li><a href="/b">Fixtures</a></li></ul>'
+            '<article><h1>Australia 312/4 at stumps</h1><p>' + 'Head made 140 as Australia batted all day. ' * 80 + '</p></article>'
+            '<aside>Most read</aside><footer>Cookie settings</footer>')
+    page = studio.services.web.main_text(html, 2000)
+    assert page["title"] == "Ashes: day one" and page["published_at"] == "2026-10-28T09:00:00Z"
+    assert "Australia 312/4 at stumps" in page["text"] and "Head made 140" in page["text"]
+    for menu in ("Home", "Live", "Scores", "Fixtures", "Most read", "Cookie settings"):
+        assert menu not in page["text"], menu
+    assert page["truncated"] and len(page["text"]) <= 2000
+    try:
+        studio.services.web.main_text('<div id="root"></div><script>app()</script><a href="/x">Open the app</a>', 2000)
+        raise AssertionError("an app shell is not evidence")
+    except ValueError as error:
+        assert "too little readable text" in str(error)
+
+
+@check
+def web_feed_items_parse_rss_and_atom_dates():
+    rss = ('<rss><channel><item><title>India win by 5 wickets</title><link>https://news.google.com/rss/articles/abc</link>'
+           '<pubDate>Tue, 28 Oct 2026 10:30:00 GMT</pubDate><source url="https://www.espncricinfo.com">ESPNcricinfo</source></item>'
+           '<item><title>No date here</title><link>https://example.com/n</link></item></channel></rss>')
+    atom = ('<feed xmlns="http://www.w3.org/2005/Atom"><title>Club news</title><entry><title>Squad named</title>'
+            '<link href="https://club.example/squad"/><updated>2026-10-28T08:00:00+05:30</updated></entry></feed>')
+    items = studio.services.web.feed_items(rss)
+    assert items[0] == {"title": "India win by 5 wickets", "url": "https://news.google.com/rss/articles/abc",
+                        "source": "ESPNcricinfo", "published_at": "2026-10-28T10:30:00Z"}
+    assert items[1]["published_at"] is None
+    assert studio.services.web.feed_items(atom) == [{"title": "Squad named", "url": "https://club.example/squad",
+                                                     "source": "Club news", "published_at": "2026-10-28T02:30:00Z"}]
+
+
+@check
 def chat_engine_done_does_not_wait_for_connection_close():
     real = app.httpx.AsyncClient
     class Response:
