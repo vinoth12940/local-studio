@@ -11,6 +11,7 @@ checked against what the tools returned. A JSON report goes to build/voice-turns
 
     TMPDIR=/tmp uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt python macos/check_voice_turns.py \
         <model_id> [--flag harness.web_fast ...] [--engine-mode vision|gguf --engine-url URL] [--repeat N]
+        [--decide-url http://127.0.0.1:8086 --decide-token T]   # with --flag voice.decide: a decide.py you started
 
 Exit 0 after measuring (this is a measurement, not a pass/fail gate); 2 when no engine answers.
 """
@@ -34,6 +35,8 @@ ap.add_argument("--flag", action="append", default=[])
 ap.add_argument("--engine-mode")
 ap.add_argument("--engine-url")
 ap.add_argument("--repeat", type=int, default=2)
+ap.add_argument("--decide-url", help="a decide.py you started by hand (voice.decide), e.g. http://127.0.0.1:8086")
+ap.add_argument("--decide-token", default="", help="the LOCAL_STUDIO_DECIDE_TOKEN that decide.py was started with")
 ap.add_argument("--port", type=int, default=7893)
 args = ap.parse_args()
 
@@ -132,6 +135,8 @@ for name in args.flag:                                    # "harness.web_fast" -
     section, key = name.split(".", 1)
     SETTINGS.setdefault(section, {})[key] = True
 (STATE / "data" / "settings.json").write_text(json.dumps(SETTINGS))
+if args.decide_token:
+    (STATE / "data" / "decide.token").write_text(args.decide_token)
 
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402
@@ -147,6 +152,8 @@ engines._start_engine = engines._stop_engine = _no_engine
 models.model_installed = lambda m: True               # the model lives in a scratch cache or in the running app
 if args.engine_url:
     config.ENGINES[args.engine_mode]["url"] = args.engine_url
+if args.decide_url:
+    config.DECIDE_URL = args.decide_url
 TOOL_LOG = []
 _real_read = harness._chat_read_tool
 

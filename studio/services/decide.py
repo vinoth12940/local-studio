@@ -43,6 +43,7 @@ _FILES = re.compile(r"\bmy\b.*\b(passport|visa|i-?94|ead|tax(?:es)?|w-?2|1099|do
                     r"contracts?|lease)\b", re.I)
 _FOLLOW_UP = re.compile(r"^(and|what about|how about|also|then)\b", re.I)
 _NEWS = re.compile(r"\b(news|headlines?)\b", re.I)
+_CLOCK = re.compile(r"\b(what time is it|what(?:'s| is) the time|what(?:'s| is) (?:the )?(?:date|day)|today's date|what day is it)\b", re.I)
 _GREETING = re.compile(r"^(hi|hello|hey|thanks|thank you|good (?:morning|afternoon|evening|night))\b", re.I)
 _FILLERS = re.compile(r",?\s*\b(?:um+|uh+|erm+|hmm+|you know)\b,?|,?\s*\blike,", re.I)
 
@@ -97,6 +98,8 @@ def prefetch_call(plan, text, web_fast, files=False):
     query = clean_query(text)
     if not query or plan["standalone"] < STANDALONE_THRESHOLD:
         return None                                   # a follow-up's words alone make a junk query
+    if _CLOCK.search(query):
+        return "get_current_datetime", {}             # "now" sounds live, but the Mac's clock answers it in milliseconds
     if plan["my_files"] >= FILES_THRESHOLD:
         return ("search_files", {"query": query}) if files else None      # personal questions never go to the web
     if plan["live_facts"] < LIVE_THRESHOLD:

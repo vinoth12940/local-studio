@@ -484,6 +484,9 @@ def decide_rules_route_the_labeled_questions():
     assert not any(live(t) for t in q["personal"] + q["follow_up"])
     assert all(decide.prefetch_call(decide.rules(t), t, web_fast=True, files=True)[0] == "search_files" for t in q["personal"])
     assert decide.clean_query("um, what's the, uh, bitcoin price right now") == "what's the bitcoin price right now"
+    live = dict(live_facts=0.99, my_files=0.0, small_talk=0.0, standalone=0.9, news=0.0)
+    for said in ("What time is it right now?", "What's the date today?", "What day is it?"):
+        assert decide.prefetch_call(live, said, web_fast=True) == ("get_current_datetime", {}), said   # the clock, never the web
     assert decide.prefetch_call(decide.rules("What's the latest cricket news?"), "What's the latest cricket news?", web_fast=True)[0] == "news_search"
     assert decide.prefetch_call(decide.rules("What's the latest cricket news?"), "What's the latest cricket news?", web_fast=False)[0] == "web_search"
 
