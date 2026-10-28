@@ -10,11 +10,12 @@ import {
   openCodeFile, renderCodeExplorer, saveCodeFile, setCodeEditorMode, updateCodeGutter
 } from "./editor.mjs";
 
-// terminal: a real login shell on a pty (app.py "terminal"), drawn by xterm.js which loads on first use
+// terminal: a real login shell on a pty (app.py "terminal"), drawn by xterm.js which loads on first use, from the copy
+// bundled in frontend/vendor/ (VENDOR.json lists its source and hashes)
 const XTERM_FILES = [
-  ["link", "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css", "sha384-tStR1zLfWgsiXCF3IgfB3lBa8KmBe/lG287CL9WCeKgQYcp1bjb4/+mwN6oti4Co"],
-  ["script", "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js", "sha384-J4qzUjBl1FxyLsl/kQPQIOeINsmp17OHYXDOMpMxlKX53ZfYsL+aWHpgArvOuof9"],
-  ["script", "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js", "sha384-XGqKrV8Jrukp1NITJbOEHwg01tNkuXr6uB6YEj69ebpYU3v7FvoGgEg23C1Gcehk"]];
+  ["link", "frontend/vendor/xterm/xterm.min.css", "sha384-tStR1zLfWgsiXCF3IgfB3lBa8KmBe/lG287CL9WCeKgQYcp1bjb4/+mwN6oti4Co"],
+  ["script", "frontend/vendor/xterm/xterm.min.js", "sha384-J4qzUjBl1FxyLsl/kQPQIOeINsmp17OHYXDOMpMxlKX53ZfYsL+aWHpgArvOuof9"],
+  ["script", "frontend/vendor/xterm/addon-fit.min.js", "sha384-XGqKrV8Jrukp1NITJbOEHwg01tNkuXr6uB6YEj69ebpYU3v7FvoGgEg23C1Gcehk"]];
 let xtermLoad = null, codeTermS = null;                // codeTermS: { term, fit, id, ws, offset, ctrl, dead, inq, busy, rows, cols }
 function loadXterm() {
   xtermLoad ||= (async () => {
@@ -22,7 +23,7 @@ function loadXterm() {
       const el = document.createElement(tag);
       if (tag === "link") { el.rel = "stylesheet"; el.href = url; } else el.src = url;
       el.integrity = sri; el.crossOrigin = "anonymous"; el.onload = ok;
-      el.onerror = () => fail(new Error("The terminal could not load (it needs the internet once to fetch xterm.js)."));
+      el.onerror = () => fail(new Error("The terminal could not load its xterm.js files. Reinstall Local Studio to restore them."));
       document.head.appendChild(el);
     });
   })().catch((err) => { xtermLoad = null; throw err; });

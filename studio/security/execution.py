@@ -33,7 +33,7 @@ def seatbelt_profile(workspace, temp, python=False, network=False, readonly=Fals
              f'(allow file-write* {writes})',
              # These regular expressions apply in any directory, including a synthetic test HOME.
              '(deny file-read* (regex #"/(\\.[sS][sS][hH]|\\.[aA][wW][sS]|\\.[gG][nN][uU][pP][gG]|\\.[kK][uU][bB][eE]|[kK][eE][yY][cC][hH][aA][iI][nN][sS]|[pP][aA][sS][sS][wW][oO][rR][dD][sS]|[cC][oO][oO][kK][iI][eE][sS])(/|$)"))',
-             '(deny file-read* (regex #"/(\\.env($|\\.)|[^/]*\\.([pP][eE][mM]|[kK][eE][yY]|[pP]12|[pP][fF][xX]|[kK][eE][yY][cC][hH][aA][iI][nN])[^/]*$|id_rsa[^/]*$|id_ed25519[^/]*$|id_ecdsa[^/]*$|\\.npmrc$|\\.pypirc$|\\.netrc$|credentials\\.json$|secrets\\.json$|\\.api-token$|\\.api-bootstrap$)"))',
+             '(deny file-read* (regex #"/(\\.env($|\\.)|[^/]*\\.([pP][eE][mM]|[kK][eE][yY]|[pP]12|[pP][fF][xX]|[kK][eE][yY][cC][hH][aA][iI][nN])[^/]*$|id_rsa[^/]*$|id_ed25519[^/]*$|id_ecdsa[^/]*$|\\.npmrc$|\\.pypirc$|\\.netrc$|credentials\\.json$|secrets\\.json$|\\.api-token$|\\.api-bootstrap$|search\\.token$|voice\\.token$)"))',
              '(allow file-read* (regex #"/\\.env\\.(example|sample|template)$"))']
     for suffix in ('Library/Keychains', 'Library/Application Support/Google/Chrome', 'Library/Safari',
                    'Library/Cookies', 'Library/Mail', 'Library/Messages', 'Library/Passwords'):

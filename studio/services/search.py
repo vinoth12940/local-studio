@@ -5,6 +5,7 @@ Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
 
 import hashlib
 import os
+import secrets
 import shutil
 import signal
 import subprocess
@@ -16,7 +17,7 @@ from fastapi import HTTPException
 from studio import config
 from studio.infra.logs import open_log
 from studio.services import models
-from studio.config import LOGS, ROOT, SEARCH_DEPS_OK, SEARCH_DIR, SEARCH_PORT, SEARCH_REQS, STATE, UV
+from studio.config import LOGS, ROOT, SEARCH_DEPS_OK, SEARCH_DIR, SEARCH_PORT, SEARCH_REQS, SEARCH_TOKEN, STATE, UV
 from studio.infra.system import _pid_alive, _read_pid
 from studio.services.models import downloads, search_model, start_download
 from studio.storage.settings import load_settings, save_settings
@@ -38,9 +39,33 @@ def search_deps_installed():
         return False
 
 
+def _search_token():
+    """The secret search.py requires, created once with owner-only permissions."""
+    try:
+        token = SEARCH_TOKEN.read_text().strip()
+        if len(token) >= 32:
+            return token
+    except OSError:
+        pass
+    SEARCH_TOKEN.parent.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_urlsafe(32)
+    fd = os.open(SEARCH_TOKEN, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(token)
+    return token
+
+
 def _search_running():
     try:
         return httpx.get(config.SEARCH_URL + "/health", timeout=2).status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+def _search_open():
+    """True when the running service answers without the token: one started by Local Studio 1.5 or older."""
+    try:
+        return httpx.get(config.SEARCH_URL + "/status", timeout=2).status_code == 200
     except httpx.HTTPError:
         return False
 
@@ -51,6 +76,8 @@ def _search_process():
 
 
 def _start_search():
+    if _search_running() and _search_open():
+        _stop_search()                                # an older service serves the user's files to any caller: replace it
     if _search_running() or _search_process():
         return
     log = open_log(LOGS / "search.log", "a")
@@ -58,7 +85,8 @@ def _start_search():
     # stop.sh's pkill patterns.
     proc = subprocess.Popen([UV, "run", "--no-project", "--python", "3.12", "--with-requirements", SEARCH_REQS.name,
                              "python", "search.py", "--port", str(SEARCH_PORT)], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                            env={**os.environ, "LOCAL_STUDIO_HOME": str(STATE)}, start_new_session=True)
+                            env={**os.environ, "LOCAL_STUDIO_HOME": str(STATE), "LOCAL_STUDIO_SEARCH_TOKEN": _search_token()},
+                            start_new_session=True)
     (LOGS / "search.pid").write_text(str(proc.pid))
 
 
@@ -113,11 +141,7 @@ def _enable_search():
 
 
 def _search_headers():
-    try:
-        token = (STATE / 'data/.api-token').read_text().strip()
-        return {'Authorization': 'Bearer ' + token} if token else {}
-    except OSError:
-        return {}
+    return {"Authorization": "Bearer " + _search_token()}
 
 
 def _search_proxy(method, path, **kw):

@@ -3,6 +3,7 @@
 Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
 """
 
+import plistlib
 import re
 import subprocess
 import time
@@ -15,8 +16,17 @@ from studio.config import APP_SUPPORT, APP_VERSION, BREW, DSPARK_PY, LLAMA_SERVE
 update_job: dict = {"status": "idle"}
 
 
+def _app_build():
+    """The bundle's build number (build.sh writes the commit count into Info.plist), or None from a source checkout."""
+    try:
+        with open(ROOT.parent.parent / "Info.plist", "rb") as f:
+            return str(plistlib.load(f).get("CFBundleVersion") or "") or None
+    except (OSError, plistlib.InvalidFileException):
+        return None
+
+
 def _versions():
-    v = {"app": APP_VERSION}
+    v = {"app": APP_VERSION, "build": _app_build()}
     try:
         out = subprocess.run([UV, "tool", "list"], capture_output=True, text=True, timeout=20).stdout
         for name in ("mlx-dspark", "mflux"):

@@ -1,0 +1,112 @@
+name: Release
+
+# Pushing a tag like v1.6.0 builds, signs, notarizes and publishes Local-Studio-1.6.0.dmg, as Murmur's release workflow
+# does. It needs the repository secrets listed in docs/RELEASING.md. Without them, or when the release was already
+# published from a Mac (macos/release.sh --publish creates the tag, which triggers this), every step after the first is
+# skipped with a notice rather than failing.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 240           # Apple can hold a first notarization "In Progress" for half an hour or more
+    env:
+      TMPDIR: /tmp                 # check_agent's unix sockets: macOS limits their paths to 104 bytes
+    steps:
+      - name: Decide whether to release here
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAVE_CERT: ${{ secrets.LOCAL_STUDIO_CERT_P12 != '' && (secrets.LOCAL_STUDIO_ASC_KEY_P8 != '' || secrets.LOCAL_STUDIO_APP_PASSWORD != '') }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::$GITHUB_REF_NAME is already published (from a Mac with macos/release.sh --publish): nothing to do."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$HAVE_CERT" != "true" ]]; then
+            echo "::notice::No signing secrets in this repository: publish from a Mac with macos/release.sh --publish (docs/RELEASING.md)."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        if: steps.gate.outputs.run == 'true'
+        with:
+          fetch-depth: 0           # build.sh numbers the build by its commit count
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
+        if: steps.gate.outputs.run == 'true'
+        with:
+          node-version: "26"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7   # v10.2.0
+        if: steps.gate.outputs.run == 'true'
+        with:
+          version: "0.11.2"
+
+      - name: Tag must match APP_VERSION, with a dated CHANGELOG entry
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          VERSION=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' app.py)
+          [[ "${GITHUB_REF_NAME#v}" == "$VERSION" ]] || { echo "Tag $GITHUB_REF_NAME does not match APP_VERSION $VERSION"; exit 1; }
+          heading=$(grep -m1 "^## $VERSION " CHANGELOG.md || true)
+          [[ -n "$heading" && "$heading" != *unreleased* ]] || { echo "CHANGELOG.md needs a dated '## $VERSION (date)' entry"; exit 1; }
+
+      - name: Import signing certificate
+        if: steps.gate.outputs.run == 'true'
+        env:
+          CERT_P12: ${{ secrets.LOCAL_STUDIO_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.LOCAL_STUDIO_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/local-studio.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+      - name: Notarization credentials
+        if: steps.gate.outputs.run == 'true'
+        env:
+          ASC_KEY_P8: ${{ secrets.LOCAL_STUDIO_ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.LOCAL_STUDIO_ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.LOCAL_STUDIO_ASC_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.LOCAL_STUDIO_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.LOCAL_STUDIO_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.LOCAL_STUDIO_APP_PASSWORD }}
+        run: |
+          if [[ -n "$ASC_KEY_P8" ]]; then        # an App Store Connect API key: no keychain profile (Murmur's lesson)
+            umask 077; printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc.p8"
+            { echo "LOCAL_STUDIO_NOTARY_KEY=$RUNNER_TEMP/asc.p8"; echo "LOCAL_STUDIO_NOTARY_KEY_ID=$ASC_KEY_ID"
+              echo "LOCAL_STUDIO_NOTARY_ISSUER=$ASC_ISSUER_ID"; } >> "$GITHUB_ENV"
+          else
+            xcrun notarytool store-credentials local-studio-ci \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+            echo "LOCAL_STUDIO_NOTARY_PROFILE=local-studio-ci" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build, check, sign and notarize
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          zsh macos/release.sh
+          DMG="build/Local-Studio-${GITHUB_REF_NAME#v}.dmg"
+          xcrun stapler validate "$DMG"                                    # never publish a DMG Gatekeeper would refuse
+          spctl -a -vv -t open --context context:primary-signature "$DMG"
+
+      - name: Publish release
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          gh release create "$GITHUB_REF_NAME" "build/Local-Studio-$VERSION.dmg" "build/Local-Studio-$VERSION.dmg.sha256" \
+            --title "Local Studio $VERSION" --notes-file "build/release-notes-$VERSION.md"

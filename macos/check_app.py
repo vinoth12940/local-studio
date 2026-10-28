@@ -387,8 +387,8 @@ def every_response_says_nosniff_and_csp_follows_its_flag():
         _with_settings({"security": {"csp": "report-only"}})
         r = c.get("/")
         assert r.headers["content-security-policy-report-only"] == headers.CSP and "content-security-policy" not in r.headers
-        for needed in ("https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://cdn.jsdelivr.net", "frame-ancestors 'none'"):
-            assert needed in headers.CSP, needed
+        assert "frame-ancestors 'none'" in headers.CSP
+        assert "http" not in headers.CSP and "//" not in headers.CSP, "every script, style and font is bundled: no other host"
         assert "'unsafe-inline'" not in headers.CSP.split("style-src")[0], "scripts never run inline"
         _with_settings({"security": {"csp": "enforce"}})
         assert c.get("/").headers["content-security-policy"] == headers.CSP
@@ -487,6 +487,57 @@ def secrets_in_tool_output_are_redacted_when_the_flag_is_on():
 
 
 @check
+def ui_loads_nothing_from_another_host():
+    """The UI is fully bundled: no script, style, font or image is fetched from another host (Google Fonts and jsDelivr
+    were, which told Google every launch and left markdown and the terminal broken offline). Every file in
+    frontend/vendor/ matches VENDOR.json, whose hashes are also the integrity attributes that load them, and is served
+    with its real type. Only the user's own clicks (links) and the model's examples may name other sites."""
+    import base64
+    import re
+    from fastapi.testclient import TestClient
+    page = (REPO / "index.html").read_text()
+    modules = {p: p.read_text() for p in sorted((REPO / "frontend").glob("**/*.mjs"))}
+    styles = [page] + [p.read_text() for p in sorted((REPO / "frontend").glob("**/*.css"))]
+    remote = r"""(?:https?:)?//(?!127\.0\.0\.1|localhost)"""
+    loads = re.findall(r"<(?:script|link|img|iframe|source|audio|video|embed|object)\b[^>]*\b(?:src|href|data|srcset)\s*=\s*[\"']?"
+                       + remote + r"[^\s\"'>]*", page)
+    assert not loads, f"the page loads from another host: {loads}"
+    for css in styles:
+        found = re.findall(r"url\(\s*[\"']?" + remote + r"[^)]*\)|@import[^;]*", css)
+        assert not found, f"a stylesheet loads from another host: {found}"
+    not_loaded = {"https://github.com/trycua/cua", "https://httpbin.org/forms/post"}   # a link the user clicks; an example prompt
+    for path, js in modules.items():
+        urls = set(re.findall(r"""["'`(]\s*((?:https?:)?//(?!127\.0\.0\.1|localhost|www\.w3\.org/)[^\s"'`),]+)""", js))
+        assert urls <= not_loaded, f"{path.relative_to(REPO)} names another host: {urls - not_loaded}"
+    manifest = json.loads((REPO / "frontend/vendor/VENDOR.json").read_text())["files"]
+    listed = {f["path"]: f["sha384"] for f in manifest}
+    present = {p.relative_to(REPO / "frontend/vendor").as_posix() for p in (REPO / "frontend/vendor").rglob("*")
+               if p.is_file() and p.name != "VENDOR.json"}
+    assert present == set(listed), ("frontend/vendor and VENDOR.json disagree", present ^ set(listed))
+    for rel, want in listed.items():
+        got = "sha384-" + base64.b64encode(hashlib.sha384((REPO / "frontend/vendor" / rel).read_bytes()).digest()).decode()
+        assert got == want, f"frontend/vendor/{rel} changed without VENDOR.json"
+    pinned = re.findall(r"""["'](frontend/vendor/[^"']+)["'][^\n]*?["']?(sha384-[A-Za-z0-9+/=]+)""",
+                        page + "\n".join(modules.values()))
+    assert len(pinned) == 4, f"marked and the three xterm files carry integrity attributes: {pinned}"
+    for rel, sri in pinned:
+        assert listed[rel.removeprefix("frontend/vendor/")] == sri, f"{rel}: its integrity attribute is not VENDOR.json's hash"
+    fonts = (REPO / "frontend/vendor/fonts/fonts.css").read_text()
+    faces = re.findall(r"url\(([^)]+)\)", fonts)
+    assert faces and all((REPO / "frontend/vendor/fonts" / f).is_file() for f in faces), faces
+    assert '"Inter"' in page and '"JetBrains Mono"' in page, "the page's fonts are the bundled families"
+    assert re.search(r'font-family: "Inter";', fonts) and re.search(r'font-family: "JetBrains Mono";', fonts)
+    build = (REPO / "macos/build.sh").read_text()
+    assert '"$ROOT/frontend/vendor"' in build, "build.sh must bundle frontend/vendor"
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    for rel, kind in (("fonts/inter-latin-wght-normal.woff2", "font/woff2"), ("fonts/fonts.css", "text/css"),
+                      ("marked/marked.min.js", "text/javascript"), ("xterm/xterm.min.css", "text/css"),
+                      ("xterm/xterm.min.js", "text/javascript")):
+        r = c.get("/frontend/vendor/" + rel)
+        assert r.status_code == 200 and r.headers["content-type"].startswith(kind), (rel, r.status_code, r.headers.get("content-type"))
+
+
+@check
 def search_is_not_started_twice():
     """While the service is still loading (process up, /health not yet answering), a second
     "turn on" must not launch another copy."""
@@ -533,6 +584,40 @@ def ui_modules_are_served_fresh_as_javascript():
         assert c.get(url, headers={"host": "evil.example:7860"}).status_code == 403, url
         assert c.get(url, headers={"sec-fetch-site": "cross-site"}).status_code == 403, url
     assert c.get("/frontend/../app.py").status_code == 404, "nothing outside frontend/"
+
+
+@check
+def search_is_started_with_its_token_and_an_open_one_is_replaced():
+    """The service gets its owner-only token at launch and every proxied call sends it; a running service that answers
+    without one (started by 1.5 or older, which served file text to any local caller) is stopped and started again."""
+    svc = studio.services.search
+    saved = (svc._search_running, svc._search_open, svc._search_process, svc._stop_search, app.subprocess.Popen)
+    launched, stopped = [], []
+
+    class P:
+        pid = 4243
+
+    svc.SEARCH_TOKEN.unlink(missing_ok=True)
+    try:
+        app.subprocess.Popen = lambda *a, **k: launched.append(k) or P()
+        svc._search_process, svc._stop_search = (lambda: False), (lambda: stopped.append(1))
+        svc._search_running, svc._search_open = (lambda: True), (lambda: True)
+        svc._start_search()
+        assert stopped == [1], "an unauthenticated service must be replaced"
+        svc._search_running = lambda: False
+        svc._start_search()
+        token = launched[-1]["env"]["LOCAL_STUDIO_SEARCH_TOKEN"]
+        assert len(token) >= 32 and svc.SEARCH_TOKEN.read_text() == token
+        assert oct(svc.SEARCH_TOKEN.stat().st_mode & 0o777) == "0o600", oct(svc.SEARCH_TOKEN.stat().st_mode)
+        assert svc._search_headers() == {"Authorization": "Bearer " + token}, "the same token on every call, not .api-token"
+        stopped.clear()
+        svc._search_running, svc._search_open = (lambda: True), (lambda: False)
+        n = len(launched)
+        svc._start_search()
+        assert not stopped and len(launched) == n, "a service that requires the token is left running"
+    finally:
+        svc._search_running, svc._search_open, svc._search_process, svc._stop_search, app.subprocess.Popen = saved
+        (app.LOGS / "search.pid").unlink(missing_ok=True)
 
 
 @check

@@ -19,8 +19,10 @@ def _local_request(host, origin, fetch_site=None):
     return name in ("127.0.0.1", "localhost", "::1") and not origin
 
 
-def make_app(store, embedder, indexer, searcher):
+def make_app(store, embedder, indexer, searcher, token):
     from studio.search.auth import authorized
+    if not token:
+        raise ValueError("the search service needs a token")
     import io
     from contextlib import asynccontextmanager
     from fastapi import Body, FastAPI, HTTPException
@@ -39,8 +41,8 @@ def make_app(store, embedder, indexer, searcher):
             if not _local_request(h.get(b"host", b"").decode("latin-1"), h.get(b"origin", b"").decode("latin-1"),
                                   h.get(b"sec-fetch-site", b"").decode("latin-1")):
                 return await PlainTextResponse("forbidden", status_code=403)(scope, receive, send)
-            if scope["path"] != "/health" and not authorized(h):
-                return await PlainTextResponse("Local API authentication required", status_code=401, headers={"Cache-Control":"no-store"})(scope, receive, send)
+            if scope["path"] != "/health" and not authorized(h, token):
+                return await PlainTextResponse("Search service token required", status_code=401, headers={"Cache-Control":"no-store"})(scope, receive, send)
         await api(scope, receive, send)
 
     @api.get("/health")

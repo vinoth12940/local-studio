@@ -8,7 +8,12 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 **FLUX.2 Klein**. Model inference runs locally. Web requests go to the search provider and
 sites you ask about; local file tools read your on-device index.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.5.0**
+[![Latest release](https://img.shields.io/github/v/release/vinoth12940/local-studio?label=download&color=c2410c)](https://github.com/vinoth12940/local-studio/releases/latest)
+![macOS 14 or later](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
+![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M--series-black)
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.6.0**
+
+**[⬇️ Download for Mac](https://github.com/vinoth12940/local-studio/releases/latest)** · [Install](#install) · [Use](#use)
 
 ![Chat](docs/chat.jpg)
 
@@ -59,16 +64,17 @@ sites you ask about; local file tools read your on-device index.
 
 ## Requirements
 
-- Mac with Apple Silicon (M1 or newer), macOS 15+
-- 32 GB RAM minimum; 48 GB recommended (all numbers below are from a 48 GB M4 Pro)
+- Mac with Apple Silicon (M1 or newer), macOS 14+
+- 16 GB RAM for the smallest models, 32 GB+ for the larger ones; 48 GB recommended (all numbers below are from a 48 GB M4 Pro)
 - ~30 GB free disk space for the models
-- Internet for installation, model downloads and public web tools; local inference works offline
+- Internet for installation, model downloads and public web tools; everything else, including the interface, works offline
 
 ## Install
 
 ### The easy way (recommended)
 
-1. Download **Local-Studio-1.5.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+1. Get **Local-Studio-1.6.0.dmg** from the [Releases page](https://github.com/vinoth12940/local-studio/releases/latest)
+   (each release lists the DMG's SHA-256 and has a `.sha256` file).
 2. Open it and drag **Local Studio** into **Applications**.
 3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
    engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
@@ -76,11 +82,10 @@ sites you ask about; local file tools read your on-device index.
 4. Pick your first model. Local Studio recommends models that fit your Mac's memory, and chat
    unlocks when the download finishes.
 
-Requirements: Apple Silicon (M1 or newer), macOS 14+, 16 GB RAM or more (32 GB+ for the larger
-models), and disk space for the models you choose (3–25 GB each).
+Requirements are listed above; the models you choose need 3–25 GB of disk each.
 
-> If the DMG isn't notarized (see "Building a release" below), macOS blocks it on first open.
-> Go to **System Settings → Privacy & Security → Open Anyway**, then open it again.
+> Releases from 1.6.0 on are signed with a Developer ID and notarized by Apple, so they open without a
+> warning. An older DMG that macOS blocks can be opened from **System Settings → Privacy & Security → Open Anyway**.
 
 ### From source (developers)
 
@@ -112,18 +117,14 @@ chats and settings over from `~/local-studio`.
 
 ```sh
 macos/build.sh --install   # build Local Studio.app and copy it to /Applications
-macos/release.sh           # build the app and build/Local-Studio-<version>.dmg
+macos/release.sh           # build, sign and notarize build/Local-Studio-<version>.dmg (+ .sha256)
+macos/release.sh --publish # the same, then publish it as GitHub release v<version> (on main only)
 ```
 
 The app is signed with a **Developer ID Application** certificate when one is installed (otherwise
-your Apple Development certificate, which only works on your own Macs). To ship a DMG that opens on
-any Mac without warnings:
-
-1. In your Apple Developer account, create a **Developer ID Application** certificate
-   (Certificates → +) and install it in Keychain.
-2. Create an app-specific password at appleid.apple.com, then store notarization credentials once:
-   `xcrun notarytool store-credentials notary --apple-id YOU@icloud.com --team-id YOURTEAMID`
-3. Run `macos/release.sh`. It signs, notarizes and staples the DMG automatically.
+your Apple Development certificate, which only works on your own Macs). [docs/RELEASING.md](docs/RELEASING.md)
+covers notarization credentials, cutting a release, the optional GitHub Actions release on a `v*` tag, and the
+Homebrew cask template.
 
 ## Use
 

@@ -34,7 +34,7 @@ app tiers, target-derived gate, and macOS accessibility permissions.
 | ASI01: Agent Goal Hijack | A page, document, OCR result or tool descriptor redirects the task. | `services/harness.py::_with_agent_note` treats source material and MCP descriptions/results as untrusted. `services/mcp_custom.py` labels descriptions and JSON-escapes framed results; `api/chat.py` uses this framing in tool messages. `security/harness_gate.py` validates action arguments independently of model claims. | Framing is guidance to the model, not isolation. A user may still approve an injected action. |
 | ASI02: Tool Misuse and Exploitation | The agent chains legitimate tools to disclose data or alter the workspace. | `security/fences.py` resolves symlinks and rejects credential paths and blocked commands. `security/harness_gate.py` supplies file diffs and execution previews. `_ChatSession` in `services/harness.py` binds replies to pending approval keys. | Session grants cover an action category. The unchanged read-only shell allowlist includes test runners, whose project code may execute. |
 | ASI03: Identity and Privilege Abuse | A local caller or child process uses the user's authority. | `security/local_only.py` checks Host, Origin and Fetch Metadata on all routes/static files. CuaDriver app tiers and `security/agent_gate.py` use target facts. `run_python` has a small environment; shell tools exclude several known credential prefixes. | LocalOnly permits local scripts without Origin. Opt-in `security.api_token` requires a private bearer token or HttpOnly startup cookie. Environment filtering is not a complete secret boundary. |
-| ASI04: Agentic Supply Chain Vulnerabilities | A custom MCP executable, dependency or CDN script is compromised. | Exact Python pins in `requirements-app.txt` and `search-requirements.txt`; versioned CDN assets with SRI. `security.mcp_approval` binds launch consent to a hash of command, arguments and configured environment. Settings displays that full configuration before Test launches a server. Tool approvals also include it. | The flag defaults off for compatibility. When off, enabled servers can launch automatically for discovery. Consent does not audit server code or its inherited environment. Dependency auditing is still a P6 item. |
+| ASI04: Agentic Supply Chain Vulnerabilities | A custom MCP executable, dependency or CDN script is compromised. | Exact Python pins in `requirements-app.txt` and `search-requirements.txt`; the UI's third-party files (fonts, marked, xterm.js) bundled in `frontend/vendor/` and verified against `VENDOR.json` hashes, which are also their integrity attributes. `security.mcp_approval` binds launch consent to a hash of command, arguments and configured environment. Settings displays that full configuration before Test launches a server. Tool approvals also include it. | The flag defaults off for compatibility. When off, enabled servers can launch automatically for discovery. Consent does not audit server code or its inherited environment. Dependency auditing is still a P6 item. |
 | ASI05: Unexpected Code Execution (RCE) | Model output reaches shell/Python, or uploaded/rendered content executes. | Shell/path gates, explicit exec approval, timeouts, process groups and post-edit syntax diagnostics. `frontend/core/markdown.mjs` uses an HTML allowlist. `security/headers.py` adds nosniff; `security.uploads` checks file signatures when enabled. | Sandbox/resource flags default off. Approved code otherwise runs with user privileges. Signature checks establish a format, not that its parser/content is safe. |
 | ASI06: Memory & Context Poisoning | An injected fact persists into later turns or compaction. | `storage/memory.py` uses bounded atomic storage; the leading harness note gives current user instructions priority. `services/harness.py` bounds history and preserves checkpoint summaries. | Memory and workspace instructions influence later turns. There is no provenance-based authorization boundary for remembered text. Review/delete poisoned memory through Settings. |
 | ASI07: Insecure Inter-Agent Communication | A delegated agent or external MCP result impersonates a trusted instruction. | `delegate_task` has isolated context and read-only tools in `services/harness.py`; custom MCP output is explicitly untrusted. `infra/mcp_client.py` restricts CuaDriver tools and uses local stdio. | Read-only delegation can still return misleading facts; stdio does not make a server trustworthy. No distributed agent identity protocol is implemented or needed for the current design. |
@@ -100,8 +100,9 @@ Example for isolated development:
 }
 ```
 
-The CSP permits same-origin resources, pinned jsDelivr scripts/styles, Google Fonts styles/fonts,
-inline styles, and same-origin/data/blob images. It disallows inline scripts and event handlers,
+The CSP permits same-origin resources only: every script, style and font is bundled (`frontend/vendor/`), plus
+inline styles and same-origin/data/blob images. No other host is allowed, and `check_app.py ui_loads_nothing_from_another_host`
+fails the build if the page, a stylesheet or a module loads anything from one. It disallows inline scripts and event handlers,
 plugins, foreign connections, base URLs and framing. The UI has external script/module files and
 delegated event handlers, so no inline-script nonce is needed. `/api/csp-report` accepts at most
 16 KB per report and stores bounded JSON lines in `STATE/logs/csp.log` only while CSP reporting
@@ -114,7 +115,7 @@ the browser loaded the policy and exercised the relevant feature; it is not a fu
 `STATE/data/.api-token` and a distinct, single-use startup ticket in `.api-bootstrap`, both mode 0600.
 The Swift wrapper sets the port-specific HttpOnly/SameSite=Strict cookie through WKHTTPCookieStore
 before loading; `start.sh` prints the one-time `/?t=...` URL, which sets the cookie and redirects to `/`.
-Scripts and the search service read the bearer file. LocalOnly remains in force. All routes/static
+Scripts read the bearer file; the search service has its own token (below). LocalOnly remains in force. All routes/static
 files require authentication except `/api/system` and `/api/health`; the latter hides the selected model
 while authentication is enabled. A cookie is scoped to the loopback host and path, not a TCP port;
 a different local HTTP server may receive cookies if visited. This is additional protection from
@@ -171,9 +172,13 @@ a saved handle then reports unavailability. This is reconnection support, not du
 ## Search-service boundaries and incremental updates
 
 `search.py` remains the command-line entrypoint, with code under `studio/search/`. The service's
-Host/Origin/Fetch-Metadata checks remain intact. With `security.api_token=true`, all search-service
-routes except `/health` also require the same private bearer token; the UI proxy supplies it, so
-calling the search port directly does not bypass the optional token gate. Search's own health
+Host/Origin/Fetch-Metadata checks remain intact. Since 1.6.0 every route except `/health` also requires the
+service's own token, whatever `security.api_token` says: these routes return the text and bytes of indexed files, and
+loopback is reachable by other accounts on the Mac and by sandboxed apps that may not read `~/Documents`. The backend
+creates `STATE/data/search.token` (0600), passes it to the service in `LOCAL_STUDIO_SEARCH_TOKEN` at launch (the service
+refuses to start without it) and sends it on every proxied call; the UI API token is not accepted in its place. A running
+service that answers without the token (one started by 1.5 or older) is stopped and started again by `_start_search`.
+`search.token` and `voice.token` are refused to the harness file tools and Seatbelt like `.api-token`. Search's own health
 endpoint returns no user data. `LOCAL_STUDIO_UI_PORT` can redirect its busy probe in isolated development.
 
 `search.incremental` defaults to false. When enabled, the normal crawler policy polls metadata
@@ -186,9 +191,11 @@ the UI proxy preserves that header. The previous periodic-rescan behavior remain
 
 ## Release gate
 
-`macos/release.sh --dry-run` audits both exact-pinned requirement sets through temporary projects,
+`macos/release.sh --dry-run` audits all three exact-pinned requirement sets (app, search, voice) through temporary projects,
 then verifies the built app with `codesign --verify --deep --strict`. Audit or signature failure
 stops the release. The installed uv build's standalone `--script` audit path did not work; a
 temporary pyproject was verified with both dependency sets and leaves no project/lockfile in the checkout.
 Developer ID signed builds additionally run `spctl -a -vv --type execute`; a local-development
-signature does not satisfy that distribution condition. Dry run creates no DMG and submits no notarization.
+signature does not satisfy that distribution condition. Dry run creates no DMG and submits no notarization. `--publish` adds the distribution checks: it runs only on a clean
+`main` equal to `origin/main`, needs notarization credentials before building, refuses an existing tag or an undated
+CHANGELOG entry, and validates the stapled ticket and the DMG's Gatekeeper assessment before uploading anything.

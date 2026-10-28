@@ -818,7 +818,9 @@ async def chat(request: Request):
             yield _sse(event)
             yield "data: [DONE]\n\n"
         except ValueError as error:
-            outcome = "needs_user"
+            # A cancel that lands while the model's reply is in flight refuses the next dispatch: nothing ran, so the run is
+            # cancelled, the same as a cancel seen at the start of a round.
+            outcome = "cancelled" if isinstance(error, workflow_runs.RunCancelled) else "needs_user"
             yield _sse({"error": str(error)})
             yield "data: [DONE]\n\n"
         finally:

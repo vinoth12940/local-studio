@@ -29,7 +29,7 @@ def main():
     parser.add_argument('--uv', default=shutil.which('uv') or str(Path.home() / '.local/bin/uv'))
     args = parser.parse_args()
     repo = Path(__file__).resolve().parent.parent
-    for requirements in args.requirements or [repo / 'requirements-app.txt', repo / 'search-requirements.txt']:
+    for requirements in args.requirements or [repo / 'requirements-app.txt', repo / 'search-requirements.txt', repo / 'voice-requirements.txt']:
         audit(requirements, args.uv)
 
 

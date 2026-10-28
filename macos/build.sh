@@ -48,6 +48,7 @@ for f in app.py index.html catalog.json requirements-app.txt search.py search-re
 done
 rsync -a --exclude __pycache__ --exclude '*.pyc' "$ROOT/studio" "$APP/Contents/Resources/app/"   # the backend package
 rsync -a --include '*/' --include '*.mjs' --exclude '*' "$ROOT/frontend" "$APP/Contents/Resources/app/"   # the UI's ES modules
+rsync -a "$ROOT/frontend/vendor" "$APP/Contents/Resources/app/frontend/"   # fonts, marked and xterm.js: the UI needs no network
 chmod +x "$APP/Contents/Resources/app/"*.sh
 
 echo "==> Icon"

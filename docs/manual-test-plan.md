@@ -13,7 +13,6 @@ currently has only `coding_workflow` on, so nothing below is active until you sw
 | Measured eval baseline | **Measured once** (LFM2.5 24B-A2B, 3 runs per task, 20/24 pass); committed at `macos/evals/baselines/lfm2.5-24b-a2b.json`, with the 0.15 regression threshold agreed |
 | Unattended trigger execution | **Not built on purpose.** It is a policy decision |
 | Independent review of this work | **Pending**; the roadmap's accepted count is 0/30 |
-| Not committed | 56 changed files sit uncommitted on `codex/p6-search-release` |
 
 ## Start here: what to test in the installed app (about 30 minutes)
 
@@ -49,8 +48,8 @@ Things that look odd but are expected:
 
 ## Where the build is
 
-`build/Local Studio.app` (1.5.0, build 133, signed) is current with the source and **is installed** at `/Applications/Local Studio.app`
-(byte-identical). Reinstall any time with `./macos/build.sh --install`.
+Build and install the current source with `./macos/build.sh --install` (quit Local Studio first). The version and build
+number are in Settings and in `CHANGELOG.md`.
 
 ---
 

@@ -1,6 +1,7 @@
 """Search service: cli. Moved verbatim from search.py (P6)."""
 import argparse
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -8,6 +9,7 @@ import time
 from pathlib import Path
 
 from studio.search.api import make_app
+from studio.search.auth import TOKEN_ENV
 from studio.search.config import INDEX_DIR
 from studio.search.embedder import Embedder
 from studio.search.indexer import Indexer, shutdown
@@ -94,6 +96,9 @@ def main():
     args = ap.parse_args()
     if args.eval:
         sys.exit(run_eval(args.eval))
+    token = os.environ.get(TOKEN_ENV, "")
+    if not token:
+        sys.exit(f"{TOKEN_ENV} is not set; the app starts this service with its token")
 
     store, embedder = Store(INDEX_DIR / "index.db"), Embedder()
     indexer, searcher = Indexer(store, embedder), Searcher(store, embedder)
@@ -109,6 +114,6 @@ def main():
     threading.Thread(target=boot, daemon=True).start()
     import uvicorn
     try:
-        uvicorn.run(make_app(store, embedder, indexer, searcher), host="127.0.0.1", port=args.port, log_level="warning")
+        uvicorn.run(make_app(store, embedder, indexer, searcher, token), host="127.0.0.1", port=args.port, log_level="warning")
     finally:
         shutdown(indexer)

@@ -1,4 +1,4 @@
-"""Static files the page loads at start-up (frontend/ ES modules), added in the refactor's P2 split.
+"""Static files the page loads (frontend/: ES modules, and the bundled fonts, marked and xterm.js in frontend/vendor/).
 
 Every response says Cache-Control: no-cache, like index.html: after an update the app window must revalidate, never run a
 new index.html against old modules. ETag/Last-Modified still make the revalidation cheap. JavaScript modules are always
@@ -13,6 +13,10 @@ class FreshStaticFiles(StaticFiles):
         response.headers["Cache-Control"] = "no-cache"
         if str(full_path).endswith((".mjs", ".js")):
             response.headers["Content-Type"] = "text/javascript; charset=utf-8"
+        elif str(full_path).endswith(".css"):
+            response.headers["Content-Type"] = "text/css; charset=utf-8"
+        elif str(full_path).endswith(".woff2"):
+            response.headers["Content-Type"] = "font/woff2"
         return response
 
 

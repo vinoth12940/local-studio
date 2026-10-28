@@ -14,7 +14,9 @@ import search
 from fastapi import FastAPI
 
 # The search wrapper closes over its own FastAPI app. Inspect that actual app, not a source approximation.
-wrapper = search.make_app(None, None, None, None)
+TOKEN = 'synthetic-search-token'
+AUTH = {'Authorization': 'Bearer ' + TOKEN}
+wrapper = search.make_app(None, None, None, None, TOKEN)
 api = next(cell.cell_contents for cell in wrapper.__closure__ if isinstance(cell.cell_contents, FastAPI))
 routes = [{'methods': sorted(route.methods), 'path': route.path, 'name': route.name} for route in api.routes]
 fixture = REPO / 'macos/fixtures/search_routes.json'
@@ -36,7 +38,7 @@ from fastapi.testclient import TestClient
 import types
 indexer = types.SimpleNamespace(config=lambda: {'incremental': True}, full_indexing=True, error=None)
 searcher = types.SimpleNamespace(search=lambda *a: [], passages=lambda *a: [])
-c = TestClient(search.make_app(None, None, indexer, searcher), base_url='http://127.0.0.1:8083')
+c = TestClient(search.make_app(None, None, indexer, searcher, TOKEN), base_url='http://127.0.0.1:8083', headers=AUTH)
 for endpoint in ('/search', '/passages'):
     result = c.post(endpoint, json={'query': 'synthetic'})
     assert result.status_code == 503 and result.headers['retry-after'] == '1', result.text
@@ -64,7 +66,7 @@ for reason in ('user', 'battery', 'busy'):
         assert release.wait(5), 'test did not release synthetic indexing'
         return 'ok'
     ix.index_file = index_file
-    client = TestClient(search.make_app(None, None, ix, searcher), base_url='http://127.0.0.1:8083')
+    client = TestClient(search.make_app(None, None, ix, searcher, TOKEN), base_url='http://127.0.0.1:8083', headers=AUTH)
     worker = threading.Thread(target=ix.run_pass)
     worker.start()
     try:
@@ -92,16 +94,29 @@ for reason in ('user', 'battery', 'busy'):
         assert client.post(endpoint, json={'query': 'synthetic'}).status_code == 200
     print(f'   ok search_full_pass_{reason}_pause_allows_queries_and_resume_restores_backpressure')
 
+# Every route but /health needs the service's own token, whatever security.api_token says: they return the user's files.
 state = Path(TEST_STATE.name)
 (state/'data').mkdir()
-(state/'data/settings.json').write_text(json.dumps({'security':{'api_token':True}}))
-(state/'data/.api-token').write_text('synthetic-token')
-assert c.get('/health').status_code == 200
-assert c.get('/status').status_code == 401
-assert c.post('/search',json={'query':'test'}).status_code == 401
-assert c.post('/search',json={'query':'test'},headers={'Authorization':'Bearer synthetic-token'}).status_code == 200
-assert c.post('/search',json={'query':'test'},headers={'Authorization':'Bearer synthetic-token','origin':'https://evil.example'}).status_code == 403
-print('   ok search_token_authentication_preserves_localonly')
+bare = TestClient(search.make_app(None, None, indexer, searcher, TOKEN), base_url='http://127.0.0.1:8083')
+for api_token in (False, True):
+    (state/'data/settings.json').write_text(json.dumps({'security': {'api_token': api_token}}))
+    (state/'data/.api-token').write_text('synthetic-api-token')
+    assert bare.get('/health').status_code == 200
+    for method, path in (('get', '/status'), ('get', '/errors'), ('get', '/file/1'), ('get', '/text/1'), ('get', '/preview/1'),
+                         ('get', '/page/1/1'), ('get', '/image/1'), ('get', '/thumb/1'), ('post', '/search'), ('post', '/passages'),
+                         ('post', '/reload'), ('get', '/openapi.json'), ('get', '/docs')):
+        r = getattr(bare, method)(path, **({'json': {'query': 'test'}} if method == 'post' else {}))
+        assert r.status_code == 401, (api_token, path, r.status_code)
+        r = getattr(bare, method)(path, headers={'Authorization': 'Bearer synthetic-api-token'})
+        assert r.status_code == 401, ('the UI API token is not the search token', path, r.status_code)
+    assert bare.post('/search', json={'query': 'test'}, headers=AUTH).status_code == 200
+    assert bare.post('/search', json={'query': 'test'}, headers={**AUTH, 'origin': 'https://evil.example'}).status_code == 403
+try:
+    search.make_app(None, None, indexer, searcher, '')
+    raise AssertionError('the service started without a token')
+except ValueError:
+    pass
+print('   ok search_service_requires_its_token_on_every_file_route')
 TEST_STATE.cleanup()
 
 

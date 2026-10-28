@@ -4,6 +4,7 @@ Nothing here starts, stops or switches a model engine. Real runs attach to the e
 (LOCAL_STUDIO_EVAL_ATTACH=1, see studio.services.engines.ensure_engine); scripted runs replace the model with a
 deterministic transport and exist to prove that each task is solvable and that its checks discriminate.
 """
+import collections
 import hashlib
 import json
 import os
@@ -248,6 +249,15 @@ def score(task, workspace, summary, fixture_dir=None):
     return results
 
 
+# Set by Session.run_recovery once it has cancelled the run. The chat loop checks for a cancel at the start of each round
+# and again before dispatching a tool. A scripted turn marked "until_interrupted" that is requested before the cancel holds
+# its response until the cancel lands (so its tool call is refused, never run) and goes back into the script, so the
+# resumed run is asked again, as a real model would be. Either way the interruption falls between the tool calls, however
+# slow the machine (a fixed 0.3 s delay raced the interrupter and lost on CI runners).
+INTERRUPTED = threading.Event()
+HOLD_LIMIT_SECONDS = 30
+
+
 class Scripted:
     """Deterministic model transport (same seam the offline suites use). Never reaches an engine."""
     def __init__(self, turns):
@@ -268,16 +278,21 @@ class Scripted:
         from studio.services import models
         self._saved = (httpx.AsyncClient, engines.engine_state, engines._engine_ready, models.model_installed,
                        engines._start_engine, engines._stop_engine)
-        outer, iterator = self, iter(self.turns)
+        outer, pending = self, collections.deque(self.turns)
 
         class Response:
             status_code = 200
-            def __init__(self, events, delay=0): self._events, self._delay = events, delay
+            def __init__(self, events, delay=0, requeue=None): self._events, self._delay, self._requeue = events, delay, requeue
             async def __aenter__(self): return self
             async def __aexit__(self, *args): return False
             async def aiter_lines(self):
+                import asyncio
+                if self._requeue is not None:
+                    deadline = time.monotonic() + HOLD_LIMIT_SECONDS
+                    while not INTERRUPTED.is_set() and time.monotonic() < deadline:
+                        await asyncio.sleep(0.01)
+                    pending.appendleft(self._requeue)
                 if self._delay:
-                    import asyncio
                     await asyncio.sleep(self._delay)
                 for event in self._events:
                     yield "data: " + json.dumps(event)
@@ -289,8 +304,10 @@ class Scripted:
             async def __aexit__(self, *args): return False
             def stream(self, method, url, json=None, **kwargs):
                 outer.seen.append(json)
-                turn = next(iterator, {"text": "Done."})
-                return Response(Scripted.events(turn), turn.get("delay", 0))
+                turn = pending.popleft() if pending else {"text": "Done."}
+                held = turn.get("until_interrupted") and not INTERRUPTED.is_set()
+                again = {k: v for k, v in turn.items() if k != "until_interrupted"} if held else None
+                return Response(Scripted.events(turn), turn.get("delay", 0), again)
 
         httpx.AsyncClient = Client
         from studio.storage.settings import load_settings
@@ -453,6 +470,7 @@ class Session:
         chat_id = uuid.uuid4().hex[:16]
         body = {"model_id": self.model_id, "chat_id": chat_id, "workspace": str(workspace), "messages": build_messages(task), **self.sampling}
         info = {}
+        INTERRUPTED.clear()
 
         def interrupter(stop):
             while not stop.is_set():
@@ -463,6 +481,7 @@ class Session:
                     if done >= n and not record.get("cancel_requested"):
                         workflow_runs.store.cancel(record["id"])
                         info["interrupted_after_steps"] = done
+                        INTERRUPTED.set()
                         return
                 time.sleep(0.02)
 
