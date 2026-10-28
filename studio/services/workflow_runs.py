@@ -31,6 +31,10 @@ class RunConflict(ValueError):
     pass
 
 
+class RunCancelled(RunConflict):
+    """The run was cancelled before this tool call was dispatched: the call never ran, so the run ends cancelled."""
+
+
 def policy_fingerprint(settings, workspace):
     """Bind resumed runs to trusted configuration, including instruction policy."""
     harness = settings.get("harness") or {}
@@ -351,7 +355,7 @@ class RunStore:
     def dispatch(self, run_id, step_id, name, args, effect_class="possible_side_effect", call_id=None):
         def change(record):
             if record["cancel_requested"]:
-                raise RunConflict("Workflow run was cancelled before tool dispatch")
+                raise RunCancelled("Workflow run was cancelled before tool dispatch")
             if record["phase"] not in ("running", "waiting_approval") or step_id in record["steps"]:
                 raise RunConflict("Tool step already dispatched or run is not executable")
             if effect_class == "possible_side_effect" and any(

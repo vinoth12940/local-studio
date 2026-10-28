@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -203,10 +204,22 @@ def test_recovery_task_interrupts_a_real_run_resumes_it_and_catches_replays():
     bad = evalkit.run_task(task, session(), TMP, evalkit.load_script(task["id"], "negative"))
     assert bad["status"] == "failed" and "replay" in bad["reason"], bad
     assert (Path(bad["workspace"]) / "log.txt").read_text().split() == ["milestone-1", "milestone-2"], "the harness must have refused the replay"
-    altered = [{"tool": "run_shell", "args": {"command": "echo milestone-1 >> log.txt"}}, {"tool": "run_shell", "args": {"command": "echo milestone-2 >> log.txt", }, "delay": 0.3},
+    altered = [{"tool": "run_shell", "args": {"command": "echo milestone-1 >> log.txt"}}, {"tool": "run_shell", "args": {"command": "echo milestone-2 >> log.txt", }, "until_interrupted": True},
                {"tool": "run_shell", "args": {"command": "echo  milestone-1 >> log.txt"}}, {"tool": "run_shell", "args": {"command": "echo milestone-3 >> log.txt"}}, {"text": "Done."}]
     sneaky = evalkit.run_task(task, session(), TMP, altered)                                  # a trivially altered replay is not refused
     assert sneaky["status"] == "failed" and any(c["check"]["type"] == "file_line_count" and not c["passed"] for c in sneaky["checks"]), sneaky
+    # A slow machine (the interrupter's scan of the run store lags, as on a CI runner) lands the cancel while the next
+    # reply is in flight instead of between rounds: the outcome, the log and the phase must be the same.
+    scan = evalkit.Session._runs_for_chat
+    evalkit.Session._runs_for_chat = lambda self, chat_id: time.sleep(0.25) or scan(self, chat_id)
+    try:
+        slow = evalkit.run_task(task, session(), TMP, evalkit.load_script(task["id"], "reference"))
+        assert slow["status"] == "passed" and slow["recovery"]["phase_after_interrupt"] == "cancelled", slow
+        assert (Path(slow["workspace"]) / "log.txt").read_text().split() == ["milestone-1", "milestone-2", "milestone-3"]
+        slow_bad = evalkit.run_task(task, session(), TMP, evalkit.load_script(task["id"], "negative"))
+        assert slow_bad["status"] == "failed" and "replay" in slow_bad["reason"], slow_bad
+    finally:
+        evalkit.Session._runs_for_chat = scan
     quick = evalkit.run_task(task, session(), TMP, [{"text": "Nothing to do."}])
     assert quick["status"] == "skipped" and "nothing to recover" in quick["reason"], quick
     rejects({**task, "recovery": {"interrupt_after_tool_calls": 0}}, "recovery needs")

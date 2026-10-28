@@ -30,6 +30,10 @@ The first step of the [production-readiness plan](docs/production-readiness-plan
   runs when Voice starts.
 - A real end-to-end voice check (`check_voice_e2e.py`, attach-only) measures what was heard, the answer and the time to
   first audio.
+- Durable runs (`harness.durable_runs`): a cancel that lands while the model's reply is in flight now ends the run
+  `cancelled`, as a cancel between rounds does; it was reported as `needs_user` although the refused call never ran.
+- The recovery eval no longer races a 0.3 s timer: the first CI run failed it on GitHub's slower runner. A slow-interrupter
+  case now runs in `check_evals.py`.
 
 ### Delivery
 - CI: GitHub Actions runs `macos/build.sh` (every check, the OCR suite and an ad-hoc signed bundle) on Apple Silicon for

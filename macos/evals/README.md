@@ -24,7 +24,9 @@ uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt py
 
 `--scripted` replaces the model with each task's reference script. It exists to prove the tasks are solvable and the checks
 discriminate (`macos/check_evals.py` also runs every task's *negative* script and requires it to fail). A scripted report
-measures no model and can never be a baseline or compared against one.
+measures no model and can never be a baseline or compared against one. A scripted turn may carry `"delay"` (seconds before
+its reply) or `"until_interrupted": true` (recovery tasks: hold the reply until the run is cancelled, then serve it again
+after the resume), so an interruption lands between tool calls on any machine rather than racing a timer.
 
 Add `--baseline build/evals/baseline/report.json --max-drop 0.15` to fail on regressions, `--task <id>` to select tasks,
 `--allow-model-mismatch` to proceed when the engine reports a different model than `--model` (by default that **refuses**, because results would be scored under the wrong name; an unverifiable model is warned about and recorded as `model_check` in the report), and `--seed N` / `--temperature T` to forward sampling settings in the chat body (an engine that ignores a seed is not
