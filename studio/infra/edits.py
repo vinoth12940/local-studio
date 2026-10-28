@@ -1,6 +1,6 @@
 """Edit matching, diff previews and post-edit syntax diagnostics for the harness.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import ast

@@ -1,4 +1,4 @@
-// code/editor.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// code/editor.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, api, esc, human, jpost, toast } from "../core/util.mjs";
 import { listState, updateWorkspaceUI } from "../chat/list.mjs";
 import { codeUpdateStatus } from "../modules.mjs";

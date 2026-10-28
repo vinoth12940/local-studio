@@ -1,5 +1,5 @@
 // The page's globals, set in one place (refactor P2). There are no inline event handlers (the CSP refuses them): use delegated
-// listeners. window.LS is a console handle for debugging (CLAUDE.md: render synthetic turns into LS.current, then
+// listeners. window.LS is a console handle for debugging (render synthetic turns into LS.current, then
 // LS.renderThread()).
 import * as main from "./main.mjs";
 import "./modules.mjs";                                   // the modules run in their original order first

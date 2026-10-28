@@ -1,6 +1,6 @@
 """Attachments: images and documents processed once on upload.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import base64

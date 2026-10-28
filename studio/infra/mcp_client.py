@@ -1,6 +1,6 @@
 """The stdio MCP JSON-RPC client (CuaDriver and custom MCP servers).
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import base64

@@ -1,6 +1,6 @@
 """App and engine versions, and engine updates.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import plistlib

@@ -1,6 +1,6 @@
 """LocalOnly: every route and static file answers only this Mac's own page and local scripts.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 from fastapi.responses import JSONResponse

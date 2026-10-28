@@ -1,4 +1,4 @@
-// core/util.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// core/util.mjs: moved from index.html's inline script in the refactor's P2 split.
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_MAX_TOKENS = 16384;   // thinking + answer; the server trims it to fit the context

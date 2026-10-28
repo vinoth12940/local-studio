@@ -1,6 +1,6 @@
 """Streamed and background subprocesses for run_shell / run_python.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import os

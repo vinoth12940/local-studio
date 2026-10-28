@@ -1,6 +1,6 @@
 """Routes: processes.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 from fastapi import APIRouter, HTTPException

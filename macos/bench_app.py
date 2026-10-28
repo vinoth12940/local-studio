@@ -1,4 +1,4 @@
-"""Offline benchmark of the backend (refactor P0/P4, docs/perf-baseline.md). Run by hand, never by build.sh:
+"""Offline benchmark of the backend (refactor P0/P4). Run by hand, never by build.sh:
 
     uv run -q --no-project --python 3.12 --with-requirements requirements-app.txt \
         python macos/bench_app.py [--chats 200] [--json out.json]

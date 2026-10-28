@@ -1,6 +1,6 @@
 # Python packages the Local Studio backend (app.py) runs with, pinned to exact versions.
 # Read by start.sh (uv run --with-requirements), setup.sh (APP_DEPS), macos/build.sh and the check suites.
-# Bump only in a dedicated, tested change, never as part of a refactor commit. Audit: see docs/refactor-progress.json P6.release-audit.
+# Bump only in a dedicated, tested change, never as part of a refactor commit. Audit: macos/release.sh --dry-run.
 
 # direct dependencies
 fastapi==0.146.0

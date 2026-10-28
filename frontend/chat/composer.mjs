@@ -1,4 +1,4 @@
-// chat/composer.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// chat/composer.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, api, esc, jpost, store, toast } from "../core/util.mjs";
 import { view } from "../ui/views.mjs";
 import { chLive, listState, openChat, saveChat } from "./list.mjs";

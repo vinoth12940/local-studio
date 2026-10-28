@@ -22,7 +22,7 @@ FIXTURE = ROOT / "macos" / "fixtures" / "patch_points.json"
 MODULE_OBJECTS = {"subprocess", "httpx", "socket", "os", "time", "shutil", "asyncio", "threading"}
 MUTATORS = {"clear", "update", "pop", "append", "setdefault", "extend", "remove", "add", "discard", "insert"}
 
-# Where each name moves in the P1 split (docs/prompts/modularization-performance-security-prompt-v2.md §5 P1). Banners in
+# Where each name moves in the P1 split. Banners in
 # app.py are not owners: the harness lives under the "LLM proxy" and "terminal" banners, the agent loop under "approval gate".
 DESTINATION = {
     "SEARCH_URL": "studio.config", "CONTEXT": "studio.config", "AGENT_SOCK": "studio.config", "AGENT_RUNS": "studio.config",

@@ -1,6 +1,6 @@
 """The computer-use approval gate: safe / risky / blocked from facts about the target.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import ipaddress

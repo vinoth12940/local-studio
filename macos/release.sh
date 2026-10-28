@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Builds build/Local-Studio-<version>.dmg, signed and notarized, the same way Murmur's release.sh does: the app is
 # notarized and stapled, then the DMG that holds it is signed, notarized and stapled too, and build/Local-Studio-<version>.dmg.sha256
-# is written next to it. See docs/RELEASING.md.
+# is written next to it.
 #
 #   macos/release.sh             build, sign, notarize and package
 #   macos/release.sh --dry-run   dependency audits and signature checks of the existing build only
@@ -68,7 +68,7 @@ if (( PUBLISH )); then
   [[ "$heading" != *unreleased* ]] || fail "date the CHANGELOG.md entry first: $heading"
   [[ -n "$(changelog_entry | tr -d '[:space:]')" ]] || fail "the CHANGELOG.md entry for $VERSION is empty"
   [[ -n "$(developer_id)" ]] || fail "no Developer ID Application certificate in the keychain"
-  notary_ready || fail "no working notarization credentials (${NOTARY_AUTH[1]}): see docs/RELEASING.md"
+  notary_ready || fail "no working notarization credentials (${NOTARY_AUTH[1]}): see the notes at the top of macos/release.sh"
 fi
 
 UV=$(command -v uv || echo ~/.local/bin/uv)
@@ -136,7 +136,7 @@ fi
 if (( NOTARIZE )); then
   echo "Built $DMG (signed and notarized), $(du -h "$DMG" | cut -f1)"
 elif [[ -n "$ID" ]]; then
-  echo "Built $DMG (signed but NOT notarized: store notarization credentials, see docs/RELEASING.md)"
+  echo "Built $DMG (signed but NOT notarized: store notarization credentials, see the top of macos/release.sh)"
 else
   echo "Built $DMG (not signed with a Developer ID: it opens without warnings only on your own Macs)"
 fi

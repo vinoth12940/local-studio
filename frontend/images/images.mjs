@@ -1,4 +1,4 @@
-// images/images.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// images/images.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, api, confirmBox, esc, gib, icon, jpost, toast } from "../core/util.mjs";
 
 // ---------------- images

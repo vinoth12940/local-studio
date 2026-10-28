@@ -1,1 +1,1 @@
-"""Local Studio backend package (see CLAUDE.md, Architecture)."""
+"""Local Studio backend package."""

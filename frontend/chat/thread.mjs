@@ -1,4 +1,4 @@
-// chat/thread.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// chat/thread.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { createStore } from "../core/store.mjs";
 import { $, esc, icon, jpost, toast } from "../core/util.mjs";
 import { agNoImages, md } from "../core/markdown.mjs";

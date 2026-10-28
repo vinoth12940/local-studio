@@ -1,6 +1,6 @@
 """The chat agent harness: tools, the multi-round loop, sub-agents and compaction.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import ast

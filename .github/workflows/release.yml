@@ -1,9 +1,11 @@
 name: Release
 
 # Pushing a tag like v1.6.0 builds, signs, notarizes and publishes Local-Studio-1.6.0.dmg, as Murmur's release workflow
-# does. It needs the repository secrets listed in docs/RELEASING.md. Without them, or when the release was already
-# published from a Mac (macos/release.sh --publish creates the tag, which triggers this), every step after the first is
-# skipped with a notice rather than failing.
+# does. Repository secrets: LOCAL_STUDIO_CERT_P12 (the Developer ID Application certificate as a base64 .p12) and
+# LOCAL_STUDIO_CERT_PASSWORD, then either an App Store Connect API key (LOCAL_STUDIO_ASC_KEY_P8, _ASC_KEY_ID,
+# _ASC_ISSUER_ID; preferred) or LOCAL_STUDIO_APPLE_ID, _TEAM_ID and _APP_PASSWORD. Without them, or when the release was
+# already published from a Mac (macos/release.sh --publish creates the tag, which triggers this), every step after the
+# first is skipped with a notice rather than failing.
 
 on:
   push:
@@ -29,7 +31,7 @@ jobs:
             echo "::notice::$GITHUB_REF_NAME is already published (from a Mac with macos/release.sh --publish): nothing to do."
             echo "run=false" >> "$GITHUB_OUTPUT"
           elif [[ "$HAVE_CERT" != "true" ]]; then
-            echo "::notice::No signing secrets in this repository: publish from a Mac with macos/release.sh --publish (docs/RELEASING.md)."
+            echo "::notice::No signing secrets in this repository: publish from a Mac with macos/release.sh --publish."
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -49,13 +51,11 @@ jobs:
         with:
           version: "0.11.2"
 
-      - name: Tag must match APP_VERSION, with a dated CHANGELOG entry
+      - name: Tag must match APP_VERSION
         if: steps.gate.outputs.run == 'true'
         run: |
           VERSION=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' app.py)
           [[ "${GITHUB_REF_NAME#v}" == "$VERSION" ]] || { echo "Tag $GITHUB_REF_NAME does not match APP_VERSION $VERSION"; exit 1; }
-          heading=$(grep -m1 "^## $VERSION " CHANGELOG.md || true)
-          [[ -n "$heading" && "$heading" != *unreleased* ]] || { echo "CHANGELOG.md needs a dated '## $VERSION (date)' entry"; exit 1; }
 
       - name: Import signing certificate
         if: steps.gate.outputs.run == 'true'
@@ -108,5 +108,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+          # The changelog is a maintainer note kept off the repository, so notes come from GitHub, as Murmur's do.
           gh release create "$GITHUB_REF_NAME" "build/Local-Studio-$VERSION.dmg" "build/Local-Studio-$VERSION.dmg.sha256" \
-            --title "Local Studio $VERSION" --notes-file "build/release-notes-$VERSION.md"
+            --title "Local Studio $VERSION" --generate-notes
