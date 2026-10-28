@@ -249,8 +249,9 @@ criteria are measured, not when the code is written.
 
 ### Phase 1: a safety net (week 1, about 3 PRs)
 
-**Status (2026-10-28):** built on branch `production/phase-1` (one PR, stacked on PR #10). The full build passes locally;
-CI has not run yet.
+**Status (2026-10-28):** built in PR #11 (stacked on PR #10). The full build passes locally and with an empty home. The real
+search service returned 401 without its token. CI's first run caught a timing race in the recovery eval, which is now fixed;
+CI runs on every push to the PR.
 
 
 - **D1** CI on GitHub Actions, required on `main`.
