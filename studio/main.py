@@ -78,6 +78,7 @@ MODULES = (
     "studio.api.images",
     "studio.services.search",
     "studio.api.search",
+    "studio.services.decide",
     "studio.services.voice",
     "studio.api.voice",
     "studio.services.terminal",

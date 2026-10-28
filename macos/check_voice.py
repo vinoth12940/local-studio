@@ -469,6 +469,46 @@ def chat_voice_mode_never_reaches_the_engine():
     assert "example prompts" in harness.VOICE_NOTE
 
 
+RULES_CAUGHT, RULES_FALSE_ALARM = 30, 0                # the rules' measured counts on the fixture (28 Oct); keep them as floors
+
+
+@check
+def decide_rules_route_the_labeled_questions():
+    from studio.services import decide
+    q = json.loads((Path(__file__).resolve().parent / "fixtures/route_questions.json").read_text())
+    live = lambda t: decide.prefetch_call(decide.rules(t), t, web_fast=True) is not None
+    caught = sum(live(t) for t in q["search"]); false_alarm = sum(live(t) for t in q["direct"])
+    assert caught >= RULES_CAUGHT and false_alarm <= RULES_FALSE_ALARM, (caught, false_alarm)
+    assert not any(live(t) for t in q["personal"] + q["follow_up"])
+    assert all(decide.prefetch_call(decide.rules(t), t, web_fast=True, files=True)[0] == "search_files" for t in q["personal"])
+    assert decide.clean_query("um, what's the, uh, bitcoin price right now") == "what's the bitcoin price right now"
+    assert decide.prefetch_call(decide.rules("What's the latest cricket news?"), "What's the latest cricket news?", web_fast=True)[0] == "news_search"
+    assert decide.prefetch_call(decide.rules("What's the latest cricket news?"), "What's the latest cricket news?", web_fast=False)[0] == "web_search"
+
+
+@check
+def decide_reads_d1_answers_and_falls_back_to_rules():
+    import httpx
+    from studio.services import decide
+    answers = {"answers": {k: {"type": "noul", "noul": v} for k, v in
+               {"live_facts": 0.93, "my_files": 0.02, "small_talk": 0.01, "standalone": 0.97, "news": 0.1}.items()}}
+    seen = []
+    def post(url, json=None, headers=None, timeout=None):
+        seen.append((url, json, headers, timeout)); return httpx.Response(200, json=answers, request=httpx.Request("POST", url))
+    real = decide.httpx.post
+    decide.httpx.post = post
+    try:
+        plan = decide.preflight("Bitcoin price now?", "Hi")
+        assert plan["source"] == "d1" and plan["live_facts"] == 0.93 and seen[0][0].endswith("/decide")
+        assert seen[0][1]["state"] == "Earlier: Hi\nLast message: Bitcoin price now?" and seen[0][3] == 0.25
+        assert seen[0][2]["Authorization"].startswith("Bearer ") and set(seen[0][1]["questions"]) == set(decide.QUESTIONS)
+        def slow(*a, **k): raise httpx.ReadTimeout("warming up")
+        decide.httpx.post = slow
+        assert decide.preflight("Bitcoin price now?", None)["source"] == "rules"
+    finally:
+        decide.httpx.post = real
+
+
 if __name__ == "__main__":
     want = sys.argv[1:]
     for fn in CHECKS:
