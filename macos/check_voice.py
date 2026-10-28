@@ -482,6 +482,7 @@ def decide_rules_route_the_labeled_questions():
     caught = sum(live(t) for t in q["search"]); false_alarm = sum(live(t) for t in q["direct"])
     assert caught >= RULES_CAUGHT and false_alarm <= RULES_FALSE_ALARM, (caught, false_alarm)
     assert not any(live(t) for t in q["personal"] + q["follow_up"])
+    assert [t for t in q["small_talk_and_commands"] if live(t)] == [], "small talk and commands never go to a public search"
     assert all(decide.prefetch_call(decide.rules(t), t, web_fast=True, files=True)[0] == "search_files" for t in q["personal"])
     assert decide.clean_query("um, what's the, uh, bitcoin price right now") == "what's the bitcoin price right now"
     live = dict(live_facts=0.99, my_files=0.0, small_talk=0.0, standalone=0.9, news=0.0)
@@ -489,6 +490,49 @@ def decide_rules_route_the_labeled_questions():
         assert decide.prefetch_call(live, said, web_fast=True) == ("get_current_datetime", {}), said   # the clock, never the web
     assert decide.prefetch_call(decide.rules("What's the latest cricket news?"), "What's the latest cricket news?", web_fast=True)[0] == "news_search"
     assert decide.prefetch_call(decide.rules("What's the latest cricket news?"), "What's the latest cricket news?", web_fast=False)[0] == "web_search"
+
+
+@check
+def decide_personal_questions_never_reach_the_web():
+    from studio.services import decide
+    missed = dict(live_facts=0.9, my_files=0.1, small_talk=0.0, standalone=0.9, news=0.0)      # d1 missed the personal cue
+    for said in ("When does my passport expire?", "What does my green card say?", "Is my car insurance still valid?",
+                 "What's the date on my passport?", "What's my name?"):
+        assert decide.prefetch_call(missed, said, web_fast=True, files=False) is None, said
+        pick = decide.prefetch_call(missed, said, web_fast=True, files=True)
+        assert pick is None or pick[0] == "search_files", (said, pick)
+    chatty = dict(live_facts=0.9, my_files=0.0, small_talk=0.9, standalone=0.9, news=0.0)
+    assert decide.prefetch_call(chatty, "Hello! How is it going today?", web_fast=True) is None, "d1's small talk never searches"
+    assert "LFM Open License v1.0" in __import__("studio.storage.flags", fromlist=["FLAGS"]).FLAGS["voice.decide"][1]
+    assert "LFM Open License v1.0" in (REPO / "frontend/voice/voice.mjs").read_text(), "the Voice view names d1's license"
+
+
+@check
+def d1_follows_the_voice_session():
+    from fastapi.testclient import TestClient
+    from studio.services import decide
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    class R:
+        def json(self): return {"ok": True}
+    events = []
+    saved = (services_voice.voice_available, services_voice.voice_request, services_voice._voice_running, decide.start_decide,
+             decide.stop_decide, decide.flag)
+    services_voice.voice_available = lambda: True
+    services_voice.voice_request = lambda *a, **k: R()
+    services_voice._voice_running = lambda: True
+    decide.start_decide = lambda: events.append("start")
+    decide.stop_decide = lambda: events.append("stop")
+    decide.flag = lambda name: name == "voice.decide"
+    try:
+        assert c.post("/api/voice/mic/open").status_code == 200
+        for _ in range(50):
+            if events: break
+            time.sleep(0.02)
+        assert events == ["start"], "Start brings d1 up (again, if it died or the flag was turned on later)"
+        assert c.post("/api/voice/mic/close").status_code == 200 and events == ["start", "stop"], "End unloads d1"
+    finally:
+        (services_voice.voice_available, services_voice.voice_request, services_voice._voice_running, decide.start_decide,
+         decide.stop_decide, decide.flag) = saved
 
 
 @check
@@ -570,6 +614,12 @@ def decide_waits_for_memory_and_reports_rules_when_down():
         decide.start_decide()
         assert spawned == [1]
         assert decide.mode()["mode"] == "rules" and "not running" in decide.mode()["reason"]   # nothing answers on the test port
+        real_process = decide._process
+        decide._process = lambda: True
+        try:
+            assert decide.mode() == {"mode": "rules", "reason": "d1 is loading"}, "spawned but not answering yet"
+        finally:
+            decide._process = real_process
         decide.flag = lambda name: False
         assert decide.mode() == {"mode": "off", "reason": ""}
     finally:

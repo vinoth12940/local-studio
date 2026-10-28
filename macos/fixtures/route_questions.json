@@ -1,5 +1,5 @@
 {
- "_about": "Spoken-turn routing set: 'search' needs live public facts, 'direct' does not (both from the voice prototype's route_eval.py), 'personal' is about the user's own documents, 'follow_up' only makes sense after an earlier turn.",
+ "_about": "Spoken-turn routing set: 'search' needs live public facts, 'direct' does not (both from the voice prototype's route_eval.py), 'personal' is about the user's own documents, 'follow_up' only makes sense after an earlier turn. 'small_talk_and_commands' never needs the web.",
  "search": [
   "How much is Bitcoin right now?",
   "Is it going to rain in London tomorrow?",
@@ -66,5 +66,29 @@
   "What about Tokyo?",
   "How about in dollars?",
   "And the score?"
+ ],
+ "small_talk_and_commands": [
+  "How are you doing today?",
+  "Hi, how are you doing?",
+  "What's new with you?",
+  "Thank you, that's all for now.",
+  "Can you open my notes app?",
+  "Please close the window",
+  "Who is Albert Einstein?",
+  "Explain how a new battery works",
+  "Good morning!",
+  "Hello there",
+  "Thanks a lot",
+  "Bye for now",
+  "Okay, sounds good",
+  "Tell me a joke",
+  "Set a timer for ten minutes",
+  "Turn up the volume",
+  "Remind me to call mom",
+  "What can you do?",
+  "Open the calculator",
+  "Stop talking",
+  "Can you hear me now?",
+  "That's great, thanks"
  ]
 }

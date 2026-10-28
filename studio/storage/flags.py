@@ -27,7 +27,7 @@ FLAGS = {
     "performance.chat_index": (False, "Cache chat titles/timestamps while validating file signatures on every list request"),
     "search.incremental": (False, "Debounce edited-file reindexing and return 503 plus Retry-After during full index passes"),
     "voice.enabled": (False, "Allow the local voice service (voice.py: echo-cancelled mic and speaker, Parakeet speech recognition, Phonon speech)"),
-    "voice.decide": (False, "With Voice on, d1-2B decides in milliseconds whether a spoken turn needs live facts or your files, and the search starts at once"),
+    "voice.decide": (False, "With Voice on, d1-2B (LiquidAI, LFM Open License v1.0, a 1.35 GB download) decides in milliseconds whether a spoken turn needs live facts or your files, and the search starts at once"),
     "streams.resume": (False, "Keep bounded chat SSE buffers and allow reattachment with event IDs"),
     "logging.json_requests": (False, "Write one JSON line per slow (>= 250 ms), failing or non-GET request to logs/requests.jsonl"),
     "security.api_token": (False, "Require the private local API token or startup cookie; readiness probes remain public"),

@@ -32,19 +32,28 @@ QUESTIONS = {
 }                                                     # "noul": d1's yes/no question, answered with the probability of yes
 # Measured on 28 Oct with d1-2B on the 51 labeled questions in macos/fixtures/route_questions.json: live >= 0.3 caught 29 of 30
 # with 0 of 21 false alarms (a needless search costs a second; a missed one costs a refusal); everyday questions score at most
-# 0.18 for my_files, personal ones 0.42-0.69; follow-ups score 0.35-0.36 for standalone, "my passport" 0.49.
-LIVE_THRESHOLD, FILES_THRESHOLD, STANDALONE_THRESHOLD = 0.3, 0.35, 0.45
+# 0.18 for my_files, personal ones 0.42-0.69; follow-ups score 0.35-0.36 for standalone, "my passport" 0.49; real questions score
+# at most 0.6 for small_talk ("What movies are out?"), greetings 0.97.
+LIVE_THRESHOLD, FILES_THRESHOLD, STANDALONE_THRESHOLD, SMALL_TALK_THRESHOLD = 0.3, 0.35, 0.45, 0.7
 
-_LIVE = re.compile(r"\b(latest|today|tonight|now|current(?:ly)?|prices?|cost|cheaper|cheapest|selling|how much|weather|forecast|"
-                   r"typhoon|storm|hurricane|earthquake|scores?|news|headlines?|release[sd]?|updates?|new|next|happened|won|"
-                   r"trending|open|close[sd]?|closing|near me|crowded|playing|are out|leads?|doing|weekends?|last night|"
-                   r"this (?:week|month|year)|yesterday|tomorrow|stocks?|exchange rate)\b|\bwho (?:is|are|runs|leads|owns|won)\b", re.I)
-_FILES = re.compile(r"\bmy\b.*\b(passport|visa|i-?94|ead|tax(?:es)?|w-?2|1099|documents?|files?|pdf|statements?|receipts?|"
-                    r"contracts?|lease)\b", re.I)
+# Words that mean the answer changes. Everyday words ("now", "new", "open", "doing", "who is") count only in the phrases that
+# ask about the world, so greetings and commands never reach a public search (scored on route_questions.json, both ways).
+_LIVE = re.compile(r"\b(latest|today|tonight|right now|current(?:ly)?|prices?|cost|cheaper|cheapest|selling|how much|weather|"
+                   r"forecast|typhoon|storm|hurricane|earthquake|scores?|news|headlines?|release[sd]?|updates?|the new|the next|"
+                   r"happened|won|trending|open (?:today|tonight|now|on|at|right now)|opening hours|closing (?:time|hours)|near me|"
+                   r"crowded|playing|are out|leads?|weekends?|last night|this (?:week|month|year)|yesterday|tomorrow|stocks?|"
+                   r"exchange rate)\b|\bwho (?:is|are) the\b|\bwho (?:runs|leads|owns|won)\b|\b(?:does|do|will)\b.{0,40}\bclose\b|"
+                   r"\bhow (?:is|are)\b.{0,30}\bdoing\b", re.I)
+_FILES = re.compile(r"\bmy\b.*\b(passport|visa|green card|i-?94|ead|tax(?:es)?|w-?2|1099|licen[cs]e|insurance|bank|documents?|"
+                    r"files?|pdf|statements?|receipts?|contracts?|lease)\b", re.I)
+_MINE = re.compile(r"\b(my|mine|our)\b", re.I)          # about the user: never a public search, whatever d1 says
 _FOLLOW_UP = re.compile(r"^(and|what about|how about|also|then)\b", re.I)
 _NEWS = re.compile(r"\b(news|headlines?)\b", re.I)
 _CLOCK = re.compile(r"\b(what time is it|what(?:'s| is) the time|what(?:'s| is) (?:the )?(?:date|day)|today's date|what day is it)\b", re.I)
-_GREETING = re.compile(r"^(hi|hello|hey|thanks|thank you|good (?:morning|afternoon|evening|night))\b", re.I)
+_GREETING = re.compile(r"^(hi|hello|hey|thanks|thank you|good (?:morning|afternoon|evening|night)|how are you|what'?s (?:new|up)|"
+                       r"bye|goodbye|see you|ok(?:ay)?|that'?s (?:great|good|all)|great|cool|nice)\b|"
+                       r"^(?:(?:can|could|would|will) you |please )*(?:open|close|turn|set|start|stop|play|pause|resume|remind|call|"
+                       r"text|send|mute|unmute|tell me a joke)\b", re.I)   # greetings, closings and commands to the Mac
 _FILLERS = re.compile(r",?\s*\b(?:um+|uh+|erm+|hmm+|you know)\b,?|,?\s*\blike,", re.I)
 
 
@@ -98,10 +107,14 @@ def prefetch_call(plan, text, web_fast, files=False):
     query = clean_query(text)
     if not query or plan["standalone"] < STANDALONE_THRESHOLD:
         return None                                   # a follow-up's words alone make a junk query
+    if plan["small_talk"] >= SMALL_TALK_THRESHOLD or _GREETING.match(query):
+        return None                                   # greetings, thanks and commands need no search
+    if max(plan["my_files"], rules(query)["my_files"]) >= FILES_THRESHOLD:     # the word rules are a floor under d1 here
+        return ("search_files", {"query": query}) if files else None      # personal questions never go to the web
+    if _MINE.search(query):
+        return None                                   # "my name", "my city": the model decides, never a prefetched web search
     if _CLOCK.search(query):
         return "get_current_datetime", {}             # "now" sounds live, but the Mac's clock answers it in milliseconds
-    if plan["my_files"] >= FILES_THRESHOLD:
-        return ("search_files", {"query": query}) if files else None      # personal questions never go to the web
     if plan["live_facts"] < LIVE_THRESHOLD:
         return None
     if web_fast and plan["news"] >= 0.5:
@@ -189,5 +202,6 @@ def mode():
     health = _health()
     if health and health.get("loaded"):
         return {"mode": "d1", "reason": ""}
-    reason = _last["reason"] or (health.get("error") or "d1 is loading" if health else "d1 is not running")
+    reason = _last["reason"] or (health.get("error") or "d1 is loading" if health else
+                                 "d1 is loading" if _process() else "d1 is not running")
     return {"mode": "rules", "reason": reason}

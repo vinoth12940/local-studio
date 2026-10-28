@@ -111,7 +111,12 @@ function trBot(text) {
 function showDecide(d) {
   const el = $("vvDecide"); if (!el) return;
   el.hidden = !d || d.mode === "off";
-  el.textContent = !d || d.mode === "off" ? "" : d.mode === "d1" ? "Live-facts check: d1-2B" : `Live-facts check: rules${d.reason ? ` (${d.reason})` : ""}`;
+  el.textContent = !d || d.mode === "off" ? "" : d.mode === "d1" ? "Live-facts check: d1-2B (LiquidAI, LFM Open License v1.0)"
+    : `Live-facts check: rules${d.reason ? ` (${d.reason})` : ""}`;
+}
+// d1 loads after Start and can stop mid-session: re-read the status after each turn so the line never goes stale.
+async function refreshDecide() {
+  try { if (v.on) showDecide((await (await fetch("/api/voice/status")).json()).decide); } catch {}
 }
 
 async function startVoice() {
@@ -133,6 +138,7 @@ async function startVoice() {
     }
     if (!v.on) return;
     showDecide(st.decide);
+    setTimeout(refreshDecide, 4000);                 // Start brings d1 up in the background: show it once it answers
     const r = await post("/api/voice/mic/open");
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "The microphone could not be opened.");
     v.es = new EventSource("/api/voice/events");
@@ -311,6 +317,7 @@ async function firePending() {
   }
 }
 function finishTurn() {
+  refreshDecide();
   clearInterval(turn.tick); turn.done = false;
   v.lastSpeechEnd = performance.now();
   if (!v.on) return;
