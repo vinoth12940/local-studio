@@ -73,7 +73,7 @@ def spoken_numbers(text):
             total, current = (total or 0) + (current or 1) * _SCALES[word], None
         elif word == "point" and (current is not None or total is not None) and i + 1 < len(words) and words[i + 1] in _UNITS:
             after_point = True
-        elif word == "and" and current is not None and i + 1 < len(words) and (words[i + 1] in _UNITS or words[i + 1] in _TENS):
+        elif word == "and" and (current is not None or total is not None) and i + 1 < len(words) and (words[i + 1] in _UNITS or words[i + 1] in _TENS):
             continue
         else:
             close()
@@ -121,6 +121,7 @@ CASES = [
 # Self-test of the scoring, before anything starts.
 assert spoken_numbers("about eighty-one thousand dollars, up two point five percent") == [81000, 2.5]
 assert spoken_numbers("twenty nine degrees, feels like thirty seven") == [29, 37]
+assert spoken_numbers("eighty-one thousand and sixty-four dollars") == [81064], spoken_numbers("eighty-one thousand and sixty-four")
 assert grounded_spoken([81000], "price $81,066.58") and not grounded_spoken([95000], "price $81,066.58")
 assert re.search(EXPECT["llama"], "the latest is v0.8.0, build b11969")
 
