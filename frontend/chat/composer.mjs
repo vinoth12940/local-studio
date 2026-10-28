@@ -100,7 +100,8 @@ function ctxUsage(chat = listState.current) {
   for (const m of msgs.slice(i + 1)) used += Math.ceil((m.content || "").length / 3.2) + (m.attachments || []).reduce((a, x) => a + (x.tokens_est || (x.kind === "image" ? 1200 : 0)), 0);
   return { used, total: listState.ctxWindow, measured: i === msgs.length - 1 };
 }
-const fmtTok = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
+// In 1024s, like every window size the app shows ("128k" is 131,072): free space never reads larger than the window.
+const fmtTok = (n) => n >= 1024 ? `${(n / 1024).toFixed(1)}k` : `${n}`;
 function updateCtx() {
   const u = ctxUsage(), f = $("ctxFoot");
   if (!u) { f.hidden = true; return; }
