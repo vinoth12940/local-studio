@@ -13,6 +13,10 @@ The first step of the [production-readiness plan](docs/production-readiness-plan
   sandboxed app without file access) could read the text and bytes of indexed documents. The backend keeps the token in
   `data/search.token` (0600) and replaces a running service from an older version that still answers without it.
 - `search.token` and `voice.token` are refused to the harness file tools and the Seatbelt profile, like `.api-token`.
+- Dependencies with known vulnerabilities, found by the release audit: certifi 2026.10.18 → 2026.10.23 (it trusted root
+  certificates whose intermediate keys were compromised) and pypdf 6.21.1 → 6.21.2 (malformed PDFs could make parsing run
+  for a very long time) in the app and search sets, and setuptools 84.0.0 → 84.1.0 in the search set. The release audit
+  now covers the voice set too. Search sets itself up again once, because its requirements changed.
 
 ### Privacy and offline use
 - Fonts (Inter, JetBrains Mono), the markdown renderer (marked) and the terminal (xterm.js) are bundled in
@@ -39,6 +43,8 @@ The first step of the [production-readiness plan](docs/production-readiness-plan
 - CI: GitHub Actions runs `macos/build.sh` (every check, the OCR suite and an ad-hoc signed bundle) on Apple Silicon for
   every pull request and push to `main`.
 - Settings shows the build number next to the version.
+- `macos/release.sh --publish` turns a notarized DMG into a GitHub release (main only, dated changelog entry, no existing
+  tag). The README's download link, `releases/latest/download/Local-Studio.dmg`, always fetches the newest one.
 
 ## 1.5.0 (2026-10-17 to 2026-10-27)
 

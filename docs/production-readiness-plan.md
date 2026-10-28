@@ -207,8 +207,9 @@ R = reliability, D = delivery, Q = quality.
   - There is no app update check; [updates.py](../studio/services/updates.py) updates engines only.
   - First run downloads uv via `curl | sh`.
 - **Fix.**
-  - Notarize and staple every release (`release.sh` already scripts it once `notarytool store-credentials` has been run),
-    and make `release.sh` refuse to publish a DMG that `spctl` and `stapler validate` do not accept.
+  - Notarize and staple every release, and refuse to publish a DMG that `spctl` and `stapler validate` do not accept.
+    **Done in PR #11:** `release.sh --publish`, plus a stable README link (`releases/latest/download/Local-Studio.dmg`).
+    The last published DMG is 1.2.2 (2026-10-05), and the README pointed at a 1.5.0 DMG that was never published.
   - An update check against signed GitHub releases (notify only, with a link and the release notes).
   - Make first-run downloads come from `engines.lock` with checksums.
   - A clean-install test on a fresh macOS user account before each release.

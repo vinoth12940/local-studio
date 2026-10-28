@@ -191,9 +191,11 @@ the UI proxy preserves that header. The previous periodic-rescan behavior remain
 
 ## Release gate
 
-`macos/release.sh --dry-run` audits both exact-pinned requirement sets through temporary projects,
+`macos/release.sh --dry-run` audits all three exact-pinned requirement sets (app, search, voice) through temporary projects,
 then verifies the built app with `codesign --verify --deep --strict`. Audit or signature failure
 stops the release. The installed uv build's standalone `--script` audit path did not work; a
 temporary pyproject was verified with both dependency sets and leaves no project/lockfile in the checkout.
 Developer ID signed builds additionally run `spctl -a -vv --type execute`; a local-development
-signature does not satisfy that distribution condition. Dry run creates no DMG and submits no notarization.
+signature does not satisfy that distribution condition. Dry run creates no DMG and submits no notarization. `--publish` adds the distribution checks: it runs only on a clean
+`main` equal to `origin/main`, needs notarization credentials before building, refuses an existing tag or an undated
+CHANGELOG entry, and validates the stapled ticket and the DMG's Gatekeeper assessment before uploading anything.

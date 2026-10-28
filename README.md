@@ -68,7 +68,9 @@ sites you ask about; local file tools read your on-device index.
 
 ### The easy way (recommended)
 
-1. Download **Local-Studio-1.6.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+1. Download **[Local-Studio.dmg](https://github.com/vinoth12940/local-studio/releases/latest/download/Local-Studio.dmg)**
+   (always the newest release; every version, its notes and the DMG's SHA-256 are on the
+   [releases page](https://github.com/vinoth12940/local-studio/releases)).
 2. Open it and drag **Local Studio** into **Applications**.
 3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
    engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
@@ -78,8 +80,8 @@ sites you ask about; local file tools read your on-device index.
 
 Requirements are listed above; the models you choose need 3–25 GB of disk each.
 
-> If the DMG isn't notarized (see "Building a release" below), macOS blocks it on first open.
-> Go to **System Settings → Privacy & Security → Open Anyway**, then open it again.
+> Releases from 1.6.0 on are signed with a Developer ID and notarized by Apple, so they open without a
+> warning. An older DMG that macOS blocks can be opened from **System Settings → Privacy & Security → Open Anyway**.
 
 ### From source (developers)
 
@@ -112,6 +114,7 @@ chats and settings over from `~/local-studio`.
 ```sh
 macos/build.sh --install   # build Local Studio.app and copy it to /Applications
 macos/release.sh           # build the app and build/Local-Studio-<version>.dmg
+macos/release.sh --publish # the same, then publish it as GitHub release v<version>
 ```
 
 The app is signed with a **Developer ID Application** certificate when one is installed (otherwise
@@ -123,6 +126,10 @@ any Mac without warnings:
 2. Create an app-specific password at appleid.apple.com, then store notarization credentials once:
    `xcrun notarytool store-credentials notary --apple-id YOU@icloud.com --team-id YOURTEAMID`
 3. Run `macos/release.sh`. It signs, notarizes and staples the DMG automatically.
+4. To publish, date the version's entry in `CHANGELOG.md`, merge to `main`, and run `macos/release.sh --publish`
+   on `main`. It refuses a DMG that is not notarized, a tree that is not `main` as pushed, a version that is already
+   released, and an undated changelog entry. It uploads the DMG as `Local-Studio-<version>.dmg` and as
+   `Local-Studio.dmg` (the link above), with the changelog entry and the SHA-256 as the release notes.
 
 ## Use
 

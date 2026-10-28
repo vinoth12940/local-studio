@@ -44,6 +44,7 @@ semantic file search, and text-to-image via mflux. It ships as a self-contained 
 macos/build.sh            # build build/Local Studio.app (also runs all pre-PR verification checks)
 macos/build.sh --install  # build and copy to /Applications
 macos/release.sh          # build + DMG in build/, signs/notarizes if a Developer ID is set up
+macos/release.sh --publish  # on main only: the notarized DMG becomes GitHub release v<version> (Local-Studio.dmg too)
 ```
 
 `macos/build.sh` is the primary validation step before a PR or release: it runs `node macos/check_ui.js index.html`
@@ -448,7 +449,9 @@ The version lives in `APP_VERSION` in `app.py` (a bare literal on its own line; 
 the bundle and the DMG name, and the build number is the git commit count. The README also shows
 the version (badge and DMG filename), so update those together. Commit messages follow the pattern
 `Local Studio X.Y.Z: <summary>` with a bulleted body for releases. Bump `APP_VERSION` (and the README) for every release
-that changes behavior and add its entry to `CHANGELOG.md`; Settings shows the version with the build number from `Info.plist`.
+that changes behavior and add its entry to `CHANGELOG.md` (dated before `release.sh --publish`, which refuses an
+`unreleased` entry, a non-notarized DMG, anything but `main` as pushed, and an existing tag); the release gate audits
+`requirements-app.txt`, `search-requirements.txt` and `voice-requirements.txt` and stops on any known vulnerability; Settings shows the version with the build number from `Info.plist`.
 
 CI (`.github/workflows/checks.yml`) runs `macos/build.sh` itself on an Apple Silicon runner for every pull request and push
 to `main`, so a check added to build.sh runs in CI too. Its actions are pinned to commit SHAs. Checks there have no models,
