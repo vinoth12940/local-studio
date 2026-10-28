@@ -3,7 +3,7 @@
 Each release that changes behavior gets a new version in `app.py` (`APP_VERSION`) and an entry here. The build number in
 Settings (and in `Info.plist`) is the git commit count, so a report names exactly which build it came from.
 
-## 1.6.0 (unreleased)
+## 1.6.0 (2026-10-28)
 
 The first step of the [production-readiness plan](docs/production-readiness-plan.md): a safety net, no new features.
 
