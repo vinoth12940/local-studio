@@ -5158,6 +5158,35 @@ def web_feed_items_parse_rss_and_atom_dates():
 
 
 @check
+def web_fast_search_reads_two_distinct_hosts_in_parallel_and_reports_refusals():
+    real, original = studio.services.web._fetch_public_web, app.load_settings()
+    ddg = ''.join(f'<a class="result__a" href="{u}">{t}</a><a class="result__snippet">s</a>' for u, t in (
+        ("https://a.example/one", "A one"), ("https://a.example/one?utm_source=x", "A again"),
+        ("https://b.example/two", "B two"), ("https://c.example/three", "C three")))
+    article = '<article><p>' + 'Bitcoin traded at 81,066 dollars on Tuesday. ' * 60 + '</p></article>'
+    fetched = []
+    def fetch(url):
+        fetched.append(url)
+        if "duckduckgo" in url: return url, "text/html", ddg
+        if "b.example" in url: raise ValueError("The source returned HTTP 403; its contents could not be verified")
+        return url, "text/html", article
+    studio.services.web._fetch_public_web = fetch
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        result = app._chat_read_tool("web_search", {"query": "bitcoin price"})
+        assert [p["url"] for p in result["pages"]] == ["https://a.example/one", "https://b.example/two"]
+        assert "81,066 dollars" in result["pages"][0]["text"] and len(result["pages"][0]["text"]) <= 2000
+        assert "403" in result["pages"][1]["refused"] and "text" not in result["pages"][1]
+        assert len([u for u in fetched if "duckduckgo" not in u]) == 2
+        assert result["next_step"].startswith("Answer from pages")
+        app.save_settings(original)
+        assert "pages" not in app._chat_read_tool("web_search", {"query": "bitcoin price"}), "flag off: old behavior"
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+
+
+@check
 def chat_engine_done_does_not_wait_for_connection_close():
     real = app.httpx.AsyncClient
     class Response:

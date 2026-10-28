@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
@@ -799,6 +800,36 @@ def _run_subagent_task(task: str, role: str = "researcher", timezone: str | None
     }
 
 
+def _read_page(url, limit=2000):
+    """One search result's main text, or why it could not be read (a 403 stays a refusal; it is never retried as a browser)."""
+    try:
+        final, kind, text = services_web._fetch_public_web(url)
+        if kind in ("application/rss+xml", "application/xml", "text/xml"):
+            items = services_web.feed_items(text)[:12]
+            return {"url": final, "title": "", "text": "\n".join(f"{i['published_at'] or 'undated'} · {i['source']} · {i['title']}" for i in items)[:limit]}
+        if kind not in ("text/html", "application/xhtml+xml"):
+            return {"url": final, "title": "", "text": text[:limit]}
+        page = services_web.main_text(text, limit)
+        return {"url": final, "title": page["title"], "text": page["text"],
+                **{k: page[k] for k in ("published_at", "modified_at") if page.get(k)}}
+    except (ValueError, OSError, httpx.HTTPError) as error:
+        return {"url": url, "refused": str(error)}
+
+
+def _read_top_pages(results, count=2):
+    """The first `count` results on distinct hosts, read in parallel, in result order."""
+    picked, hosts = [], set()
+    for result in results:
+        host = _host(result["url"])
+        if host not in hosts:
+            hosts.add(host)
+            picked.append(result["url"])
+        if len(picked) == count:
+            break
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        return list(pool.map(_read_page, picked))
+
+
 def _chat_read_tool(name, args, timezone=None):
     """Read-only chat tools. Returns evidence or an explicit error, never a made-up answer."""
     if not isinstance(args, dict): return {"error": "Tool arguments must be a JSON object"}
@@ -842,9 +873,20 @@ def _chat_read_tool(name, args, timezone=None):
                 results = [r for r in results if _host(r["url"]) == domain or _host(r["url"]).endswith("." + domain)]
             results = list({r["url"]: r for r in results}.values())[:6]
             if not results: raise ValueError("Search returned no usable results. Try a clearer query or use the browser; no current fact was verified")
-            return {"query": query, "fetched_at": _chat_datetime(timezone), "results": results,
-                    "next_step": "Call read_webpage with a relevant result URL to verify its contents before searching again or answering.",
-                    "note": "Search snippets are leads. Verify current status and publication dates on the linked primary sources."}
+            found = {"query": query, "fetched_at": _chat_datetime(timezone), "results": results,
+                     "next_step": "Call read_webpage with a relevant result URL to verify its contents before searching again or answering.",
+                     "note": "Search snippets are leads. Verify current status and publication dates on the linked primary sources."}
+            if flag("harness.web_fast"):
+                found["pages"] = _read_top_pages(results)
+                found["next_step"] = "Answer from pages when they cover the question; call read_webpage only for a result that was not read."
+            return found
+        if name == "read_webpage" and flag("harness.web_fast"):
+            url, kind, text = services_web._fetch_public_web(args.get("url"))
+            if kind in ("application/rss+xml", "application/xml", "text/xml"):
+                return {"url": url, "items": services_web.feed_items(text)[:12], "fetched_at": _chat_datetime(timezone), "untrusted_source_text": True}
+            page = services_web.main_text(text, 6000) if kind in ("text/html", "application/xhtml+xml") else \
+                {"title": "", "text": text[:6000], "truncated": len(text) > 6000}
+            return {"url": url, **page, "fetched_at": _chat_datetime(timezone), "untrusted_source_text": True}
         if name == "read_webpage":
             url, kind, text = services_web._fetch_public_web(args.get("url"))
             parser = _WebPageText()

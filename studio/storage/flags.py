@@ -22,6 +22,7 @@ FLAGS = {
     "harness.review": (False, "Require versioned independent review evidence for reviewed completion"),
     "harness.triggers": (False, "Enable authenticated durable local triggers and schedules"),
     "harness.worktrees": (False, "Coordinate scoped write workers in isolated recoverable Git worktrees"),
+    "harness.web_fast": (False, "web_search reads the top pages' main text, read_webpage returns main text and feeds, news_search returns dated news"),
     "performance.isolated_io": (False, "Use a bounded dedicated pool for search media/render routes"),
     "performance.chat_index": (False, "Cache chat titles/timestamps while validating file signatures on every list request"),
     "search.incremental": (False, "Debounce edited-file reindexing and return 503 plus Retry-After during full index passes"),
