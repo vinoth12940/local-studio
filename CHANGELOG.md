@@ -43,8 +43,13 @@ The first step of the [production-readiness plan](docs/production-readiness-plan
 - CI: GitHub Actions runs `macos/build.sh` (every check, the OCR suite and an ad-hoc signed bundle) on Apple Silicon for
   every pull request and push to `main`.
 - Settings shows the build number next to the version.
-- `macos/release.sh --publish` turns a notarized DMG into a GitHub release (main only, dated changelog entry, no existing
-  tag). The README's download link, `releases/latest/download/Local-Studio.dmg`, always fetches the newest one.
+- Downloadable releases, the way Murmur ships (docs/RELEASING.md):
+  - `macos/release.sh` notarizes and staples the app, then the DMG, and writes `Local-Studio-<version>.dmg.sha256`.
+  - `--publish` turns them into a GitHub release. It needs `main` as pushed, a dated changelog entry, no existing tag and
+    a notarized DMG.
+  - A `v*` tag runs `.github/workflows/release.yml`, which does the same on GitHub when signing secrets are set and skips
+    otherwise.
+  - The README has a **Download for Mac** link and a release badge, and there is a Homebrew cask template.
 
 ## 1.5.0 (2026-10-17 to 2026-10-27)
 

@@ -208,7 +208,8 @@ R = reliability, D = delivery, Q = quality.
   - First run downloads uv via `curl | sh`.
 - **Fix.**
   - Notarize and staple every release, and refuse to publish a DMG that `spctl` and `stapler validate` do not accept.
-    **Done in PR #11:** `release.sh --publish`, plus a stable README link (`releases/latest/download/Local-Studio.dmg`).
+    **Done in PR #11, the way Murmur ships:** `release.sh --publish` (app and DMG notarized and stapled, `.sha256`), an optional
+    tag-triggered release workflow, a README download link, and a Homebrew cask template ([RELEASING.md](RELEASING.md)).
     The last published DMG is 1.2.2 (2026-10-05), and the README pointed at a 1.5.0 DMG that was never published.
   - An update check against signed GitHub releases (notify only, with a link and the release notes).
   - Make first-run downloads come from `engines.lock` with checksums.

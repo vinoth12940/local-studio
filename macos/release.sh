@@ -1,19 +1,19 @@
 #!/bin/zsh
-# Builds the app and packages it as a drag-to-install DMG in build/.
-#   macos/release.sh             build, sign and (when credentials exist) notarize build/Local-Studio-<version>.dmg
+# Builds build/Local-Studio-<version>.dmg, signed and notarized, the same way Murmur's release.sh does: the app is
+# notarized and stapled, then the DMG that holds it is signed, notarized and stapled too, and build/Local-Studio-<version>.dmg.sha256
+# is written next to it. See docs/RELEASING.md.
+#
+#   macos/release.sh             build, sign, notarize and package
 #   macos/release.sh --dry-run   dependency audits and signature checks of the existing build only
-#   macos/release.sh --publish   the same as a plain run, then publish GitHub release v<version> with the DMG
-# For Macs other than your own, the DMG must be signed with a Developer ID Application
-# certificate and notarized. One-time setup:
-#   1. developer.apple.com → Certificates → "+" → Developer ID Application → install it
-#   2. xcrun notarytool store-credentials notary --apple-id YOU@icloud.com --team-id TEAMID
-#      (uses an app-specific password from appleid.apple.com)
-# Then this script notarizes and staples automatically.
+#   macos/release.sh --publish   the same as a plain run, then publish GitHub release v<version> with the DMG and its .sha256
+#
+#   LOCAL_STUDIO_NOTARY_PROFILE  a `notarytool store-credentials` profile name (default: notary)
+#   LOCAL_STUDIO_NOTARY_KEY, LOCAL_STUDIO_NOTARY_KEY_ID, LOCAL_STUDIO_NOTARY_ISSUER
+#                                alternative to the profile: an App Store Connect API key (.p8 path, key id, issuer id)
+# The signing identity is the Developer ID Application certificate build.sh finds in the keychain.
 #
 # --publish refuses anything a download must not be: a build that is not notarized, not from main as pushed, from a dirty
-# tree, a version already released, or one without a dated CHANGELOG.md entry. It uploads the DMG twice, as
-# Local-Studio-<version>.dmg and as Local-Studio.dmg, so the README's releases/latest/download/Local-Studio.dmg link always
-# fetches the newest release; the notes are that version's CHANGELOG entry plus the DMG's SHA-256.
+# tree, a version already released, or one without a dated CHANGELOG.md entry. The notes are that entry plus the SHA-256.
 set -e
 HERE="${0:A:h}"; ROOT="${HERE:h}"
 DRY_RUN=0; PUBLISH=0
@@ -24,7 +24,17 @@ case "${1:-}" in
   *) echo "Usage: $0 [--dry-run | --publish]" >&2; exit 2 ;;
 esac
 VERSION=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' "$ROOT/app.py")
+DMG="$ROOT/build/Local-Studio-$VERSION.dmg"
+NOTES="$ROOT/build/release-notes-$VERSION.md"
 fail() { echo "release: $*" >&2; exit 1; }
+
+if [[ -n "${LOCAL_STUDIO_NOTARY_KEY:-}" && -n "${LOCAL_STUDIO_NOTARY_KEY_ID:-}" && -n "${LOCAL_STUDIO_NOTARY_ISSUER:-}" ]]; then
+  NOTARY_AUTH=(--key "$LOCAL_STUDIO_NOTARY_KEY" --key-id "$LOCAL_STUDIO_NOTARY_KEY_ID" --issuer "$LOCAL_STUDIO_NOTARY_ISSUER")
+else
+  NOTARY_AUTH=(--keychain-profile "${LOCAL_STUDIO_NOTARY_PROFILE:-notary}")
+fi
+notary_ready() { xcrun notarytool history "${NOTARY_AUTH[@]}" >/dev/null 2>&1; }
+developer_id() { security find-identity -v -p codesigning | awk -F'"' '/Developer ID Application/ {print $2; exit}'; }
 
 changelog_entry() {          # the CHANGELOG.md section for $VERSION, without its heading
   awk -v v="$VERSION" 'index($0, "## " v " ") == 1 { on = 1; next } on && /^## / { exit } on' "$ROOT/CHANGELOG.md"
@@ -43,8 +53,8 @@ if (( PUBLISH )); then
   [[ -n "$heading" ]] || fail "CHANGELOG.md has no '## $VERSION (date)' entry"
   [[ "$heading" != *unreleased* ]] || fail "date the CHANGELOG.md entry first: $heading"
   [[ -n "$(changelog_entry | tr -d '[:space:]')" ]] || fail "the CHANGELOG.md entry for $VERSION is empty"
-  security find-identity -v -p codesigning | /usr/bin/grep -q 'Developer ID Application' || fail "no Developer ID Application certificate in the keychain"
-  xcrun notarytool history --keychain-profile notary >/dev/null 2>&1 || fail "no notarization credentials: run the notarytool store-credentials step above"
+  [[ -n "$(developer_id)" ]] || fail "no Developer ID Application certificate in the keychain"
+  notary_ready || fail "no working notarization credentials (${NOTARY_AUTH[*]}): see docs/RELEASING.md"
 fi
 
 UV=$(command -v uv || echo ~/.local/bin/uv)
@@ -66,47 +76,57 @@ if (( DRY_RUN )); then
   echo "Dry run passed: dependency audits and signature checks; no DMG or notarization submitted."
   exit 0
 fi
-DMG="$ROOT/build/Local-Studio-$VERSION.dmg"
+
+ID=$(developer_id)
+NOTARIZE=0
+if [[ -n "$ID" ]] && notary_ready; then NOTARIZE=1; fi
+if (( NOTARIZE )); then
+  # The app first, so the copy people drag to Applications carries its own ticket (it opens even offline).
+  echo "==> Notarizing the app (a few minutes)"
+  ZIP="$ROOT/build/Local-Studio-notarize.zip"
+  rm -f "$ZIP"; ditto -c -k --keepParent "$APP" "$ZIP"
+  xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" --wait
+  xcrun stapler staple "$APP"
+  rm -f "$ZIP"
+fi
+
 STAGE="$ROOT/build/dmg"
-rm -rf "$STAGE" "$DMG"; mkdir -p "$STAGE"
-ditto "$ROOT/build/Local Studio.app" "$STAGE/Local Studio.app"
+rm -rf "$STAGE" "$DMG" "$DMG.sha256"; mkdir -p "$STAGE"
+ditto "$APP" "$STAGE/Local Studio.app"
 ln -s /Applications "$STAGE/Applications"
 echo "==> Creating $DMG"
-hdiutil create -volname "Local Studio $VERSION" -srcfolder "$STAGE" -ov -format UDZO -fs HFS+ "$DMG" >/dev/null
+hdiutil create -volname "Local Studio" -srcfolder "$STAGE" -ov -format UDZO -fs HFS+ "$DMG" >/dev/null
 rm -rf "$STAGE"
 
-NOTARIZED=0
-ID=$(security find-identity -v -p codesigning | awk -F'"' '/Developer ID Application/ {print $2; exit}')
-if [[ -n "$ID" ]]; then
-  codesign --force --sign "$ID" --timestamp "$DMG"
-  if xcrun notarytool history --keychain-profile notary >/dev/null 2>&1; then
-    echo "==> Notarizing (a few minutes)"
-    xcrun notarytool submit "$DMG" --keychain-profile notary --wait
-    xcrun stapler staple "$DMG"
-    NOTARIZED=1
-    echo "   notarized: opens on any Mac without warnings"
-  else
-    echo "   signed with Developer ID, NOT notarized: run the notarytool store-credentials step above"
-  fi
-else
-  echo "   No Developer ID certificate: this DMG opens without warnings only on your own Macs."
-  echo "   On other Macs: right-click the app → Open, or System Settings → Privacy & Security → Open Anyway."
+if [[ -n "$ID" ]]; then codesign --force --sign "$ID" --timestamp "$DMG"; fi
+if (( NOTARIZE )); then
+  echo "==> Notarizing the DMG (a few minutes)"
+  xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" --wait
+  xcrun stapler staple "$DMG"
+  # Check it the way a user's Mac will.
+  xcrun stapler validate "$DMG"
+  spctl -a -vv -t open --context context:primary-signature "$DMG"
 fi
 # Assess after notarization, so a new Developer ID build can obtain its ticket first.
 assess_distribution
-echo "Done: $DMG ($(du -h "$DMG" | cut -f1))"
+(cd "$ROOT/build" && shasum -a 256 "${DMG:t}") > "$DMG.sha256"
+SUM=$(awk '{print $1}' "$DMG.sha256")
+if [[ -n "$(changelog_entry | tr -d '[:space:]')" ]]; then
+  { changelog_entry; print; print "**Download** \`${DMG:t}\`, open it and drag Local Studio to Applications. Signed with a Developer ID and notarized by Apple."
+    print; print "SHA-256: \`$SUM\`"; } > "$NOTES"
+fi
+if (( NOTARIZE )); then
+  echo "Built $DMG (signed and notarized), $(du -h "$DMG" | cut -f1)"
+elif [[ -n "$ID" ]]; then
+  echo "Built $DMG (signed but NOT notarized: store notarization credentials, see docs/RELEASING.md)"
+else
+  echo "Built $DMG (not signed with a Developer ID: it opens without warnings only on your own Macs)"
+fi
 
 if (( PUBLISH )); then
+  (( NOTARIZE )) || fail "the DMG was not notarized; nothing was published"
   echo "==> Publishing v$VERSION to $REPO"
-  (( NOTARIZED )) || fail "the DMG was not notarized; nothing was published"
-  xcrun stapler validate "$DMG"
-  spctl -a -vv -t open --context context:primary-signature "$DMG"
-  cp "$DMG" "$ROOT/build/Local-Studio.dmg"
-  SUM=$(shasum -a 256 "$DMG" | awk '{print $1}')
-  NOTES="$ROOT/build/release-notes-$VERSION.md"
-  { changelog_entry; print; print "**Download:** \`Local-Studio-$VERSION.dmg\` (or \`Local-Studio.dmg\`, the same file). Signed with a Developer ID and notarized by Apple."
-    print; print "SHA-256: \`$SUM\`"; } > "$NOTES"
-  gh release create "v$VERSION" "$DMG" "$ROOT/build/Local-Studio.dmg" --repo "$REPO" --target "$(git -C "$ROOT" rev-parse HEAD)" \
+  gh release create "v$VERSION" "$DMG" "$DMG.sha256" --repo "$REPO" --target "$(git -C "$ROOT" rev-parse HEAD)" \
     --title "Local Studio $VERSION" --notes-file "$NOTES"
   echo "Published: https://github.com/$REPO/releases/tag/v$VERSION"
 fi

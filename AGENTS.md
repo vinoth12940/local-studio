@@ -23,7 +23,7 @@ This file provides repository instructions and architectural guidance for coding
 - `macos/`:
   - `main.swift`: Native macOS WKWebView application wrapper.
   - `document_reader.swift`: Native PDFKit + Vision OCR reader compiled to `DocumentReader`.
-  - `build.sh` / `release.sh`: Verification, app bundle compilation, code signing, and DMG packaging. `release.sh --publish` (main only) publishes the notarized DMG as GitHub release v<version>, also as `Local-Studio.dmg` for the README's latest-download link; it refuses non-notarized DMGs, undated CHANGELOG entries and existing tags.
+  - `build.sh` / `release.sh`: Verification, app bundle compilation, code signing, and DMG packaging. `release.sh` notarizes and staples the app and then the DMG and writes its `.sha256` (as Murmur does); `--publish` (main only) makes them GitHub release v<version> and refuses non-notarized DMGs, undated CHANGELOG entries and existing tags. `.github/workflows/release.yml` does the same on a `v*` tag when signing secrets exist. See docs/RELEASING.md.
   - `check_ui.js`, `check_search.py`, `check_app.py`, `check_agent.py`, `check_document.py`: Offline verification suites.
 
 ---

@@ -8,7 +8,12 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 **FLUX.2 Klein**. Model inference runs locally. Web requests go to the search provider and
 sites you ask about; local file tools read your on-device index.
 
+[![Latest release](https://img.shields.io/github/v/release/vinoth12940/local-studio?label=download&color=c2410c)](https://github.com/vinoth12940/local-studio/releases/latest)
+![macOS 14 or later](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
+![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M--series-black)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.6.0**
+
+**[⬇️ Download for Mac](https://github.com/vinoth12940/local-studio/releases/latest)** · [Install](#install) · [Use](#use)
 
 ![Chat](docs/chat.jpg)
 
@@ -68,9 +73,8 @@ sites you ask about; local file tools read your on-device index.
 
 ### The easy way (recommended)
 
-1. Download **[Local-Studio.dmg](https://github.com/vinoth12940/local-studio/releases/latest/download/Local-Studio.dmg)**
-   (always the newest release; every version, its notes and the DMG's SHA-256 are on the
-   [releases page](https://github.com/vinoth12940/local-studio/releases)).
+1. Get **Local-Studio-1.6.0.dmg** from the [Releases page](https://github.com/vinoth12940/local-studio/releases/latest)
+   (each release lists the DMG's SHA-256 and has a `.sha256` file).
 2. Open it and drag **Local Studio** into **Applications**.
 3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
    engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
@@ -113,23 +117,14 @@ chats and settings over from `~/local-studio`.
 
 ```sh
 macos/build.sh --install   # build Local Studio.app and copy it to /Applications
-macos/release.sh           # build the app and build/Local-Studio-<version>.dmg
-macos/release.sh --publish # the same, then publish it as GitHub release v<version>
+macos/release.sh           # build, sign and notarize build/Local-Studio-<version>.dmg (+ .sha256)
+macos/release.sh --publish # the same, then publish it as GitHub release v<version> (on main only)
 ```
 
 The app is signed with a **Developer ID Application** certificate when one is installed (otherwise
-your Apple Development certificate, which only works on your own Macs). To ship a DMG that opens on
-any Mac without warnings:
-
-1. In your Apple Developer account, create a **Developer ID Application** certificate
-   (Certificates → +) and install it in Keychain.
-2. Create an app-specific password at appleid.apple.com, then store notarization credentials once:
-   `xcrun notarytool store-credentials notary --apple-id YOU@icloud.com --team-id YOURTEAMID`
-3. Run `macos/release.sh`. It signs, notarizes and staples the DMG automatically.
-4. To publish, date the version's entry in `CHANGELOG.md`, merge to `main`, and run `macos/release.sh --publish`
-   on `main`. It refuses a DMG that is not notarized, a tree that is not `main` as pushed, a version that is already
-   released, and an undated changelog entry. It uploads the DMG as `Local-Studio-<version>.dmg` and as
-   `Local-Studio.dmg` (the link above), with the changelog entry and the SHA-256 as the release notes.
+your Apple Development certificate, which only works on your own Macs). [docs/RELEASING.md](docs/RELEASING.md)
+covers notarization credentials, cutting a release, the optional GitHub Actions release on a `v*` tag, and the
+Homebrew cask template.
 
 ## Use
 

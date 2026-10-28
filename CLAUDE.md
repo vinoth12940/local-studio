@@ -44,7 +44,7 @@ semantic file search, and text-to-image via mflux. It ships as a self-contained 
 macos/build.sh            # build build/Local Studio.app (also runs all pre-PR verification checks)
 macos/build.sh --install  # build and copy to /Applications
 macos/release.sh          # build + DMG in build/, signs/notarizes if a Developer ID is set up
-macos/release.sh --publish  # on main only: the notarized DMG becomes GitHub release v<version> (Local-Studio.dmg too)
+macos/release.sh --publish  # on main only: the notarized DMG + .sha256 become GitHub release v<version> (docs/RELEASING.md)
 ```
 
 `macos/build.sh` is the primary validation step before a PR or release: it runs `node macos/check_ui.js index.html`
