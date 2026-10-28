@@ -8,7 +8,7 @@ about images and documents, and generate images with **Qwen-Image 2.1**, **Z-Ima
 **FLUX.2 Klein**. Model inference runs locally. Web requests go to the search provider and
 sites you ask about; local file tools read your on-device index.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.5.0**
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) **Version 1.6.0**
 
 ![Chat](docs/chat.jpg)
 
@@ -59,16 +59,16 @@ sites you ask about; local file tools read your on-device index.
 
 ## Requirements
 
-- Mac with Apple Silicon (M1 or newer), macOS 15+
-- 32 GB RAM minimum; 48 GB recommended (all numbers below are from a 48 GB M4 Pro)
+- Mac with Apple Silicon (M1 or newer), macOS 14+
+- 16 GB RAM for the smallest models, 32 GB+ for the larger ones; 48 GB recommended (all numbers below are from a 48 GB M4 Pro)
 - ~30 GB free disk space for the models
-- Internet for installation, model downloads and public web tools; local inference works offline
+- Internet for installation, model downloads and public web tools; everything else, including the interface, works offline
 
 ## Install
 
 ### The easy way (recommended)
 
-1. Download **Local-Studio-1.5.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+1. Download **Local-Studio-1.6.0.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
 2. Open it and drag **Local Studio** into **Applications**.
 3. Open Local Studio. On first launch it checks the Mac and offers **Install**, which sets up the
    engines (uv, mlx-dspark, mflux, llama.cpp: about 3 GB, a few minutes; no Terminal, Homebrew
@@ -76,8 +76,7 @@ sites you ask about; local file tools read your on-device index.
 4. Pick your first model. Local Studio recommends models that fit your Mac's memory, and chat
    unlocks when the download finishes.
 
-Requirements: Apple Silicon (M1 or newer), macOS 14+, 16 GB RAM or more (32 GB+ for the larger
-models), and disk space for the models you choose (3–25 GB each).
+Requirements are listed above; the models you choose need 3–25 GB of disk each.
 
 > If the DMG isn't notarized (see "Building a release" below), macOS blocks it on first open.
 > Go to **System Settings → Privacy & Security → Open Anyway**, then open it again.

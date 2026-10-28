@@ -8,9 +8,9 @@ from starlette.responses import PlainTextResponse
 
 from studio.storage.flags import flag
 
-CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
-       "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-       "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; "
+# Every script, style and font is bundled (frontend/vendor/), so nothing is allowed from another host.
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+       "font-src 'self'; img-src 'self' data: blob:; connect-src 'self'; "
        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; report-uri /api/csp-report")
 
 

@@ -10,7 +10,7 @@ The backend lives in studio/ (CLAUDE.md, Architecture). This file is the entrypo
 and the process patterns in stop.sh) and the module the check suites import.
 """
 # macos/build.sh and release.sh read the version from this line with sed; studio/config.py parses it from here too.
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 
 from studio.main import app, owner_module as _owner_module  # noqa: E402,F401
 

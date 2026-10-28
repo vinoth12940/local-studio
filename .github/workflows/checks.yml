@@ -1,0 +1,39 @@
+name: Checks
+
+# Everything macos/build.sh verifies, on Apple Silicon, for every pull request and every push to main: the UI and syntax
+# checks, all offline suites (fakes only: no model, engine, search or voice service is started), the DocumentReader OCR
+# checks, and an ad-hoc signed bundle with no bytecode in it. Running build.sh itself keeps CI and a local build identical.
+# Chat-template rendering and the real voice check need installed models, so they skip here (check_templates says so).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      TMPDIR: /tmp                 # check_agent's unix sockets: macOS limits their paths to 104 bytes
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          fetch-depth: 0           # build.sh numbers the build by its commit count
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1   # v7.1.0
+        with:
+          node-version: "26"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7   # v10.2.0
+        with:
+          version: "0.11.2"
+      - name: Build Local Studio.app and run every check
+        run: zsh macos/build.sh

@@ -21,8 +21,12 @@ semantic file search, and text-to-image via mflux. It ships as a self-contained 
   `__getattr__` so the check suites can read any backend name as `app.X`)
 - `studio/`: the FastAPI backend (~8,400 lines), split by concern; see Backend layout below
 - `requirements-app.txt`: exact pins of the backend's Python packages
-- `index.html`: the page's markup and CSS (~1,240 lines; `marked` from a CDN) and `<script type="module" src="frontend/main.mjs">`
-- `frontend/`: the UI's code, vanilla JS ES modules by concern (see UI modules below); served read-only from `ROOT` at `/frontend/`
+- `index.html`: the page's markup and CSS (~1,240 lines) and `<script type="module" src="frontend/main.mjs">`
+- `frontend/`: the UI's code, vanilla JS ES modules by concern (see UI modules below); served read-only from `ROOT` at `/frontend/`.
+  `frontend/vendor/` bundles every third-party file the page loads (Inter and JetBrains Mono, marked 12.0.2, xterm.js 5.5 +
+  addon-fit) so the UI never contacts another host; `VENDOR.json` lists each file's source, license and sha384, which must
+  equal the integrity attribute that loads it (`check_app.py ui_loads_nothing_from_another_host`). To update one, replace the
+  file, its VENDOR.json hash and its integrity attribute together; never add a CDN URL.
 - `catalog.json`: curated chat and image models
 - `search.py` + `search-requirements.txt`: the file-search service (~1,410 lines; EmbeddingGemma 2 on MLX) and its dependencies
 - `setup.sh` / `install.sh` / `start.sh` / `stop.sh` / `uninstall.sh`: zsh lifecycle scripts
@@ -241,7 +245,10 @@ service and can never reach or stop the one in the app the user is running.
 Because these routes return the text of the user's files, `LocalOnly` in `studio/security/local_only.py` (now a guard on
 every route and static file) rejects requests with a non-loopback `Host`, a foreign `Origin`, or
 `Sec-Fetch-Site: cross-site|same-site`; the service itself refuses any request that carries an
-`Origin` or is cross-site (`_local_request`).
+`Origin` or is cross-site (`_local_request`), and every route but `/health` needs its own token, whatever
+`security.api_token` says: the backend keeps it in `STATE/data/search.token` (0600, `_search_token()`), passes it as
+`LOCAL_STUDIO_SEARCH_TOKEN` at launch (the service refuses to start without it) and sends it from `_search_headers()`.
+`_start_search` replaces a running service that answers without it (1.5 or older). Tests: `check_search_contract.py`.
 
 ### Voice service
 
@@ -343,8 +350,8 @@ Test from the console with `LS.voiceHeard(text)` / `LS.voiceState()` and a stubb
   `GET /api/terminals/{id}/stream?offset=` (SSE of base64 chunks with absolute offsets, so a reloaded page
   reattaches and replays the scrollback; an idle stream ends after 3 s so a stopping server never waits on an open
   page, and the page reconnects from its offset), `POST …/input`, `POST …/resize`, `DELETE …`. At most 8; all closed at
-  exit (`atexit`). The UI draws it with xterm.js 5.5 + addon-fit loaded on first use from jsDelivr with SRI
-  (`XTERM_FILES`); bump the hashes with the versions.
+  exit (`atexit`). The UI draws it with xterm.js 5.5 + addon-fit loaded on first use from `frontend/vendor/xterm/` with SRI
+  (`XTERM_FILES`); bump the hashes with the versions (and `VENDOR.json`).
 - **Permission prompts.** `permission_mode: "accept_edits"` in the `/api/chat` body grants the `edit` scope for that
   request only (`harness_gate(..., extra_perms)`) and **only for files inside the workspace**: a write outside it (`../x`, an absolute path,
   a symlink out) still asks, with the reason "outside the workspace, so Accept edits does not apply". Commands still ask, and an explicit
@@ -440,7 +447,12 @@ Any new runtime file must be added to that list.
 The version lives in `APP_VERSION` in `app.py` (a bare literal on its own line; `studio/config.py` parses it from there). `build.sh`/`release.sh` read it from there for
 the bundle and the DMG name, and the build number is the git commit count. The README also shows
 the version (badge and DMG filename), so update those together. Commit messages follow the pattern
-`Local Studio X.Y.Z: <summary>` with a bulleted body for releases.
+`Local Studio X.Y.Z: <summary>` with a bulleted body for releases. Bump `APP_VERSION` (and the README) for every release
+that changes behavior and add its entry to `CHANGELOG.md`; Settings shows the version with the build number from `Info.plist`.
+
+CI (`.github/workflows/checks.yml`) runs `macos/build.sh` itself on an Apple Silicon runner for every pull request and push
+to `main`, so a check added to build.sh runs in CI too. Its actions are pinned to commit SHAs. Checks there have no models,
+no mlx-dspark environment and no Hugging Face cache: a check that needs one must skip with a note, never fail.
 
 ## Verifying your work
 

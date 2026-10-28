@@ -77,7 +77,7 @@ $("mcpList").onclick = async (e) => {
 $("apiCopy").onclick = () => { navigator.clipboard.writeText($("apiUrl").textContent); toast("Copied"); };
 async function loadVersions() {
   let v; try { v = await api("/api/versions"); } catch { return; }
-  const rows = [["Local Studio", v.app], ["mlx-dspark", v["mlx-dspark"]], ["mlx-vlm", v["mlx-vlm"]], ["MLX", v.mlx], ["mflux", v.mflux], ["llama.cpp", v["llama.cpp"] || "not installed"]];
+  const rows = [["Local Studio", v.build ? `${v.app} (build ${v.build})` : `${v.app} (source)`], ["mlx-dspark", v["mlx-dspark"]], ["mlx-vlm", v["mlx-vlm"]], ["MLX", v.mlx], ["mflux", v.mflux], ["llama.cpp", v["llama.cpp"] || "not installed"]];
   $("verKvs").innerHTML = rows.map(([l, val]) => `<div><div class="l">${l}</div><div class="v">${esc(val || "–")}</div></div>`).join("");
   const u = v.update || {};
   $("updRow").style.display = u.status && u.status !== "idle" ? "" : "none";

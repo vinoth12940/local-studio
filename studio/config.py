@@ -65,6 +65,7 @@ SEARCH_URL = f"http://127.0.0.1:{SEARCH_PORT}"                # search.py, see t
 SEARCH_DIR = DATA / "search"                                 # its index
 SEARCH_REQS = ROOT / "search-requirements.txt"
 SEARCH_DEPS_OK = DATA / "search-deps.ok"                     # written by setup.sh --search
+SEARCH_TOKEN = DATA / "search.token"                         # per-install secret the service requires (0600)
 SEARCH_DEFAULTS = {"enabled": False, "folders": [], "removed": [], "paused": False, "on_battery": False}
 # Voice: voice.py is a separate process like search.py (echo-cancelled mic and speaker, Parakeet, Phonon). Off unless the
 # voice.enabled flag is on and the user turns it on. LOCAL_STUDIO_VOICE_PORT gives a development server its own service.

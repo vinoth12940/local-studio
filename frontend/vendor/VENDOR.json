@@ -1,0 +1,166 @@
+{
+ "_note": "Third-party files the UI loads, bundled so the app needs no network. macos/check_app.py verifies every file here against this list and the integrity attributes that load it.",
+ "files": [
+  {
+   "path": "fonts/Inter-OFL.txt",
+   "sha384": "sha384-kj3ws+qnzjazxsLTzPAVaXquIFuyNRYVaSXX024NG79Z2vDskAWFDhnsJYazAo0C",
+   "source": "license text shipped with the package",
+   "version": "",
+   "license": ""
+  },
+  {
+   "path": "fonts/JetBrainsMono-OFL.txt",
+   "sha384": "sha384-cXrFk7ckdVLFljOAA3CAG9Rl/sbe26UnoLQcQxnPvrh9BEV1+cnRzg+ILMFzfNm6",
+   "source": "license text shipped with the package",
+   "version": "",
+   "license": ""
+  },
+  {
+   "path": "fonts/fonts.css",
+   "sha384": "sha384-EJJ/YwzWNLDW7IF2TONWW7YMAxAIUONzU+/wo/g58kYkpOoLKbw+bv8owH0Y5PCT",
+   "source": "written from the packages' wght.css (family names, weight ranges)",
+   "version": "Local Studio",
+   "license": "MIT"
+  },
+  {
+   "path": "fonts/inter-cyrillic-ext-wght-normal.woff2",
+   "sha384": "sha384-swBecAL27qLsDDPbdyf4m+eOb3hVqthbGOSWWsQAWGQRrC7Mv26pPhoNQD/pG+fc",
+   "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz (files/inter-cyrillic-ext-wght-normal.woff2)",
+   "version": "@fontsource-variable/inter 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/inter-cyrillic-wght-normal.woff2",
+   "sha384": "sha384-0TIui+vzWhVZMl7iUvLEvfLe0BvgafwfPJsBipXepNH7XIVkp1kGdXEZmLw5x82g",
+   "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz (files/inter-cyrillic-wght-normal.woff2)",
+   "version": "@fontsource-variable/inter 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/inter-greek-ext-wght-normal.woff2",
+   "sha384": "sha384-932mXjo6nQfddER8hP3Xid6Vo+B58AGIF2P8Budgaa2Sufgv0r1MA6Mktb9jLPbt",
+   "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz (files/inter-greek-ext-wght-normal.woff2)",
+   "version": "@fontsource-variable/inter 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/inter-greek-wght-normal.woff2",
+   "sha384": "sha384-JIq1RpVIyHblvpj3nIzOJN4M1Rpvmej5lX/2ofexSTmh6hYB7ir+QOlIf6IJUzqh",
+   "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz (files/inter-greek-wght-normal.woff2)",
+   "version": "@fontsource-variable/inter 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/inter-latin-ext-wght-normal.woff2",
+   "sha384": "sha384-r0EoKgCx3XyQjhJdTJ6FDE+8mEZrV95dM7cWvqLDUVdqzM44cq76qdOaYiA3sebS",
+   "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz (files/inter-latin-ext-wght-normal.woff2)",
+   "version": "@fontsource-variable/inter 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/inter-latin-wght-normal.woff2",
+   "sha384": "sha384-l0ql7Q1zqvX5klAVRwYjcMVCkCxg5dMTdghsIlC3pYkX6wwEHerh2bP/4yAao3Im",
+   "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz (files/inter-latin-wght-normal.woff2)",
+   "version": "@fontsource-variable/inter 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/inter-vietnamese-wght-normal.woff2",
+   "sha384": "sha384-Add/AMGDcvhLuCRrQsVxY4SzrdqLkUv2MC9f/lB3IYYM5dCHI0PdX2L2YQmKtcb0",
+   "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz (files/inter-vietnamese-wght-normal.woff2)",
+   "version": "@fontsource-variable/inter 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/jetbrains-mono-cyrillic-ext-wght-normal.woff2",
+   "sha384": "sha384-g8Ovgny/YFgg3TqhpRB8P0q2F4Tg2fwiVRTljUYTx+p1uBLdznrEw3gIrZjD939F",
+   "source": "https://registry.npmjs.org/@fontsource-variable/jetbrains-mono/-/jetbrains-mono-5.3.0.tgz (files/jetbrains-mono-cyrillic-ext-wght-normal.woff2)",
+   "version": "@fontsource-variable/jetbrains-mono 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/jetbrains-mono-cyrillic-wght-normal.woff2",
+   "sha384": "sha384-jfhew7euQVUcVb3qZC1y1Q8bvHqSijHGG7jQ8gCNLI3eYIvmtoa7VkCYB2N/vveY",
+   "source": "https://registry.npmjs.org/@fontsource-variable/jetbrains-mono/-/jetbrains-mono-5.3.0.tgz (files/jetbrains-mono-cyrillic-wght-normal.woff2)",
+   "version": "@fontsource-variable/jetbrains-mono 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/jetbrains-mono-greek-wght-normal.woff2",
+   "sha384": "sha384-UFc/9xvIORL5c83Vhs2Cv36lBm0a3fB1d9+tZH8wGRds68ooy23pEuWDPVb7dFYp",
+   "source": "https://registry.npmjs.org/@fontsource-variable/jetbrains-mono/-/jetbrains-mono-5.3.0.tgz (files/jetbrains-mono-greek-wght-normal.woff2)",
+   "version": "@fontsource-variable/jetbrains-mono 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/jetbrains-mono-latin-ext-wght-normal.woff2",
+   "sha384": "sha384-WDNanUkSZwbhAakOqa8fTc8lVMNGaDLQpOSls4xI9FdN1C1vTkOvF7TLkt6IQj+d",
+   "source": "https://registry.npmjs.org/@fontsource-variable/jetbrains-mono/-/jetbrains-mono-5.3.0.tgz (files/jetbrains-mono-latin-ext-wght-normal.woff2)",
+   "version": "@fontsource-variable/jetbrains-mono 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/jetbrains-mono-latin-wght-normal.woff2",
+   "sha384": "sha384-g2p3DONsRgB71ryU0/Vwr5KWy0Mcp8CSPjzC+3EhRMPKkz5MLtwxpE6GK3i2I9E2",
+   "source": "https://registry.npmjs.org/@fontsource-variable/jetbrains-mono/-/jetbrains-mono-5.3.0.tgz (files/jetbrains-mono-latin-wght-normal.woff2)",
+   "version": "@fontsource-variable/jetbrains-mono 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "fonts/jetbrains-mono-vietnamese-wght-normal.woff2",
+   "sha384": "sha384-2hBsjWyypUuJ+imeMwSWgEbBTdpbTlfH/W2qSn/DcKQ4njVczqnJcPjNXtVF3aHt",
+   "source": "https://registry.npmjs.org/@fontsource-variable/jetbrains-mono/-/jetbrains-mono-5.3.0.tgz (files/jetbrains-mono-vietnamese-wght-normal.woff2)",
+   "version": "@fontsource-variable/jetbrains-mono 5.3.0",
+   "license": "OFL-1.1"
+  },
+  {
+   "path": "marked/LICENSE.md",
+   "sha384": "sha384-61EZB/aHzoKVT71zYfgKtxFiu+RWPSi9UH34kVJPMyzaTcFdbvH0liFiUwpiBNqY",
+   "source": "license text shipped with the package",
+   "version": "",
+   "license": ""
+  },
+  {
+   "path": "marked/marked.min.js",
+   "sha384": "sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi",
+   "source": "https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js",
+   "version": "marked 12.0.2",
+   "license": "MIT"
+  },
+  {
+   "path": "xterm/addon-fit-LICENSE.txt",
+   "sha384": "sha384-tWhllTtK/zz3AqVMIrnZ2P6fCxA4hV3PnYoUEeZSqfWK//RePt5zGYqu4nB/t7VD",
+   "source": "license text shipped with the package",
+   "version": "",
+   "license": ""
+  },
+  {
+   "path": "xterm/addon-fit.min.js",
+   "sha384": "sha384-XGqKrV8Jrukp1NITJbOEHwg01tNkuXr6uB6YEj69ebpYU3v7FvoGgEg23C1Gcehk",
+   "source": "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js",
+   "version": "@xterm/addon-fit 0.10.0",
+   "license": "MIT"
+  },
+  {
+   "path": "xterm/xterm-LICENSE.txt",
+   "sha384": "sha384-leMU5q3wxWpTpzcIAd9qvhx7xbWkMZxhy0Lqtjb0C8hqFQ2AGF2jt0HpKPGzHovt",
+   "source": "license text shipped with the package",
+   "version": "",
+   "license": ""
+  },
+  {
+   "path": "xterm/xterm.min.css",
+   "sha384": "sha384-tStR1zLfWgsiXCF3IgfB3lBa8KmBe/lG287CL9WCeKgQYcp1bjb4/+mwN6oti4Co",
+   "source": "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css",
+   "version": "@xterm/xterm 5.5.0",
+   "license": "MIT"
+  },
+  {
+   "path": "xterm/xterm.min.js",
+   "sha384": "sha384-J4qzUjBl1FxyLsl/kQPQIOeINsmp17OHYXDOMpMxlKX53ZfYsL+aWHpgArvOuof9",
+   "source": "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js",
+   "version": "@xterm/xterm 5.5.0",
+   "license": "MIT"
+  }
+ ]
+}

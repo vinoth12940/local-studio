@@ -5375,6 +5375,13 @@ def harness_path_and_shell_safety_fences():
             assert False, f"Expected {bad} to be blocked"
         except ValueError:
             pass
+    # The services' tokens open the user's indexed files and microphone: never readable by a model's file tools
+    for secret in (".api-token", "search.token", "voice.token"):
+        try:
+            app._harness_path_fence(str(app.STATE / "data" / secret), write=False)
+            assert False, f"Expected reading {secret} to be blocked"
+        except ValueError:
+            pass
     # Forbidden workspace in /api/chat returns 400, not 500
     c = TestClient(app.app, base_url="http://127.0.0.1:7860")
     res_ws = c.post("/api/chat", json={"messages": [{"role": "user", "content": "hi"}], "workspace": "~/.ssh"})
