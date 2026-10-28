@@ -1,4 +1,4 @@
-"""Feature flags in data/settings.json, for the refactor's behavior changes (docs/refactor-progress.json).
+"""Feature flags in data/settings.json, for the refactor's behavior changes.
 
 Every flag defaults to the old behavior. Turn one on by adding it to data/settings.json under its dotted path, for example
 {"logging": {"json_requests": true}}. The file is re-read when it changes, so no restart is needed unless a flag says so.

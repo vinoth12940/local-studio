@@ -1,4 +1,4 @@
-// ui/theme.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// ui/theme.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, store } from "../core/util.mjs";
 import { codeTermS, codeTermTheme, showView } from "../modules.mjs";
 

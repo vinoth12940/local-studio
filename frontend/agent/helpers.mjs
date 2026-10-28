@@ -1,4 +1,4 @@
-// agent/helpers.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// agent/helpers.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { esc } from "../core/util.mjs";
 
 // ---------------- agent

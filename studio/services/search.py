@@ -1,6 +1,6 @@
 """The file-search service: launch, stop and proxy.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import hashlib

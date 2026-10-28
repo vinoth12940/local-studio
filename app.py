@@ -6,7 +6,7 @@ Chat runs on one of three engines (only one at a time, to keep memory free):
   gguf   — llama.cpp's llama-server: GGUF models (vision when an mmproj file is present)
 Image jobs run the mflux CLI one at a time. Also manages models, storage, updates and uninstall.
 
-The backend lives in studio/ (CLAUDE.md, Architecture). This file is the entrypoint that `uvicorn app:app` loads (start.sh,
+The backend lives in studio/. This file is the entrypoint that `uvicorn app:app` loads (start.sh,
 and the process patterns in stop.sh) and the module the check suites import.
 """
 # macos/build.sh and release.sh read the version from this line with sed; studio/config.py parses it from here too.

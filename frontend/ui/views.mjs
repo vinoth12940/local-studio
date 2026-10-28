@@ -1,4 +1,4 @@
-// ui/views.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// ui/views.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, DEFAULT_MAX_TOKENS, store, toast } from "../core/util.mjs";
 import { setCollapsed } from "./theme.mjs";
 import {

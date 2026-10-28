@@ -132,7 +132,7 @@ SHA-256.
 - The file-search service also requires a private token, so other programs on the Mac can't read your index.
 - Edits, commands and risky computer actions wait for your approval, and file edits can be undone.
 
-Details, threat model and opt-in hardening: [docs/security.md](docs/security.md).
+Found a security problem? Please report it privately through [a security advisory](https://github.com/vinoth12940/local-studio/security/advisories/new), not a public issue.
 
 ## For developers
 
@@ -150,20 +150,19 @@ macos/build.sh --install  # build Local Studio.app, run every check, copy it to 
 | `index.html`, `frontend/` | The interface: vanilla JS modules, with fonts, marked and xterm.js bundled in `frontend/vendor/` |
 | `search.py`, `voice.py` | The file-search and voice services, each its own process |
 | `macos/` | The native app, the DocumentReader OCR tool, every check suite, and build and release scripts |
-| `docs/` | The [guide](docs/GUIDE.md), [security](docs/security.md), [releasing](docs/RELEASING.md) and design notes |
+| `docs/` | The [guide](docs/GUIDE.md) and the README's images |
 
 **Checks.** `macos/build.sh` runs every check, and CI runs it on every pull request. Releases are signed, notarized and
-published with `macos/release.sh --publish`; see [docs/RELEASING.md](docs/RELEASING.md).
+published with `macos/release.sh --publish` (its setup notes are at the top of the script).
 
-**Architecture.** [CLAUDE.md](CLAUDE.md) describes the architecture and conventions; `AGENTS.md` is the short version.
-`macos/readme_screenshots.py` retakes these screenshots from a demo server.
+**Screenshots.** `macos/readme_screenshots.py` retakes the screenshots above from a demo server.
 
 Issues and pull requests are welcome.
 
 ## License
 
-Local Studio is released under the [MIT License](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for what changed in each
-release.
+Local Studio is released under the [MIT License](LICENSE). Each [release](https://github.com/vinoth12940/local-studio/releases)
+lists what changed.
 
 **Credits.** It builds on [mlx-dspark](https://github.com/ARahim3/mlx-dspark), [MLX](https://github.com/ml-explore/mlx),
 [mlx-vlm](https://github.com/Blaizzy/mlx-vlm), [mflux](https://github.com/filipstrand/mflux),

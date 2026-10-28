@@ -1,4 +1,4 @@
-// settings/agent.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// settings/agent.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, confirmBox, esc, jpost, toast } from "../core/util.mjs";
 import { AG_CUA_MIN, AG_CUA_URL, AG_TIER, AG_TIER_ORDER, agTierKey } from "../agent/helpers.mjs";
 import { ag, agPermMissing } from "../agent/state.mjs";

@@ -1,4 +1,4 @@
-// chat/live.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// chat/live.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, DEFAULT_MAX_TOKENS, esc, icon, jpost, newId, store, toast } from "../core/util.mjs";
 import { chatEvents } from "./stream.mjs";
 import { md } from "../core/markdown.mjs";

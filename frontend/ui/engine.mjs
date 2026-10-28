@@ -1,4 +1,4 @@
-// ui/engine.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// ui/engine.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, api, gib, jpost, toast } from "../core/util.mjs";
 import { closeMenus } from "./views.mjs";
 import { activeChat, libraryState, listState, updateHeader, updateSend } from "../modules.mjs";

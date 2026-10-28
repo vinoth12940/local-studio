@@ -1,4 +1,4 @@
-// chat/list.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// chat/list.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { savedMessages } from "./record.mjs";
 import { createStore } from "../core/store.mjs";
 import { $, api, confirmBox, esc, icon, jpost, newId, store, toast } from "../core/util.mjs";

@@ -1,4 +1,4 @@
-// chat/computer.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// chat/computer.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, api, esc, icon, toast } from "../core/util.mjs";
 import { agAnswerMd } from "../core/markdown.mjs";
 import { listState, saveChat } from "./list.mjs";

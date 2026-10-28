@@ -1,4 +1,4 @@
-// code/terminal.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// code/terminal.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, api, esc, jpost, newId, store, toast } from "../core/util.mjs";
 import { showView } from "../ui/views.mjs";
 import { chLive, listState, newChat, saveChat, updateWorkspaceUI } from "../chat/list.mjs";

@@ -1,4 +1,4 @@
-// agent/agent.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// agent/agent.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, api, confirmBox, esc, icon, jpost, newId, store, toast } from "../core/util.mjs";
 import { agAnswerMd } from "../core/markdown.mjs";
 import { showView, view } from "../ui/views.mjs";

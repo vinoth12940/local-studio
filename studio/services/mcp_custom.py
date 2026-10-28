@@ -1,6 +1,6 @@
 """Custom MCP servers: clients, tool discovery and calls.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import hashlib

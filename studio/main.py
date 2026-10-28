@@ -1,6 +1,6 @@
 """The FastAPI app: LocalOnly on every route and static file, the /gallery mount, and one APIRouter per area.
 
-Assembled in the refactor's P1 split (docs/refactor-progress.json). app.py is the entrypoint `uvicorn app:app` loads.
+Assembled in the refactor's P1 split. app.py is the entrypoint `uvicorn app:app` loads.
 """
 import importlib
 import sys

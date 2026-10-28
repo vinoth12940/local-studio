@@ -1,6 +1,6 @@
 """The Code view's terminal: a login zsh on a pseudo-terminal.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import atexit

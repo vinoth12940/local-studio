@@ -1,4 +1,4 @@
-// library/library.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// library/library.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { createStore } from "../core/store.mjs";
 import { $, api, confirmBox, esc, human, icon, jpost, toast } from "../core/util.mjs";
 import { closeMenus, showView, view } from "../ui/views.mjs";

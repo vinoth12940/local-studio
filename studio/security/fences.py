@@ -1,6 +1,6 @@
 """Path and shell-command fences of the agent harness.
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import fnmatch

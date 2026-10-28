@@ -1,4 +1,4 @@
-// settings/settings.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// settings/settings.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, api, confirmBox, esc, human, jpost, toast } from "../core/util.mjs";
 import { listState, loadChats } from "../chat/list.mjs";
 import { chDetach } from "../chat/computer.mjs";

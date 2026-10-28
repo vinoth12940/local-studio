@@ -1,4 +1,4 @@
-// core/markdown.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// core/markdown.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { esc, icon, toast } from "./util.mjs";
 
 if (window.marked) marked.use({ renderer: { html(h) { return esc(typeof h === "string" ? h : h.text); } } });

@@ -11,6 +11,17 @@ __pycache__/
 .venv/
 # macOS
 .DS_Store
-.claude/*
-!.claude/launch.json
+.claude/
 build/
+
+# Maintainer notes stay on the maintainer's Mac and are not published, as in Murmur: agent instructions, the changelog
+# (each GitHub release carries its notes), plans, roadmaps, design notes, test plans and release/security write-ups.
+# Root-level names are anchored so workspaces and test fixtures that contain an AGENTS.md or CLAUDE.md are unaffected.
+/CLAUDE.md
+/AGENTS.md
+/CHANGELOG.md
+docs/*.md
+!docs/GUIDE.md
+docs/*.json
+docs/superpowers/
+docs/prompts/

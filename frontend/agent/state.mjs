@@ -1,4 +1,4 @@
-// agent/state.mjs: moved from index.html's inline script in the refactor's P2 split (docs/refactor-progress.json).
+// agent/state.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $ } from "../core/util.mjs";
 import { agSync, loadAgent, loadAgentRuns } from "../modules.mjs";
 

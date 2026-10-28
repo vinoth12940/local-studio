@@ -1,6 +1,6 @@
 """Paths, ports, the engine table and other constants (ROOT holds code, STATE holds user data).
 
-Moved from app.py in the refactor's P1 split (docs/refactor-progress.json).
+Moved from app.py in the refactor's P1 split.
 """
 
 import json
