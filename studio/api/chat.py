@@ -136,6 +136,16 @@ def _chat_computer_run(raw, expanded, model_id, chat_id, tool_evidence=""):
                       "context": clip_agent_context("\n".join(context[-6:]))})
 
 
+def _model_result(name, result):
+    """What the model reads of a tool result. A personal-file search offers candidates, not full document evidence: no
+    long paths or passages to prefill again and again before the model reads the actual files."""
+    if name == "search_files" and result.get("results") and result.get("scope") != "workspace":
+        return {**result, "results": [{**{k: v for k, v in item.items() if k not in ("path", "snippet")},
+                                       "folder": Path(item.get("path") or "").parent.name,
+                                       "snippet": (item.get("snippet") or "")[:300], "snippet_is_partial": True} for item in result["results"]]}
+    return result
+
+
 @router.post("/api/chat")
 async def chat(request: Request):
     body = await request.json()
@@ -359,7 +369,7 @@ async def chat(request: Request):
                 call = {"id": "prefetch-0", "type": "function", "function": {"name": pre_name, "arguments": json.dumps(pre_args, ensure_ascii=False)}}
                 body["messages"] = body["messages"] + [{"role": "assistant", "content": "", "tool_calls": [call]},
                                                        {"role": "tool", "tool_call_id": "prefetch-0", "name": pre_name,
-                                                        "content": json.dumps(result, ensure_ascii=False)}]
+                                                        "content": json.dumps(_model_result(pre_name, result), ensure_ascii=False)}]
                 yield _sse({"x_tool": {"id": "pre-0", "name": pre_name, "status": "error" if result.get("error") else "done", "summary": summary,
                                        **({"error": result["error"]} if result.get("error") else {})}})
                 found = result.get("results", []) if pre_name == "web_search" else result.get("items", []) if pre_name == "news_search" else []
@@ -732,13 +742,7 @@ async def chat(request: Request):
                             source = {**file_candidates.get(fid, {}), **result, "file_id": fid}
                             if source.get("name") and source.get("path"):
                                 yield _sse({"x_sources": [{k: source.get(k) for k in ("file_id", "name", "path", "locator")}]})
-                    model_result = result
-                    if name == "search_files" and result.get("results") and result.get("scope") != "workspace":
-                        # Search offers candidates, not full document evidence. Avoid repeatedly
-                        # prefilling long paths and passages before the model reads the actual files.
-                        model_result = {**result, "results": [{**{k: v for k, v in item.items() if k not in ("path", "snippet")},
-                            "folder": Path(item.get("path") or "").parent.name,
-                            "snippet": (item.get("snippet") or "")[:300], "snippet_is_partial": True} for item in result["results"]]}
+                    model_result = _model_result(name, result)
                     if call_counts[call_key] >= 2 and name != "get_current_datetime" and isinstance(model_result, dict):
                         model_result = {**model_result, "loop_warning": "You have called this exact tool with identical arguments multiple times. Synthesize the results so far, try a different step, or answer the user."}
                     body["messages"].append({"role": "tool", "tool_call_id": call["id"], "name": name,

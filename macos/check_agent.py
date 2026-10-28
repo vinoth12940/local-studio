@@ -5227,6 +5227,38 @@ def news_search_keeps_only_the_window_newest_first():
 
 
 @check
+def web_main_text_reads_real_page_shapes():
+    story = '<p>' + 'The council approved the new budget on Tuesday after a long debate. ' * 6 + '</p>'
+    shapes = {
+        "story in a div, a related <article> card inside an <aside>":
+            '<div class="story">' + story + '</div><aside><article><p>Related: another story from today here</p></article></aside>',
+        "a small <main> hero, the story outside it": '<main><h1>Budget</h1></main><div>' + story + '</div>',
+        "an unclosed named anchor at the top": '<a name="top"><div>' + story + '</div>',
+    }
+    for shape, html in shapes.items():
+        page = studio.services.web.main_text(html, 2000)
+        assert "council approved the new budget" in page["text"], shape
+        assert "Related: another story" not in page["text"], shape
+
+
+@check
+def web_fast_page_reads_stop_waiting_for_a_slow_host():
+    real = studio.services.web._fetch_public_web
+    article = '<article><p>' + 'Bitcoin traded at 81,066 dollars on Tuesday. ' * 20 + '</p></article>'
+    def fetch(url):
+        if "slow.example" in url: time.sleep(3)
+        return url, "text/html", article
+    studio.services.web._fetch_public_web = fetch
+    try:
+        started = time.monotonic()
+        pages = studio.services.harness._read_top_pages([{"url": "https://fast.example/a"}, {"url": "https://slow.example/b"}], timeout=0.5)
+        assert time.monotonic() - started < 1.5, "a tarpitting host must not hold the voice turn"
+        assert "81,066" in pages[0]["text"] and "too slow" in pages[1]["refused"], pages
+    finally:
+        studio.services.web._fetch_public_web = real
+
+
+@check
 def web_fast_one_hostile_source_is_a_refusal_never_a_dead_turn():
     atom = ('<feed xmlns="http://www.w3.org/2005/Atom"><title>X</title><entry><title>Old</title><link href="https://x.example/a"/>'
             '<updated>0001-01-01T00:00:00+05:30</updated></entry></feed>')
@@ -5275,8 +5307,11 @@ def voice_turns_prefetch_live_facts_before_the_first_round():
     real_read, real_pre, original = app._chat_read_tool, decide.preflight, app.load_settings()
     reads = []
     def evidence(name, args, timezone=None):
-        reads.append((name, args)); return {"results": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin"}],
-                                            "pages": [{"url": "https://coinmarketcap.com/", "text": "Bitcoin is 81,066 dollars."}]}
+        reads.append((name, args))
+        if name == "search_files":
+            return {"results": [{"file_id": 7, "name": "passport.pdf", "path": "/Users/x/Documents/passport.pdf", "snippet": "P<" * 900}]}
+        return {"results": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin"}],
+                "pages": [{"url": "https://coinmarketcap.com/", "text": "Bitcoin is 81,066 dollars."}]}
     plans = {"Bitcoin price right now?": dict(live_facts=0.9, my_files=0.0, small_talk=0.0, standalone=0.95, news=0.0, source="d1", ms=40),
              "And tomorrow?": dict(live_facts=0.9, my_files=0.0, small_talk=0.0, standalone=0.1, news=0.0, source="d1", ms=40),
              "When does my passport expire?": dict(live_facts=0.7, my_files=0.95, small_talk=0.0, standalone=0.9, news=0.0, source="d1", ms=40)}
@@ -5300,6 +5335,9 @@ def voice_turns_prefetch_live_facts_before_the_first_round():
             e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "use_files": True,
                                         "messages": [{"role": "user", "content": "When does my passport expire?"}]})
             assert reads[:1] == [("search_files", {"query": "When does my passport expire?"})]
+            evidence_sent = engine.seen[0]["messages"][-1]["content"]
+            assert "/Users/x/Documents" not in evidence_sent and '"snippet_is_partial": true' in evidence_sent, \
+                "a prefetched file search is trimmed exactly as the loop trims one"
         reads.clear()
         with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
             e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Bitcoin price right now?"}]})

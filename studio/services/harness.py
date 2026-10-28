@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
@@ -837,8 +837,12 @@ def _read_page(url, limit=2000):
         return {"url": url, "refused": str(error) or type(error).__name__}
 
 
-def _read_top_pages(results, count=2):
-    """The first `count` results on distinct hosts, read in parallel, in result order."""
+PAGE_READ_SECONDS = 5                    # both page reads together: a slow host is listed as refused, never waited for
+
+
+def _read_top_pages(results, count=2, timeout=PAGE_READ_SECONDS):
+    """The first `count` results on distinct hosts, read in parallel, in result order; a page not read within `timeout`
+    seconds is refused as too slow (its thread finishes on its own, bounded by the fetch's own timeouts)."""
     picked, hosts = [], set()
     for result in results:
         host = _host(result["url"])
@@ -847,8 +851,14 @@ def _read_top_pages(results, count=2):
             picked.append(result["url"])
         if len(picked) == count:
             break
-    with ThreadPoolExecutor(max_workers=count) as pool:
-        return list(pool.map(_read_page, picked))
+    if not picked:
+        return []
+    pool = ThreadPoolExecutor(max_workers=count)
+    futures = [pool.submit(_read_page, url) for url in picked]
+    done, _ = wait(futures, timeout=timeout)
+    pool.shutdown(wait=False, cancel_futures=True)
+    return [future.result() if future in done else {"url": url, "refused": f"too slow: no answer within {timeout:g} s"}
+            for future, url in zip(futures, picked)]
 
 
 def _news_edition(timezone):

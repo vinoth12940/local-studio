@@ -139,6 +139,7 @@ class _MainText(HTMLParser):
         if "".join(self.block["text"]).strip():
             self.blocks.append(self.block)
         self.block = {"text": [], "link": 0, "scoped": False, "heading": heading}
+        self.link = 0                                # an unclosed <a> never turns the rest of the page into link text
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -146,8 +147,10 @@ class _MainText(HTMLParser):
         if tag == "meta" and date_key and attrs.get("content"): self.dates.setdefault(date_key, attrs["content"][:200])
         if tag in self.SKIP: self.hidden += 1
         if tag == "title": self.in_title = True
-        if tag in ("article", "main"): self.scope += 1; self.has_scope = True
-        if tag == "a": self.link += 1
+        if tag in ("article", "main"):
+            self.scope += 1
+            self.has_scope = self.has_scope or not self.hidden     # an <article> card inside a hidden <aside> is not the page
+        if tag == "a" and attrs.get("href"): self.link += 1
         if tag in _BLOCKS: self._flush(heading=tag in ("h1", "h2", "h3"))
 
     def handle_endtag(self, tag):
@@ -175,19 +178,25 @@ def main_text(html, limit):
     parser.feed(html)
     parser.close()
     parser._flush()
-    lines, seen = [], set()
-    for block in parser.blocks:
-        if parser.has_scope and not block["scoped"]:
-            continue
-        text = " ".join("".join(block["text"]).split())
-        if not text or block["link"] > len(text) / 2:
-            continue
-        if not block["heading"] and len(text.split()) < 5 and not re.search(r"\d", text):
-            continue
-        if text not in seen:
-            seen.add(text)
-            lines.append(text)
-    text = "\n".join(lines)
+
+    def readable(scoped_only):
+        lines, seen = [], set()
+        for block in parser.blocks:
+            if scoped_only and not block["scoped"]:
+                continue
+            text = " ".join("".join(block["text"]).split())
+            if not text or block["link"] > len(text) / 2:
+                continue
+            if not block["heading"] and len(text.split()) < 5 and not re.search(r"\d", text):
+                continue
+            if text not in seen:
+                seen.add(text)
+                lines.append(text)
+        return "\n".join(lines)
+
+    text = readable(parser.has_scope)
+    if parser.has_scope and len(text) < 80:              # a small <main> hero with the story outside it: read the whole page
+        text = readable(False)
     if len(text) < 80:
         raise ValueError("The page has too little readable text. It may require JavaScript or sign-in; use the browser or another source")
     return {"title": " ".join("".join(parser.title).split()), "text": text[:limit], "truncated": len(text) > limit, **parser.dates}
