@@ -232,7 +232,8 @@ async def chat(request: Request):
     except ValueError as error:
         raise HTTPException(400, str(error))
     mcp_schemas, mcp_meta_map = await asyncio.to_thread(_get_mcp_chat_tools)
-    all_chat_tools = CHAT_TOOLS + mcp_schemas if mcp_schemas else CHAT_TOOLS
+    base_tools = harness.chat_tools(flag("harness.web_fast"))
+    all_chat_tools = base_tools + mcp_schemas if mcp_schemas else base_tools
     if flag("harness.skills"):
         all_chat_tools += harness.CHAT_RESOURCE_TOOLS
     body["tools"] = all_chat_tools
@@ -310,6 +311,8 @@ async def chat(request: Request):
         t0 = time.time()
         state = {}
         read_names = {t["function"]["name"] for t in CHAT_READ_TOOLS}
+        if flag("harness.web_fast"):
+            read_names.add("news_search")
         if flag("harness.skills"):
             read_names.update(t["function"]["name"] for t in harness.CHAT_RESOURCE_TOOLS)
         action_names = {t["function"]["name"] for t in CHAT_ACTION_TOOLS} | set(mcp_meta_map.keys())
@@ -644,7 +647,8 @@ async def chat(request: Request):
                         await asyncio.to_thread(lambda: verification.observe(name, args, result, executed=executed))
                     if durable_id:
                         await asyncio.to_thread(lambda: workflow_runs.store.checkpoint(durable_id, body["messages"], verification.snapshot(), verification.fingerprint() or fingerprint))
-                    if name == "web_search" and result.get("results"): unread_web_results = True
+                    if name == "web_search" and result.get("results") and not any(p.get("text") for p in result.get("pages") or []):
+                        unread_web_results = True                       # nothing read yet: read a page before searching again
                     if name == "read_webpage": unread_web_results = False
                     if await request.is_disconnected(): return
                     if flag("security.redact"):
@@ -680,7 +684,8 @@ async def chat(request: Request):
                             "files": list(dict.fromkeys(b["name"] for b in turn_backups)),
                             "count": len(turn_backups)
                         }})
-                    web_sources = result.get("results", []) if name == "web_search" else [result] if name == "read_webpage" and result.get("url") else []
+                    web_sources = (result.get("results", []) if name == "web_search" else result.get("items", []) if name == "news_search"
+                                   else [result] if name == "read_webpage" and result.get("url") else [])
                     if web_sources:
                         yield _sse({"x_web_sources": [{"url": item["url"], "title": item.get("title") or item["url"]} for item in web_sources if item.get("url")]})
                     if name == "search_files" and result.get("results"):

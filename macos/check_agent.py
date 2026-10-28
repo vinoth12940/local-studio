@@ -5227,6 +5227,30 @@ def news_search_keeps_only_the_window_newest_first():
 
 
 @check
+def chat_answers_after_one_fast_search_round():
+    real, original = app._chat_read_tool, app.load_settings()
+    def evidence(name, args, timezone=None):
+        return {"results": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin"}],
+                "pages": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin", "text": "Bitcoin is 81,066 dollars."}]}
+    studio.services.harness._chat_read_tool = evidence
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        turns = [chat_action_deltas(name="web_search", args='{"query":"bitcoin price"}'),
+                 chat_action_deltas(name="reply", args='{"text":"About 81 thousand dollars, on CoinMarketCap."}')]
+        with Env(enabled=False) as e, ChatEngine(turns=turns) as engine:
+            result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Bitcoin price?"}]})
+            assert len(engine.seen) == 2 and "81,066 dollars" in engine.seen[1]["messages"][-1]["content"]
+            names = [t["function"]["name"] for t in engine.seen[1]["tools"]]
+            assert "web_search" in names and "news_search" in names, "a search that read pages does not lock search out"
+            assert app.FAST_WEB_RULE in engine.seen[0]["messages"][0]["content"]
+            assert "then read_webpage on relevant primary sources" not in engine.seen[0]["messages"][0]["content"]
+            assert "81 thousand dollars" in result.text and any("x_web_sources" in ev for ev in sse(result.text))
+    finally:
+        studio.services.harness._chat_read_tool = real
+        app.save_settings(original)
+
+
+@check
 def chat_engine_done_does_not_wait_for_connection_close():
     real = app.httpx.AsyncClient
     class Response:
