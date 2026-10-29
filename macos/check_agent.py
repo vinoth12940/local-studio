@@ -56,6 +56,8 @@ if "--fake-cua" in sys.argv:
     _fake_cua(sys.argv[sys.argv.index("--fake-cua") + 1])
     sys.exit()
 
+import datetime
+import email.utils
 import re
 import tempfile
 import time
@@ -5120,6 +5122,330 @@ def web_page_evidence_keeps_publication_dates_and_bounds_prompt_size():
         assert "Published October 16, 2026" in result["text"] and "Ignore navigation" not in result["text"]
         assert result["truncated"] and len(result["text"]) <= 6000
     finally: studio.services.web._fetch_public_web = real
+
+
+@check
+def web_main_text_drops_menus_and_keeps_the_dated_article():
+    html = ('<title>Ashes: day one</title><meta property="article:published_time" content="2026-10-28T09:00:00Z">'
+            '<header><a href="/">Home</a><a href="/live">Live</a></header>'
+            '<ul class="menu"><li><a href="/a">Scores</a></li><li><a href="/b">Fixtures</a></li></ul>'
+            '<article><h1>Australia 312/4 at stumps</h1><p>' + 'Head made 140 as Australia batted all day. ' * 80 + '</p></article>'
+            '<aside>Most read</aside><footer>Cookie settings</footer>')
+    page = studio.services.web.main_text(html, 2000)
+    assert page["title"] == "Ashes: day one" and page["published_at"] == "2026-10-28T09:00:00Z"
+    assert "Australia 312/4 at stumps" in page["text"] and "Head made 140" in page["text"]
+    for menu in ("Home", "Live", "Scores", "Fixtures", "Most read", "Cookie settings"):
+        assert menu not in page["text"], menu
+    assert page["truncated"] and len(page["text"]) <= 2000
+    try:
+        studio.services.web.main_text('<div id="root"></div><script>app()</script><a href="/x">Open the app</a>', 2000)
+        raise AssertionError("an app shell is not evidence")
+    except ValueError as error:
+        assert "too little readable text" in str(error)
+
+
+@check
+def web_feed_items_parse_rss_and_atom_dates():
+    rss = ('<rss><channel><item><title>India win by 5 wickets</title><link>https://news.google.com/rss/articles/abc</link>'
+           '<pubDate>Tue, 28 Oct 2026 10:30:00 GMT</pubDate><source url="https://www.espncricinfo.com">ESPNcricinfo</source></item>'
+           '<item><title>No date here</title><link>https://example.com/n</link></item></channel></rss>')
+    atom = ('<feed xmlns="http://www.w3.org/2005/Atom"><title>Club news</title><entry><title>Squad named</title>'
+            '<link href="https://club.example/squad"/><updated>2026-10-28T08:00:00+05:30</updated></entry></feed>')
+    items = studio.services.web.feed_items(rss)
+    assert items[0] == {"title": "India win by 5 wickets", "url": "https://news.google.com/rss/articles/abc",
+                        "source": "ESPNcricinfo", "published_at": "2026-10-28T10:30:00Z"}
+    assert items[1]["published_at"] is None
+    assert studio.services.web.feed_items(atom) == [{"title": "Squad named", "url": "https://club.example/squad",
+                                                     "source": "Club news", "published_at": "2026-10-28T02:30:00Z"}]
+
+
+@check
+def web_fast_search_reads_two_distinct_hosts_in_parallel_and_reports_refusals():
+    real, original = studio.services.web._fetch_public_web, app.load_settings()
+    ddg = ''.join(f'<a class="result__a" href="{u}">{t}</a><a class="result__snippet">s</a>' for u, t in (
+        ("https://a.example/one", "A one"), ("https://a.example/one?utm_source=x", "A again"),
+        ("https://b.example/two", "B two"), ("https://c.example/three", "C three")))
+    article = '<article><p>' + 'Bitcoin traded at 81,066 dollars on Tuesday. ' * 60 + '</p></article>'
+    fetched = []
+    def fetch(url):
+        fetched.append(url)
+        if "duckduckgo" in url: return url, "text/html", ddg
+        if "b.example" in url: raise ValueError("The source returned HTTP 403; its contents could not be verified")
+        return url, "text/html", article
+    studio.services.web._fetch_public_web = fetch
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        result = app._chat_read_tool("web_search", {"query": "bitcoin price"})
+        assert [p["url"] for p in result["pages"]] == ["https://a.example/one", "https://b.example/two"]
+        assert "81,066 dollars" in result["pages"][0]["text"] and len(result["pages"][0]["text"]) <= 2000
+        assert "403" in result["pages"][1]["refused"] and "text" not in result["pages"][1]
+        assert len([u for u in fetched if "duckduckgo" not in u]) == 2
+        assert result["next_step"].startswith("Answer from pages")
+        app.save_settings(original)
+        assert "pages" not in app._chat_read_tool("web_search", {"query": "bitcoin price"}), "flag off: old behavior"
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+
+
+@check
+def news_search_keeps_only_the_window_newest_first():
+    real, original = studio.services.web._fetch_public_web, app.load_settings()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    rfc = lambda hours: email.utils.format_datetime(now - datetime.timedelta(hours=hours))
+    google = ('<rss><channel><title>Google News</title>'
+              f'<item><title>Test drawn in Cape Town</title><link>https://news.google.com/rss/articles/1</link><pubDate>{rfc(2)}</pubDate><source url="https://x">Reuters</source></item>'
+              f'<item><title>Old series preview</title><link>https://news.google.com/rss/articles/2</link><pubDate>{rfc(30)}</pubDate><source url="https://y">BBC</source></item>'
+              '<item><title>Undated rumour</title><link>https://news.google.com/rss/articles/3</link></item></channel></rss>')
+    espn = f'<rss><channel><title>ESPNcricinfo</title><item><title>Stokes named captain</title><link>https://www.espncricinfo.com/s</link><pubDate>{rfc(1)}</pubDate></item></channel></rss>'
+    fetched = []
+    def fetch(url):
+        fetched.append(url)
+        return url, "application/rss+xml", espn if "espncricinfo" in url else google
+    studio.services.web._fetch_public_web = fetch
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        result = app._chat_read_tool("news_search", {"query": "latest cricket news"}, "Asia/Kolkata")
+        assert [i["title"] for i in result["items"]] == ["Stokes named captain", "Test drawn in Cape Town"]
+        assert result["items"][0]["age"] == "1 hour ago" and result["items"][1]["source"] == "Reuters"
+        assert any("news.google.com/rss/search" in u and "when%3A1d" in u and "gl=IN" in u for u in fetched)
+        assert not any("/rss/articles/" in u for u in fetched), "redirect wrappers are listed, never fetched"
+        assert app._chat_tool_summary("news_search", {"query": "latest cricket news"}) == "Checking the news: latest cricket news"
+        hour = app._chat_read_tool("news_search", {"query": "latest cricket news", "since": "1h"}, "UTC")
+        assert [i["title"] for i in hour["items"]] == ["Stokes named captain"]
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+    studio.services.web._fetch_public_web = lambda url: (url, "application/rss+xml", google.replace(rfc(2), rfc(50)))
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        empty = app._chat_read_tool("news_search", {"query": "world news", "since": "1d"}, "UTC")
+        assert "Nothing found from the last day" in empty["error"] and empty["verified"] is False and "items" not in empty
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+
+
+@check
+def web_main_text_reads_real_page_shapes():
+    story = '<p>' + 'The council approved the new budget on Tuesday after a long debate. ' * 6 + '</p>'
+    shapes = {
+        "story in a div, a related <article> card inside an <aside>":
+            '<div class="story">' + story + '</div><aside><article><p>Related: another story from today here</p></article></aside>',
+        "a small <main> hero, the story outside it": '<main><h1>Budget</h1></main><div>' + story + '</div>',
+        "an unclosed named anchor at the top": '<a name="top"><div>' + story + '</div>',
+    }
+    for shape, html in shapes.items():
+        page = studio.services.web.main_text(html, 2000)
+        assert "council approved the new budget" in page["text"], shape
+        assert "Related: another story" not in page["text"], shape
+
+
+@check
+def web_fast_page_reads_stop_waiting_for_a_slow_host():
+    real = studio.services.web._fetch_public_web
+    article = '<article><p>' + 'Bitcoin traded at 81,066 dollars on Tuesday. ' * 20 + '</p></article>'
+    def fetch(url):
+        if "slow.example" in url: time.sleep(3)
+        return url, "text/html", article
+    studio.services.web._fetch_public_web = fetch
+    try:
+        started = time.monotonic()
+        pages = studio.services.harness._read_top_pages([{"url": "https://fast.example/a"}, {"url": "https://slow.example/b"}], timeout=0.5)
+        assert time.monotonic() - started < 1.5, "a tarpitting host must not hold the voice turn"
+        assert "81,066" in pages[0]["text"] and "too slow" in pages[1]["refused"], pages
+    finally:
+        studio.services.web._fetch_public_web = real
+
+
+@check
+def web_main_text_ignores_icon_titles():
+    article = '<article><p>' + 'Bitcoin traded at 81,066 dollars on Tuesday. ' * 4 + '</p></article>'
+    page = studio.services.web.main_text('<title>BTC today</title><svg><title>Search icon</title></svg>' + article, 2000)
+    assert page["title"] == "BTC today", page["title"]
+
+
+@check
+def news_search_normalizes_an_unknown_window():
+    real, original = studio.services.web._fetch_public_web, app.load_settings()
+    stamp = email.utils.format_datetime(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=2))
+    fetched = []
+    def fetch(url):
+        fetched.append(url)
+        return url, "application/rss+xml", f'<rss><channel><title>G</title><item><title>Fresh</title><link>https://n/1</link><pubDate>{stamp}</pubDate></item></channel></rss>'
+    studio.services.web._fetch_public_web = fetch
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        result = app._chat_read_tool("news_search", {"query": "world news", "since": "2w"}, "UTC")
+        assert result["since"] == "1d" and "when%3A1d" in fetched[0] and "2w" not in fetched[0], (result, fetched)
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+
+
+@check
+def web_fast_near_empty_pages_are_refused():
+    real, original = studio.services.web._fetch_public_web, app.load_settings()
+    bodies = {"https://plain.example/": ("text/plain", "ok"), "https://feed.example/": ("application/rss+xml", "<rss><channel><title>F</title></channel></rss>")}
+    studio.services.web._fetch_public_web = lambda url: (url, *bodies[url])
+    try:
+        for url in bodies:
+            assert "too little readable text" in studio.services.harness._read_page(url)["refused"], url
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        for url in bodies:
+            assert app._chat_read_tool("read_webpage", {"url": url}).get("error"), url
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+
+
+@check
+def subagent_web_search_keeps_the_page_text():
+    res = {"query": "q", "results": [{"url": f"https://r{i}.example/", "title": "t" * 80, "snippet": "s" * 900} for i in range(6)],
+           "pages": [{"url": "https://a.example/", "title": "A", "text": "ALPHA " + "a" * 1994}, {"url": "https://b.example/", "title": "B", "text": "BRAVO " + "b" * 1994}],
+           "next_step": "Answer from pages when they cover the question; call read_webpage only for a result that was not read."}
+    content = studio.services.harness._child_tool_content("web_search", res, nested=False, full=set())
+    assert len(content) <= 4000 and "ALPHA" in content and "BRAVO" in content and "https://r5.example/" in content, content[:300]
+    assert studio.services.harness._child_tool_content("read_file", {"text": "x" * 9000}, nested=False, full=set()) == json.dumps({"text": "x" * 9000})[:4000]
+
+
+@check
+def chat_tool_list_does_not_grow_with_skills():
+    original, before = app.load_settings(), len(app.CHAT_TOOLS)
+    counts = []
+    try:
+        app.save_settings({**original, "harness": {"skills": True}})
+        for _ in range(2):
+            with Env(enabled=False) as e, ChatEngine(turns=[chat_action_deltas(name="reply", args='{"text":"Hi."}')]) as engine:
+                e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Hello"}]})
+                counts.append(len(engine.seen[0]["tools"]))
+        assert counts[0] == counts[1] and len(app.CHAT_TOOLS) == before, (counts, before, len(app.CHAT_TOOLS))
+    finally:
+        app.save_settings(original)
+        del app.CHAT_TOOLS[before:]                          # undo a leak so the other checks see the real list
+
+
+@check
+def web_fast_one_hostile_source_is_a_refusal_never_a_dead_turn():
+    atom = ('<feed xmlns="http://www.w3.org/2005/Atom"><title>X</title><entry><title>Old</title><link href="https://x.example/a"/>'
+            '<updated>0001-01-01T00:00:00+05:30</updated></entry></feed>')
+    assert studio.services.web.feed_items(atom)[0]["published_at"] is None, "an out-of-range date is no date"
+    real, original = studio.services.web._fetch_public_web, app.load_settings()
+    def boom(url):
+        raise RuntimeError("the parser exploded")
+    studio.services.web._fetch_public_web = boom
+    try:
+        assert "the parser exploded" in studio.services.harness._read_page("https://x.example/")["refused"]
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        news = app._chat_read_tool("news_search", {"query": "latest cricket news"}, "UTC")
+        assert "Nothing found" in news["error"], news
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+
+
+@check
+def chat_answers_after_one_fast_search_round():
+    real, original = app._chat_read_tool, app.load_settings()
+    def evidence(name, args, timezone=None):
+        return {"results": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin"}],
+                "pages": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin", "text": "Bitcoin is 81,066 dollars."}]}
+    studio.services.harness._chat_read_tool = evidence
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        turns = [chat_action_deltas(name="web_search", args='{"query":"bitcoin price"}'),
+                 chat_action_deltas(name="reply", args='{"text":"About 81 thousand dollars, on CoinMarketCap."}')]
+        with Env(enabled=False) as e, ChatEngine(turns=turns) as engine:
+            result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Bitcoin price?"}]})
+            assert len(engine.seen) == 2 and "81,066 dollars" in engine.seen[1]["messages"][-1]["content"]
+            names = [t["function"]["name"] for t in engine.seen[1]["tools"]]
+            assert "web_search" in names and "news_search" in names, "a search that read pages does not lock search out"
+            assert app.FAST_WEB_RULE in engine.seen[0]["messages"][0]["content"]
+            assert "then read_webpage on relevant primary sources" not in engine.seen[0]["messages"][0]["content"]
+            assert "81 thousand dollars" in result.text and any("x_web_sources" in ev for ev in sse(result.text))
+    finally:
+        studio.services.harness._chat_read_tool = real
+        app.save_settings(original)
+
+
+@check
+def voice_prefetch_reads_the_last_message_and_reports_like_the_loop():
+    from studio.services import decide
+    real_read, real_pre, original = app._chat_read_tool, decide.preflight, app.load_settings()
+    asked = []
+    live = dict(live_facts=0.9, my_files=0.0, small_talk=0.0, standalone=0.95, news=0.0, source="d1", ms=40)
+    decide.preflight = lambda text, previous, timeout=0.25: (asked.append((text, previous)), live)[1]
+    studio.services.harness._chat_read_tool = lambda name, args, timezone=None: {
+        "results": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin"}],
+        "pages": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin", "text": "Bitcoin is 81,066 dollars."}]}
+    try:
+        app.save_settings({**original, "voice": {"enabled": True, "decide": True}, "harness": {"web_fast": True}})
+        turns = [chat_action_deltas(name="web_search", args='{"query": "Bitcoin price right now?"}'),
+                 chat_action_deltas(name="reply", args='{"text":"About 81 thousand dollars."}')]
+        messages = [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello."},
+                    {"role": "user", "content": [{"type": "text", "text": "Bitcoin price right now?"}]}]
+        with Env(enabled=False) as e, ChatEngine(turns=turns) as engine:
+            r = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "messages": messages})
+            assert asked == [("Bitcoin price right now?", "Hi")], asked
+            done = [ev["x_tool"] for ev in sse(r.text) if isinstance(ev, dict) and ev.get("x_tool", {}).get("id") == "pre-0"
+                    and ev["x_tool"]["status"] == "done"]
+            assert done and "detail" not in done[0], "web_search has no detail in the loop either (its sources go to x_web_sources)"
+            assert any("x_web_sources" in ev for ev in sse(r.text) if isinstance(ev, dict))
+            assert "loop_warning" in engine.seen[1]["messages"][-1]["content"], "a repeat of the prefetched search is flagged"
+        with Env(enabled=False) as e, ChatEngine(turns=[chat_action_deltas(name="reply", args='{"text":"Noon."}')]) as engine:
+            r = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "messages": [{"role": "user", "content": "What time is it right now?"}]})
+            done = [ev["x_tool"] for ev in sse(r.text) if isinstance(ev, dict) and ev.get("x_tool", {}).get("id") == "pre-0"
+                    and ev["x_tool"]["status"] == "done"]
+            assert done and done[0]["name"] == "get_current_datetime" and done[0].get("detail"), "the clock's detail, as the loop shows it"
+    finally:
+        studio.services.harness._chat_read_tool, decide.preflight = real_read, real_pre
+        app.save_settings(original)
+
+
+@check
+def voice_turns_prefetch_live_facts_before_the_first_round():
+    from studio.services import decide
+    real_read, real_pre, original = app._chat_read_tool, decide.preflight, app.load_settings()
+    reads = []
+    def evidence(name, args, timezone=None):
+        reads.append((name, args))
+        if name == "search_files":
+            return {"results": [{"file_id": 7, "name": "passport.pdf", "path": "/Users/x/Documents/passport.pdf", "snippet": "P<" * 900}]}
+        return {"results": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin"}],
+                "pages": [{"url": "https://coinmarketcap.com/", "text": "Bitcoin is 81,066 dollars."}]}
+    plans = {"Bitcoin price right now?": dict(live_facts=0.9, my_files=0.0, small_talk=0.0, standalone=0.95, news=0.0, source="d1", ms=40),
+             "And tomorrow?": dict(live_facts=0.9, my_files=0.0, small_talk=0.0, standalone=0.1, news=0.0, source="d1", ms=40),
+             "When does my passport expire?": dict(live_facts=0.7, my_files=0.95, small_talk=0.0, standalone=0.9, news=0.0, source="d1", ms=40)}
+    studio.services.harness._chat_read_tool = evidence
+    decide.preflight = lambda text, previous, timeout=0.25: plans[text]
+    try:
+        app.save_settings({**original, "voice": {"enabled": True, "decide": True}, "harness": {"web_fast": True}})
+        turns = [chat_action_deltas(name="reply", args='{"text":"About 81 thousand dollars."}')]
+        with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
+            r = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "messages": [{"role": "user", "content": "Bitcoin price right now?"}]})
+            assert reads == [("web_search", {"query": "Bitcoin price right now?"})] and len(engine.seen) == 1
+            assert engine.seen[0]["messages"][-1]["role"] == "tool" and "81,066" in engine.seen[0]["messages"][-1]["content"]
+            assert any(ev.get("x_tool", {}).get("id") == "pre-0" for ev in sse(r.text) if isinstance(ev, dict))
+        for said in ("And tomorrow?", "When does my passport expire?"):
+            reads.clear()
+            with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
+                e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "messages": [{"role": "user", "content": said}]})
+                assert reads == [], said                                     # no Search for this turn: nothing, never the web
+        reads.clear()
+        with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
+            e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "use_files": True,
+                                        "messages": [{"role": "user", "content": "When does my passport expire?"}]})
+            assert reads[:1] == [("search_files", {"query": "When does my passport expire?"})]
+            evidence_sent = engine.seen[0]["messages"][-1]["content"]
+            assert "/Users/x/Documents" not in evidence_sent and '"snippet_is_partial": true' in evidence_sent, \
+                "a prefetched file search is trimmed exactly as the loop trims one"
+        reads.clear()
+        with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
+            e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Bitcoin price right now?"}]})
+            assert reads == [], "typed chat never prefetches"
+    finally:
+        studio.services.harness._chat_read_tool, decide.preflight = real_read, real_pre
+        app.save_settings(original)
 
 
 @check

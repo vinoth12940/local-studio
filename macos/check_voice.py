@@ -16,6 +16,7 @@ from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp(prefix="lsvoice"))
 os.environ["LOCAL_STUDIO_HOME"] = str(TMP / "state")      # never touch real user data
+os.environ["LOCAL_STUDIO_DECIDE_PORT"] = "9"               # nothing listens: never the running app's d1
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
@@ -334,7 +335,8 @@ def launcher_and_stop_patterns_agree_with_stop_sh():
     stop_sh = (REPO / "stop.sh").read_text()
     for argv in ran:
         assert argv[0] == "pkill"
-        assert f'pkill -f "{argv[2]}"' in stop_sh.replace("8084", str(config.VOICE_PORT)), f"stop.sh lacks {argv[2]}"
+        assert f'pkill -f "{argv[2]}"' in stop_sh.replace("8084", str(config.VOICE_PORT)).replace("8085", str(config.DECIDE_PORT)), \
+            f"stop.sh lacks {argv[2]}"                 # _stop_voice also stops the d1 check that runs beside it
     assert re.search(r"for name in [^;]*\bvoice\b[^;]*; do", stop_sh), "stop.sh must also stop voice by its pid file"
 
 
@@ -467,6 +469,231 @@ def chat_voice_mode_never_reaches_the_engine():
     multi = harness.with_voice_note([chat[0], {"role": "user", "content": [{"type": "text", "text": "q"}]}], note)
     assert multi[1]["content"][-1]["text"] == harness.VOICE_TURN_REMINDER
     assert "example prompts" in harness.VOICE_NOTE
+
+
+RULES_CAUGHT, RULES_FALSE_ALARM = 30, 0                # the rules' measured counts on the fixture (28 Oct); keep them as floors
+
+
+@check
+def decide_rules_route_the_labeled_questions():
+    from studio.services import decide
+    q = json.loads((Path(__file__).resolve().parent / "fixtures/route_questions.json").read_text())
+    live = lambda t: decide.prefetch_call(decide.rules(t), t, web_fast=True) is not None
+    caught = sum(live(t) for t in q["search"]); false_alarm = sum(live(t) for t in q["direct"])
+    assert caught >= RULES_CAUGHT and false_alarm <= RULES_FALSE_ALARM, (caught, false_alarm)
+    assert not any(live(t) for t in q["personal"] + q["follow_up"])
+    assert [t for t in q["small_talk_and_commands"] if live(t)] == [], "small talk and commands never go to a public search"
+    assert all(decide.prefetch_call(decide.rules(t), t, web_fast=True, files=True)[0] == "search_files" for t in q["personal"])
+    assert decide.clean_query("um, what's the, uh, bitcoin price right now") == "what's the bitcoin price right now"
+    assert decide.clean_query("Do you know who won the match?") == "Do you know who won the match?", "only a filler 'you know' goes"
+    assert decide.clean_query("It's, like, really cold, you know, outside") == "It's really cold outside"
+    assert decide.clean_query("I'd like the latest news") == "I'd like the latest news"
+    live = dict(live_facts=0.99, my_files=0.0, small_talk=0.0, standalone=0.9, news=0.0)
+    for said in ("What time is it right now?", "What's the date today?", "What day is it?"):
+        assert decide.prefetch_call(live, said, web_fast=True) == ("get_current_datetime", {}), said   # the clock, never the web
+    assert decide.prefetch_call(live, "What time is it in Tokyo?", web_fast=True) is None, "another city's time: the model asks the clock for that zone"
+    assert decide.prefetch_call(decide.rules("What's the latest cricket news?"), "What's the latest cricket news?", web_fast=True)[0] == "news_search"
+    assert decide.prefetch_call(decide.rules("What's the latest cricket news?"), "What's the latest cricket news?", web_fast=False)[0] == "web_search"
+
+
+@check
+def decide_service_warms_before_it_says_loaded_and_rejects_bad_sizes():
+    import decide as service
+    release, calls = threading.Event(), []
+    class SlowD1:
+        def system_one(self, state, questions):
+            calls.append(state)
+            if len(calls) == 1:
+                release.wait(5)                       # the warm-up pass
+            return {"answers": {k: {"type": "noul", "noul": 0.5} for k in questions}}
+    decider = service.Decider(TOKEN, load=lambda repo: SlowD1())
+    warming = threading.Thread(target=decider.warm, daemon=True)
+    warming.start()
+    time.sleep(0.2)
+    assert decider.model is None, "not loaded (and not taking requests) until the warm-up pass is done"
+    release.set(); warming.join(5)
+    assert decider.model is not None and len(calls) == 1
+    srv = service.serve(decider, 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.putrequest("POST", "/decide", skip_host=True)
+        for k, v in (("Host", f"127.0.0.1:{port}"), ("Authorization", "Bearer " + TOKEN), ("Content-Length", "-1")):
+            conn.putheader(k, v)
+        conn.endheaders()
+        assert conn.getresponse().status == 400, "a negative size is a bad request, never a read to the end"
+        conn.close()
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+@check
+def decide_personal_questions_never_reach_the_web():
+    from studio.services import decide
+    missed = dict(live_facts=0.9, my_files=0.1, small_talk=0.0, standalone=0.9, news=0.0)      # d1 missed the personal cue
+    for said in ("When does my passport expire?", "What does my green card say?", "Is my car insurance still valid?",
+                 "What's the date on my passport?", "What's my name?"):
+        assert decide.prefetch_call(missed, said, web_fast=True, files=False) is None, said
+        pick = decide.prefetch_call(missed, said, web_fast=True, files=True)
+        assert pick is None or pick[0] == "search_files", (said, pick)
+    chatty = dict(live_facts=0.9, my_files=0.0, small_talk=0.9, standalone=0.9, news=0.0)
+    assert decide.prefetch_call(chatty, "Hello! How is it going today?", web_fast=True) is None, "d1's small talk never searches"
+    assert "LFM Open License v1.0" in __import__("studio.storage.flags", fromlist=["FLAGS"]).FLAGS["voice.decide"][1]
+    assert "LFM Open License v1.0" in (REPO / "frontend/voice/voice.mjs").read_text(), "the Voice view names d1's license"
+
+
+@check
+def d1_follows_the_voice_session():
+    from fastapi.testclient import TestClient
+    from studio.services import decide
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    class R:
+        def json(self): return {"ok": True}
+    events = []
+    saved = (services_voice.voice_available, services_voice.voice_request, services_voice._voice_running, decide.start_decide,
+             decide.stop_decide, decide.flag)
+    services_voice.voice_available = lambda: True
+    services_voice.voice_request = lambda *a, **k: R()
+    services_voice._voice_running = lambda: True
+    decide.start_decide = lambda: events.append("start")
+    decide.stop_decide = lambda: events.append("stop")
+    decide.flag = lambda name: name == "voice.decide"
+    try:
+        assert c.post("/api/voice/mic/open").status_code == 200
+        for _ in range(50):
+            if events: break
+            time.sleep(0.02)
+        assert events == ["start"], "Start brings d1 up (again, if it died or the flag was turned on later)"
+        assert c.post("/api/voice/mic/close").status_code == 200 and events == ["start", "stop"], "End unloads d1"
+    finally:
+        (services_voice.voice_available, services_voice.voice_request, services_voice._voice_running, decide.start_decide,
+         decide.stop_decide, decide.flag) = saved
+
+
+@check
+def decide_reads_d1_answers_and_falls_back_to_rules():
+    import httpx
+    from studio.services import decide
+    answers = {"answers": {k: {"type": "noul", "noul": v} for k, v in
+               {"live_facts": 0.93, "my_files": 0.02, "small_talk": 0.01, "standalone": 0.97, "news": 0.1}.items()}}
+    seen = []
+    def post(url, json=None, headers=None, timeout=None):
+        seen.append((url, json, headers, timeout)); return httpx.Response(200, json=answers, request=httpx.Request("POST", url))
+    real = decide.httpx.post
+    decide.httpx.post = post
+    try:
+        plan = decide.preflight("Bitcoin price now?", "Hi")
+        assert plan["source"] == "d1" and plan["live_facts"] == 0.93 and seen[0][0].endswith("/decide")
+        assert seen[0][1]["state"] == "Earlier: Hi\nLast message: Bitcoin price now?" and seen[0][3] == 0.25
+        assert seen[0][2]["Authorization"].startswith("Bearer ") and set(seen[0][1]["questions"]) == set(decide.QUESTIONS)
+        def slow(*a, **k): raise httpx.ReadTimeout("warming up")
+        decide.httpx.post = slow
+        assert decide.preflight("Bitcoin price now?", None)["source"] == "rules"
+        real_token = decide._decide_token
+        def unreadable(): raise PermissionError("data/decide.token")
+        decide._decide_token = unreadable
+        try:
+            assert decide.preflight("Bitcoin price now?", None)["source"] == "rules", "a token problem is a fallback, not a dead turn"
+        finally:
+            decide._decide_token = real_token
+    finally:
+        decide.httpx.post = real
+
+
+@check
+def voice_starts_even_when_d1_cannot():
+    from studio.services import decide
+    saved = (services_voice.voice_deps_installed, services_voice._start_voice, services_voice._voice_running, decide.start_decide, services_voice.flag)
+    def broken(): raise FileNotFoundError("hf CLI is missing")
+    services_voice.voice_deps_installed = lambda: True
+    services_voice._start_voice = lambda: None
+    services_voice._voice_running = lambda: True
+    services_voice.flag = lambda name: name in ("voice.enabled", "voice.decide")
+    decide.start_decide = broken
+    try:
+        services_voice._enable_voice()
+        assert services_voice.voice_job["status"] == "done", services_voice.voice_job
+    finally:
+        (services_voice.voice_deps_installed, services_voice._start_voice, services_voice._voice_running, decide.start_decide,
+         services_voice.flag) = saved
+        services_voice.voice_job.clear(); services_voice.voice_job.update(status="idle")
+
+
+@check
+def decide_launcher_and_stop_patterns_agree_and_never_look_like_the_vision_engine():
+    from studio.services import decide
+    import studio.config as c
+    cmd = " ".join(decide.decide_command())
+    assert re.search(decide.DECIDE_PATTERN, cmd) and not re.search(c.ENGINES["vision"]["pattern"], cmd)
+    assert decide.decide_command()[1] == "decide.py", "a relative name with cwd=ROOT: the bundled path contains a space"
+    stop = (REPO / "stop.sh").read_text()
+    assert f'pkill -f "{decide.DECIDE_PATTERN}"' in stop.replace("8085", str(c.DECIDE_PORT))
+    assert re.search(r"for name in [^;]*\bdecide\b[^;]*; do", stop), "stop.sh must also stop d1 by its pid file"
+    build = (REPO / "macos/build.sh").read_text()
+    assert re.search(r"^for f in .* decide\.py .*; do", build, re.M), "decide.py must be copied into the app bundle"
+
+
+@check
+def decide_waits_for_memory_and_reports_rules_when_down():
+    from studio.services import decide
+    saved = (decide.system_memory, decide._spawn, decide.flag, decide._model_present)
+    spawned = []
+    decide.flag = lambda name: name == "voice.decide"
+    decide._spawn = lambda: spawned.append(1)
+    try:
+        decide.system_memory = lambda: {"total_bytes": 48 << 30, "used_bytes": 44 << 30, "free_percent": 12}
+        out = decide.start_decide()
+        assert out == {"mode": "rules", "reason": "memory: 12% free"} and not spawned
+        decide.system_memory = lambda: {"total_bytes": 48 << 30, "used_bytes": 20 << 30, "free_percent": 40}
+        decide._model_present = lambda: True
+        decide.start_decide()
+        assert spawned == [1]
+        assert decide.mode()["mode"] == "rules" and "not running" in decide.mode()["reason"]   # nothing answers on the test port
+        real_process = decide._process
+        decide._process = lambda: True
+        try:
+            assert decide.mode() == {"mode": "rules", "reason": "d1 is loading"}, "spawned but not answering yet"
+        finally:
+            decide._process = real_process
+        decide.flag = lambda name: False
+        assert decide.mode() == {"mode": "off", "reason": ""}
+    finally:
+        (decide.system_memory, decide._spawn, decide.flag, decide._model_present) = saved
+
+
+@check
+def decide_service_answers_only_the_backend():
+    import decide as service
+    class FakeD1:
+        def system_one(self, state, questions):
+            return {"answers": {k: {"type": "noul", "noul": 0.9 if "latest" in state else 0.1} for k in questions}, "usage": {}}
+    try:
+        service.Decider("")
+        raise AssertionError("a decision service without a token started")
+    except ValueError:
+        pass
+    decider = service.Decider(TOKEN, load=lambda repo: FakeD1())
+    srv = service.serve(decider, 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    body = json.dumps({"state": "What is the latest news?", "questions": {"live_facts": {"type": "noul", "instructions": "Live?"}}})
+    try:
+        status, _, data = _req(port, "GET", "/health", token=False)
+        assert status == 200 and json.loads(data)["loaded"] is False, "not loaded until warm() has run"
+        assert _req(port, "POST", "/decide", body=body)[0] == 503
+        decider.warm()
+        assert json.loads(_req(port, "GET", "/health", token=False)[2])["loaded"] is True
+        status, _, data = _req(port, "POST", "/decide", body=body)
+        assert status == 200 and json.loads(data)["answers"]["live_facts"]["noul"] == 0.9
+        assert _req(port, "POST", "/decide", body=body, token=False)[0] == 401
+        assert _req(port, "POST", "/decide", body=body, headers={"Origin": "https://evil.example"})[0] == 403
+        assert _req(port, "POST", "/decide", body=body, headers={"Sec-Fetch-Site": "cross-site"})[0] == 403
+        assert _req(port, "POST", "/decide", body=body, headers={"Host": "evil.example"})[0] == 403, "DNS rebinding"
+        assert _req(port, "POST", "/decide", body=json.dumps({"state": "x" * 5000, "questions": {}}))[0] == 400
+        assert _req(port, "POST", "/decide", body="not json")[0] == 400
+    finally:
+        srv.shutdown(); srv.server_close()
 
 
 if __name__ == "__main__":

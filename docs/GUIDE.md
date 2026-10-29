@@ -203,22 +203,29 @@ Chat models in the Model library (sizes are downloads):
 | Qwen3 8B | MLX + DFlash | 10.8 GB | Light everyday model |
 | LFM2.5 24B-A2B | MLX | 13.6 GB | Agents and tool use, ~85 tok/s |
 | LFM2.5 1.2B | MLX + DSpark | 2.9 GB | Tiny and very fast, ~200 tok/s |
+| LFM3 1.7B | MLX (mlx-vlm) | 1.9 GB | Tiny agent model, tool use, 256K context |
+| LFM3-VL 2B | MLX (mlx-vlm) | 2.2 GB | Small vision model, reads images |
 | Qwen3 Coder 30B-A3B | llama.cpp (GGUF) | 18.6 GB | Coding |
 | Qwen3.6 35B-A3B | llama.cpp (GGUF) | 23.0 GB | Reads images (mmproj) |
 | Gemma 4 12B | llama.cpp (GGUF) | 7.3 GB | Reads images (mmproj) |
 | Qwen3.5 9B | llama.cpp (GGUF) | 6.6 GB | Reads images (mmproj) |
+| LFM3 1.7B | llama.cpp (GGUF) | 1.1 GB | QAD Q4_0: accurate at 4 bits |
+| LFM3-VL 2B | llama.cpp (GGUF) | 1.4 GB | QAD Q4_0, reads images (mmproj) |
 
 Anything else: Model library → **Search Hugging Face**.
 - MLX repositories run on the accelerated engine, without a drafter unless mlx-dspark knows one.
 - GGUF repositories run on llama.cpp; ticking **Vision** also downloads the repository's mmproj file.
 - The curated list lives in `catalog.json`.
 
+LFM3 needs mlx-vlm 0.7.11 or newer (MLX) or llama.cpp b11960 (0.8.0) or newer (GGUF): on older engines, Settings →
+**Update engines** first.
+
 Only one chat engine runs at a time, so memory stays free for the model:
 
 | Engine | Runs | Port |
 |---|---|---|
 | mlx-dspark | MLX chat models with DFlash/DSpark speculative decoding | 8080 |
-| mlx-vlm | The same MLX model, when a chat contains an image | 8081 |
+| mlx-vlm | The same MLX model, when a chat contains an image; LFM3 always (mlx-dspark can't load it) | 8081 |
 | llama.cpp (`llama-server`) | GGUF models, with images when an mmproj is present | 8082 |
 
 Switching takes about 5–30 s, depending on the model. The engines also serve OpenAI- and Anthropic-compatible APIs (for

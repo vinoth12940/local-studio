@@ -74,6 +74,12 @@ VOICE_URL = f"http://127.0.0.1:{VOICE_PORT}"
 VOICE_REQS = ROOT / "voice-requirements.txt"
 VOICE_DEPS_OK = DATA / "voice-deps.ok"                       # written by setup.sh --voice
 VOICE_TOKEN = DATA / "voice.token"                           # per-install secret the service requires (0600)
+# Decide: decide.py runs d1-2B (Liquid's decision model) beside Voice when the voice.decide flag is on: before a spoken turn's
+# first model round it answers "needs live facts? about my files? stands on its own?" in ~0.1 s. LOCAL_STUDIO_DECIDE_PORT for dev.
+DECIDE_PORT = int(os.environ.get("LOCAL_STUDIO_DECIDE_PORT", 8085))
+DECIDE_URL = f"http://127.0.0.1:{DECIDE_PORT}"
+DECIDE_TOKEN = DATA / "decide.token"                         # per-install secret the service requires (0600)
+DECIDE_MODEL = "LiquidAI/d1-2B-MLX-4bit"
 # Local Agent: drives the Mac through CuaDriver (MCP over a unix socket in standard mode, no manifest).
 AGENT_DIR = (DATA / "agent").absolute()                      # LaunchServices starts CuaDriver elsewhere: never relative
 AGENT_RUNS = AGENT_DIR / "runs"

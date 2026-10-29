@@ -11,6 +11,7 @@ from pathlib import Path
 
 from studio.infra.logs import open_log
 from studio.config import APP_SUPPORT, APP_VERSION, BREW, DSPARK_PY, LLAMA_SERVER, LOGS, ROOT, UV
+from studio.services import engines
 
 
 update_job: dict = {"status": "idle"}
@@ -64,6 +65,7 @@ def _run_update():
         rc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode
         if rc != 0 and "upgrade" in cmd and cmd[0] == BREW:
             continue                                  # brew upgrade exits 0 when already current
+    engines._engine_versions.clear()                  # min_engine gates read the new versions
     after = _versions()
     changed = {k: [before.get(k), after.get(k)] for k in after if before.get(k) != after.get(k)}
     update_job.update(status="done", finished=time.time(), changed=changed, step=None)

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from studio.services import voice as services_voice
+from studio.services import decide as services_decide
 
 router = APIRouter()
 MAX_UPLOAD = 16_000_000                               # same limit as voice.py's /stt
@@ -21,6 +22,7 @@ def _need_voice():
 def voice_status():
     out = {"available": services_voice.voice_available(), "installed": services_voice.voice_deps_installed(),
            "running": False, "setup": {k: services_voice.voice_job.get(k) for k in ("status", "step", "error")}}
+    out["decide"] = services_decide.mode()
     if out["available"] and services_voice._voice_running():
         try:
             out.update(services_voice.voice_request("GET", "/status", timeout=3).json(), running=True)
@@ -79,11 +81,15 @@ async def voice_transcribe(request: Request):
 @router.post("/api/voice/mic/open")
 def voice_mic_open():
     _need_voice()
-    return services_voice.voice_request("POST", "/mic/open", timeout=20).json()
+    opened = services_voice.voice_request("POST", "/mic/open", timeout=20).json()
+    if services_decide.flag("voice.decide"):           # Start: d1 comes up (again, if it died or the flag was turned on later)
+        threading.Thread(target=services_decide.start_decide, daemon=True).start()
+    return opened
 
 
 @router.post("/api/voice/mic/close")
 def voice_mic_close():
+    services_decide.stop_decide()                     # End: d1 unloads with the conversation (~1.8 GB back)
     if not services_voice._voice_running():          # nothing to close; allowed with the flag off so the mic can always be released
         return {"ok": True}
     return services_voice.voice_request("POST", "/mic/close", timeout=20).json()

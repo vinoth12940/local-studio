@@ -314,7 +314,7 @@ class Scripted:
         mode_model = load_settings()["chat_model"]
         # The fake engine must match what the chat route asks for in every field, the context window included: a mismatch
         # sends ensure_engine down its restart path, which stops engines machine-wide (the running app's too).
-        engines.engine_state = lambda: {"mode": "text", "model_id": mode_model,
+        engines.engine_state = lambda: {"mode": models.engine_mode(models.chat_model(mode_model)), "model_id": mode_model,
                                         "context_window": models.effective_context(models.chat_model(mode_model))}
         engines._engine_ready = lambda mode: True
         models.model_installed = lambda entry: True
