@@ -54,7 +54,10 @@ _GREETING = re.compile(r"^(hi|hello|hey|thanks|thank you|good (?:morning|afterno
                        r"bye|goodbye|see you|ok(?:ay)?|that'?s (?:great|good|all)|great|cool|nice)\b|"
                        r"^(?:(?:can|could|would|will) you |please )*(?:open|close|turn|set|start|stop|play|pause|resume|remind|call|"
                        r"text|send|mute|unmute|tell me a joke)\b", re.I)   # greetings, closings and commands to the Mac
-_FILLERS = re.compile(r",?\s*\b(?:um+|uh+|erm+|hmm+|you know)\b,?|,?\s*\blike,", re.I)
+_FILLERS = re.compile(r",?\s*\b(?:um+|uh+|erm+|hmm+)\b,?|,\s*\b(?:like|you know)\b\s*,|^\s*you know\s*,", re.I)  # "like" and
+# "you know" only between commas: "I'd like the news" and "do you know who won" keep their words
+_REFERS_BACK = re.compile(r"\b(there|that one|those|them|he|she|his|her|him)\b", re.I)   # "what's it like there?" needs the last turn
+_ELSEWHERE = re.compile(r"\b(?:in|at)\s+\w", re.I)                                      # "what time is it in Tokyo?"
 
 
 def _decide_token():
@@ -83,7 +86,8 @@ def rules(text):
     said = clean_query(text)
     return {"live_facts": float(bool(_LIVE.search(said))), "my_files": float(bool(_FILES.search(said))),
             "small_talk": float(bool(_GREETING.match(said))),
-            "standalone": 0.0 if len(said.split()) < 3 or _FOLLOW_UP.match(said) else 1.0,
+            "standalone": 0.0 if len(said.split()) < 3 or _FOLLOW_UP.match(said)
+                          or (_REFERS_BACK.search(said) and not re.search(r"\s[A-Z]", said)) else 1.0,   # a pronoun, no name
             "news": float(bool(_NEWS.search(said))), "source": "rules", "ms": 0}
 
 
@@ -113,8 +117,8 @@ def prefetch_call(plan, text, web_fast, files=False):
         return ("search_files", {"query": query}) if files else None      # personal questions never go to the web
     if _MINE.search(query):
         return None                                   # "my name", "my city": the model decides, never a prefetched web search
-    if _CLOCK.search(query):
-        return "get_current_datetime", {}             # "now" sounds live, but the Mac's clock answers it in milliseconds
+    if _CLOCK.search(query):                          # "now" sounds live, but the Mac's clock answers it in milliseconds
+        return None if _ELSEWHERE.search(query) else ("get_current_datetime", {})   # another city: the model picks the zone
     if plan["live_facts"] < LIVE_THRESHOLD:
         return None
     if web_fast and plan["news"] >= 0.5:

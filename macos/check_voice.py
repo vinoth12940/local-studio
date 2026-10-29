@@ -485,11 +485,47 @@ def decide_rules_route_the_labeled_questions():
     assert [t for t in q["small_talk_and_commands"] if live(t)] == [], "small talk and commands never go to a public search"
     assert all(decide.prefetch_call(decide.rules(t), t, web_fast=True, files=True)[0] == "search_files" for t in q["personal"])
     assert decide.clean_query("um, what's the, uh, bitcoin price right now") == "what's the bitcoin price right now"
+    assert decide.clean_query("Do you know who won the match?") == "Do you know who won the match?", "only a filler 'you know' goes"
+    assert decide.clean_query("It's, like, really cold, you know, outside") == "It's really cold outside"
+    assert decide.clean_query("I'd like the latest news") == "I'd like the latest news"
     live = dict(live_facts=0.99, my_files=0.0, small_talk=0.0, standalone=0.9, news=0.0)
     for said in ("What time is it right now?", "What's the date today?", "What day is it?"):
         assert decide.prefetch_call(live, said, web_fast=True) == ("get_current_datetime", {}), said   # the clock, never the web
+    assert decide.prefetch_call(live, "What time is it in Tokyo?", web_fast=True) is None, "another city's time: the model asks the clock for that zone"
     assert decide.prefetch_call(decide.rules("What's the latest cricket news?"), "What's the latest cricket news?", web_fast=True)[0] == "news_search"
     assert decide.prefetch_call(decide.rules("What's the latest cricket news?"), "What's the latest cricket news?", web_fast=False)[0] == "web_search"
+
+
+@check
+def decide_service_warms_before_it_says_loaded_and_rejects_bad_sizes():
+    import decide as service
+    release, calls = threading.Event(), []
+    class SlowD1:
+        def system_one(self, state, questions):
+            calls.append(state)
+            if len(calls) == 1:
+                release.wait(5)                       # the warm-up pass
+            return {"answers": {k: {"type": "noul", "noul": 0.5} for k in questions}}
+    decider = service.Decider(TOKEN, load=lambda repo: SlowD1())
+    warming = threading.Thread(target=decider.warm, daemon=True)
+    warming.start()
+    time.sleep(0.2)
+    assert decider.model is None, "not loaded (and not taking requests) until the warm-up pass is done"
+    release.set(); warming.join(5)
+    assert decider.model is not None and len(calls) == 1
+    srv = service.serve(decider, 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.putrequest("POST", "/decide", skip_host=True)
+        for k, v in (("Host", f"127.0.0.1:{port}"), ("Authorization", "Bearer " + TOKEN), ("Content-Length", "-1")):
+            conn.putheader(k, v)
+        conn.endheaders()
+        assert conn.getresponse().status == 400, "a negative size is a bad request, never a read to the end"
+        conn.close()
+    finally:
+        srv.shutdown(); srv.server_close()
 
 
 @check

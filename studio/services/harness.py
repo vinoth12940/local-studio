@@ -760,9 +760,8 @@ def _run_subagent_task(task: str, role: str = "researcher", timezone: str | None
                         files_inspected.append(str(targs["path"]))
                 else:
                     res = {"error": f"Tool {tname} not available in sub-agent"}
-                serialized = json.dumps(res, ensure_ascii=False)
                 messages.append({"role": "tool", "tool_call_id": c["id"], "name": tname,
-                                 "content": serialized if nested or tname in {t["function"]["name"] for t in skill_tools} else serialized[:4000]})
+                                 "content": _child_tool_content(tname, res, nested, {t["function"]["name"] for t in skill_tools})})
 
     # Deterministic local fallback (when engine is offline or finishes with tool evidence):
     # automatically gather workspace overview, matching files/symbols, or git status/diff relevant to `task`.
@@ -827,8 +826,10 @@ def _read_page(url, limit=2000):
         final, kind, text = services_web._fetch_public_web(url)
         if kind in ("application/rss+xml", "application/xml", "text/xml"):
             items = services_web.feed_items(text)[:12]
-            return {"url": final, "title": "", "text": "\n".join(f"{i['published_at'] or 'undated'} · {i['source']} · {i['title']}" for i in items)[:limit]}
+            text = "\n".join(f"{i['published_at'] or 'undated'} · {i['source']} · {i['title']}" for i in items)
         if kind not in ("text/html", "application/xhtml+xml"):
+            if len(text.strip()) < 80:
+                raise ValueError(TOO_LITTLE_TEXT)
             return {"url": final, "title": "", "text": text[:limit]}
         page = services_web.main_text(text, limit)
         return {"url": final, "title": page["title"], "text": page["text"],
@@ -837,7 +838,20 @@ def _read_page(url, limit=2000):
         return {"url": url, "refused": str(error) or type(error).__name__}
 
 
+TOO_LITTLE_TEXT = "The page has too little readable text. It may require JavaScript or sign-in; use the browser or another source"
 PAGE_READ_SECONDS = 5                    # both page reads together: a slow host is listed as refused, never waited for
+
+
+def _child_tool_content(name, result, nested, full):
+    """A sub-agent's view of a tool result: whole for nested runs and the `full` tools, else cut to 4,000 characters, with a
+    web_search's read pages first and trimmed, so the cut never drops the page text its next step says to answer from."""
+    if nested or name in full:
+        return json.dumps(result, ensure_ascii=False)
+    if name == "web_search" and result.get("pages"):
+        result = {"query": result.get("query"), "pages": [{**p, "text": (p.get("text") or "")[:1300]} for p in result["pages"]],
+                  "results": [{"url": r.get("url"), "title": (r.get("title") or "")[:120]} for r in result.get("results", [])],
+                  "next_step": result.get("next_step")}
+    return json.dumps(result, ensure_ascii=False)[:4000]
 
 
 def _read_top_pages(results, count=2, timeout=PAGE_READ_SECONDS):
@@ -882,9 +896,10 @@ def _news_search(query, since, timezone):
     listed with their links, never fetched (Google News links are redirect wrappers that need JavaScript)."""
     if not isinstance(query, str) or not query.strip() or len(query) > 300:
         raise ValueError("news_search needs a query of 1–300 characters")
-    window, words = NEWS_WINDOWS.get(since or "1d", NEWS_WINDOWS["1d"])
+    since = since if since in NEWS_WINDOWS else "1d"              # an unknown window is the last day, in the query and the answer
+    window, words = NEWS_WINDOWS[since]
     edition = _news_edition(timezone)
-    urls = ["https://news.google.com/rss/search?" + urlencode({"q": f"{query} when:{since or '1d'}", "hl": "en-" + edition,
+    urls = ["https://news.google.com/rss/search?" + urlencode({"q": f"{query} when:{since}", "hl": "en-" + edition,
                                                                 "gl": edition, "ceid": f"{edition}:en"})]
     urls += [feed for word, feeds in PUBLISHER_FEEDS.items() if re.search(rf"\b{word}\b", query, re.I) for feed in feeds]
     def read(url):
@@ -907,7 +922,7 @@ def _news_search(query, since, timezone):
     items.sort(key=lambda i: i["_age"])
     if not items:
         raise ValueError(f"Nothing found from the last {words}; say so instead of answering from older news")
-    return {"query": query, "since": since or "1d", "fetched_at": _chat_datetime(timezone),
+    return {"query": query, "since": since, "fetched_at": _chat_datetime(timezone),
             "items": [{k: i[k] for k in ("title", "source", "published_at", "age", "url")} for i in items[:8]],
             "note": "Answer from these dated headlines; name each item's source and how old it is. Items outside the window were dropped.",
             "untrusted_source_text": True}
@@ -968,7 +983,12 @@ def _chat_read_tool(name, args, timezone=None):
         if name == "read_webpage" and flag("harness.web_fast"):
             url, kind, text = services_web._fetch_public_web(args.get("url"))
             if kind in ("application/rss+xml", "application/xml", "text/xml"):
-                return {"url": url, "items": services_web.feed_items(text)[:12], "fetched_at": _chat_datetime(timezone), "untrusted_source_text": True}
+                items = services_web.feed_items(text)[:12]
+                if not items:
+                    raise ValueError("This feed has no items; use another source")
+                return {"url": url, "items": items, "fetched_at": _chat_datetime(timezone), "untrusted_source_text": True}
+            if kind not in ("text/html", "application/xhtml+xml") and len(text.strip()) < 80:
+                raise ValueError(TOO_LITTLE_TEXT)
             page = services_web.main_text(text, 6000) if kind in ("text/html", "application/xhtml+xml") else \
                 {"title": "", "text": text[:6000], "truncated": len(text) > 6000}
             return {"url": url, **page, "fetched_at": _chat_datetime(timezone), "untrusted_source_text": True}

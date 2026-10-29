@@ -95,6 +95,24 @@ def scenarios():
                                        [{"tool": "get_current_datetime", "args": {}}, {"text": "It is noon."}])
     out["voice warm-up"] = capture({"messages": [{"role": "user", "content": "Hello."}], "warm": True, "voice": True,
                                     "voice_style": "a calm British butler"}, [{"text": "Hi"}])
+    # voice.decide: the search ran before round one, so the engine first sees an assistant tool call with empty content.
+    from studio.services import decide
+    from studio.storage.settings import load_settings, save_settings
+    saved, real_pre, real_read = load_settings(), decide.preflight, harness._chat_read_tool
+    decide.preflight = lambda text, previous, timeout=0.25: dict(live_facts=0.9, my_files=0.0, small_talk=0.0, standalone=0.95,
+                                                                 news=0.0, source="d1", ms=1)
+    harness._chat_read_tool = lambda name, args, timezone=None: {"results": [{"url": "https://example.com/", "title": "Bitcoin"}],
+                                                                "pages": [{"url": "https://example.com/", "text": "Bitcoin is 81,066 dollars."}]}
+    save_settings({**saved, "voice": {**saved.get("voice", {}), "enabled": True, "decide": True}, "harness": {"web_fast": True}})
+    try:
+        out["spoken turn with a prefetched search"] = capture(
+            {"messages": hist + [{"role": "user", "content": "What is the price of bitcoin right now?"}], "voice": True,
+             "voice_style": "a calm British butler"}, [{"text": "About eighty-one thousand dollars."}])
+        assert any(m.get("tool_calls") and m["tool_calls"][0]["id"] == "prefetch-0"
+                   for m in out["spoken turn with a prefetched search"][0]["messages"]), "the prefetch did not run"
+    finally:
+        decide.preflight, harness._chat_read_tool = real_pre, real_read
+        save_settings(saved)
     # Notes the loop adds mid-conversation (workflow policy, the verification gate, a resumed run) must reach the engine
     # folded into the leading system message: built the way the route builds them, then through the engine boundary.
     late = [{"role": "system", "content": "agent note"}, {"role": "user", "content": "Fix it."},

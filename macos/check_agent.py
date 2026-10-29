@@ -5259,6 +5259,73 @@ def web_fast_page_reads_stop_waiting_for_a_slow_host():
 
 
 @check
+def web_main_text_ignores_icon_titles():
+    article = '<article><p>' + 'Bitcoin traded at 81,066 dollars on Tuesday. ' * 4 + '</p></article>'
+    page = studio.services.web.main_text('<title>BTC today</title><svg><title>Search icon</title></svg>' + article, 2000)
+    assert page["title"] == "BTC today", page["title"]
+
+
+@check
+def news_search_normalizes_an_unknown_window():
+    real, original = studio.services.web._fetch_public_web, app.load_settings()
+    stamp = email.utils.format_datetime(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=2))
+    fetched = []
+    def fetch(url):
+        fetched.append(url)
+        return url, "application/rss+xml", f'<rss><channel><title>G</title><item><title>Fresh</title><link>https://n/1</link><pubDate>{stamp}</pubDate></item></channel></rss>'
+    studio.services.web._fetch_public_web = fetch
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        result = app._chat_read_tool("news_search", {"query": "world news", "since": "2w"}, "UTC")
+        assert result["since"] == "1d" and "when%3A1d" in fetched[0] and "2w" not in fetched[0], (result, fetched)
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+
+
+@check
+def web_fast_near_empty_pages_are_refused():
+    real, original = studio.services.web._fetch_public_web, app.load_settings()
+    bodies = {"https://plain.example/": ("text/plain", "ok"), "https://feed.example/": ("application/rss+xml", "<rss><channel><title>F</title></channel></rss>")}
+    studio.services.web._fetch_public_web = lambda url: (url, *bodies[url])
+    try:
+        for url in bodies:
+            assert "too little readable text" in studio.services.harness._read_page(url)["refused"], url
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        for url in bodies:
+            assert app._chat_read_tool("read_webpage", {"url": url}).get("error"), url
+    finally:
+        studio.services.web._fetch_public_web = real
+        app.save_settings(original)
+
+
+@check
+def subagent_web_search_keeps_the_page_text():
+    res = {"query": "q", "results": [{"url": f"https://r{i}.example/", "title": "t" * 80, "snippet": "s" * 900} for i in range(6)],
+           "pages": [{"url": "https://a.example/", "title": "A", "text": "ALPHA " + "a" * 1994}, {"url": "https://b.example/", "title": "B", "text": "BRAVO " + "b" * 1994}],
+           "next_step": "Answer from pages when they cover the question; call read_webpage only for a result that was not read."}
+    content = studio.services.harness._child_tool_content("web_search", res, nested=False, full=set())
+    assert len(content) <= 4000 and "ALPHA" in content and "BRAVO" in content and "https://r5.example/" in content, content[:300]
+    assert studio.services.harness._child_tool_content("read_file", {"text": "x" * 9000}, nested=False, full=set()) == json.dumps({"text": "x" * 9000})[:4000]
+
+
+@check
+def chat_tool_list_does_not_grow_with_skills():
+    original, before = app.load_settings(), len(app.CHAT_TOOLS)
+    counts = []
+    try:
+        app.save_settings({**original, "harness": {"skills": True}})
+        for _ in range(2):
+            with Env(enabled=False) as e, ChatEngine(turns=[chat_action_deltas(name="reply", args='{"text":"Hi."}')]) as engine:
+                e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Hello"}]})
+                counts.append(len(engine.seen[0]["tools"]))
+        assert counts[0] == counts[1] and len(app.CHAT_TOOLS) == before, (counts, before, len(app.CHAT_TOOLS))
+    finally:
+        app.save_settings(original)
+        del app.CHAT_TOOLS[before:]                          # undo a leak so the other checks see the real list
+
+
+@check
 def web_fast_one_hostile_source_is_a_refusal_never_a_dead_turn():
     atom = ('<feed xmlns="http://www.w3.org/2005/Atom"><title>X</title><entry><title>Old</title><link href="https://x.example/a"/>'
             '<updated>0001-01-01T00:00:00+05:30</updated></entry></feed>')
@@ -5298,6 +5365,40 @@ def chat_answers_after_one_fast_search_round():
             assert "81 thousand dollars" in result.text and any("x_web_sources" in ev for ev in sse(result.text))
     finally:
         studio.services.harness._chat_read_tool = real
+        app.save_settings(original)
+
+
+@check
+def voice_prefetch_reads_the_last_message_and_reports_like_the_loop():
+    from studio.services import decide
+    real_read, real_pre, original = app._chat_read_tool, decide.preflight, app.load_settings()
+    asked = []
+    live = dict(live_facts=0.9, my_files=0.0, small_talk=0.0, standalone=0.95, news=0.0, source="d1", ms=40)
+    decide.preflight = lambda text, previous, timeout=0.25: (asked.append((text, previous)), live)[1]
+    studio.services.harness._chat_read_tool = lambda name, args, timezone=None: {
+        "results": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin"}],
+        "pages": [{"url": "https://coinmarketcap.com/", "title": "Bitcoin", "text": "Bitcoin is 81,066 dollars."}]}
+    try:
+        app.save_settings({**original, "voice": {"enabled": True, "decide": True}, "harness": {"web_fast": True}})
+        turns = [chat_action_deltas(name="web_search", args='{"query": "Bitcoin price right now?"}'),
+                 chat_action_deltas(name="reply", args='{"text":"About 81 thousand dollars."}')]
+        messages = [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello."},
+                    {"role": "user", "content": [{"type": "text", "text": "Bitcoin price right now?"}]}]
+        with Env(enabled=False) as e, ChatEngine(turns=turns) as engine:
+            r = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "messages": messages})
+            assert asked == [("Bitcoin price right now?", "Hi")], asked
+            done = [ev["x_tool"] for ev in sse(r.text) if isinstance(ev, dict) and ev.get("x_tool", {}).get("id") == "pre-0"
+                    and ev["x_tool"]["status"] == "done"]
+            assert done and "detail" not in done[0], "web_search has no detail in the loop either (its sources go to x_web_sources)"
+            assert any("x_web_sources" in ev for ev in sse(r.text) if isinstance(ev, dict))
+            assert "loop_warning" in engine.seen[1]["messages"][-1]["content"], "a repeat of the prefetched search is flagged"
+        with Env(enabled=False) as e, ChatEngine(turns=[chat_action_deltas(name="reply", args='{"text":"Noon."}')]) as engine:
+            r = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "messages": [{"role": "user", "content": "What time is it right now?"}]})
+            done = [ev["x_tool"] for ev in sse(r.text) if isinstance(ev, dict) and ev.get("x_tool", {}).get("id") == "pre-0"
+                    and ev["x_tool"]["status"] == "done"]
+            assert done and done[0]["name"] == "get_current_datetime" and done[0].get("detail"), "the clock's detail, as the loop shows it"
+    finally:
+        studio.services.harness._chat_read_tool, decide.preflight = real_read, real_pre
         app.save_settings(original)
 
 

@@ -42,8 +42,10 @@ class Decider:
 
     def warm(self):
         try:
-            self.model = self._load(MODEL)
-            self.model.system_one("Hello.", {"warm": {"type": "noul", "instructions": "Is this a greeting?"}})
+            with self.lock:                          # loaded and warmed first: /health says loaded only once it is ready
+                model = self._load(MODEL)
+                model.system_one("Hello.", {"warm": {"type": "noul", "instructions": "Is this a greeting?"}})
+            self.model = model
         except Exception as e:                       # reported on /health; the backend falls back to its rules
             self.model, self.error = None, f"{type(e).__name__}: {str(e)[:200]}"
 
@@ -110,7 +112,12 @@ def make_handler(decider):
                 return
             if path != "/decide":
                 return self._send(404, {"error": "not found"})
-            size = int(self.headers.get("content-length") or 0)
+            try:
+                size = int(self.headers.get("content-length") or 0)
+            except ValueError:
+                size = -1
+            if size < 0:
+                return self._send(400, {"error": "bad content-length"})
             if size > 32_000:
                 return self._send(413, {"error": "request too large"})
             try:

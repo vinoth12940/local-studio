@@ -161,8 +161,8 @@ class _MainText(HTMLParser):
         if tag in _BLOCKS: self._flush()
 
     def handle_data(self, value):
+        if self.hidden or self.size > 200000: return            # before the title: an <svg><title> is an icon's name
         if self.in_title: self.title.append(value); return
-        if self.hidden or self.size > 200000: return
         self.block["text"].append(value)
         self.block["scoped"] = self.block["scoped"] or self.scope > 0
         if self.link: self.block["link"] += len(value.strip())

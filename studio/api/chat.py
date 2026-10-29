@@ -136,6 +136,14 @@ def _chat_computer_run(raw, expanded, model_id, chat_id, tool_evidence=""):
                       "context": clip_agent_context("\n".join(context[-6:]))})
 
 
+def _text_of(message):
+    """A message's text: its string content, or its text parts joined (a turn with attachments)."""
+    content = message.get("content")
+    if isinstance(content, list):
+        return " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text").strip()
+    return content.strip() if isinstance(content, str) else ""
+
+
 def _model_result(name, result):
     """What the model reads of a tool result. A personal-file search offers candidates, not full document evidence: no
     long paths or passages to prefill again and again before the model reads the actual files."""
@@ -246,7 +254,7 @@ async def chat(request: Request):
     base_tools = harness.chat_tools(flag("harness.web_fast"))
     all_chat_tools = base_tools + mcp_schemas if mcp_schemas else base_tools
     if flag("harness.skills"):
-        all_chat_tools += harness.CHAT_RESOURCE_TOOLS
+        all_chat_tools = all_chat_tools + harness.CHAT_RESOURCE_TOOLS    # a new list: += would grow the shared CHAT_TOOLS
     body["tools"] = all_chat_tools
     body["messages"] = messages
     if policy.enabled:
@@ -291,7 +299,8 @@ async def chat(request: Request):
 
     async def relay():
         # voice.decide: d1 (or the word rules) decides now, while any engine switch runs, whether to search before round one.
-        said = [msg["content"] for msg in raw_messages if msg.get("role") == "user" and isinstance(msg.get("content"), str)]
+        said = [_text_of(msg) for msg in raw_messages if msg.get("role") == "user"]
+        said = said if raw_messages and raw_messages[-1].get("role") == "user" and said[-1] else []   # only this turn's words
         preflight = (asyncio.ensure_future(asyncio.to_thread(decide.preflight, said[-1], said[-2] if len(said) > 1 else None))
                      if voice_note and not warm and said and flag("voice.decide") else None)
         # The agent holds the machine: only its own engine may answer (requests run one at a time).
@@ -354,6 +363,9 @@ async def chat(request: Request):
                 # as the first tool result, so it answers from evidence in what would have been its second round.
                 pre_name, pre_args = pick
                 summary = _chat_tool_summary(pre_name, pre_args)
+                if flag("security.redact"):
+                    summary = redact_obj(summary)
+                call_counts[(pre_name, json.dumps(pre_args, sort_keys=True, ensure_ascii=False))] = 1   # a repeat gets the loop warning
                 yield _sse({"x_tool": {"id": "pre-0", "name": pre_name, "status": "running", "summary": summary}})
                 def _prefetch():
                     try:
@@ -370,8 +382,11 @@ async def chat(request: Request):
                 body["messages"] = body["messages"] + [{"role": "assistant", "content": "", "tool_calls": [call]},
                                                        {"role": "tool", "tool_call_id": "prefetch-0", "name": pre_name,
                                                         "content": json.dumps(_model_result(pre_name, result), ensure_ascii=False)}]
+                detail = _chat_tool_detail(pre_name, pre_args, result, None)
+                if flag("security.redact"):
+                    detail = redact_obj(detail)
                 yield _sse({"x_tool": {"id": "pre-0", "name": pre_name, "status": "error" if result.get("error") else "done", "summary": summary,
-                                       **({"error": result["error"]} if result.get("error") else {})}})
+                                       **({"detail": detail} if detail else {}), **({"error": result["error"]} if result.get("error") else {})}})
                 found = result.get("results", []) if pre_name == "web_search" else result.get("items", []) if pre_name == "news_search" else []
                 if found:
                     yield _sse({"x_web_sources": [{"url": item["url"], "title": item.get("title") or item["url"]} for item in found if item.get("url")]})
