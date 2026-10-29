@@ -621,6 +621,58 @@ def voice_starts_even_when_d1_cannot():
 
 
 @check
+def d1_starts_once_and_only_after_its_whole_download():
+    """Found in 1.7.1: two starts raced; the second saw config.json (the download's first small file), launched d1 before
+    model.safetensors arrived, and d1 sat failed ("IncompleteSnapshotError") while the status said "loading"."""
+    import tempfile
+    from studio.services import decide, models
+    hub, real_hub = Path(tempfile.mkdtemp()), models.HF_HUB
+    snap = hub / ("models--" + studio_config_decide_model().replace("/", "--")) / "snapshots" / "abc"
+    snap.mkdir(parents=True)
+    (snap / "config.json").write_text("{}")
+    models.HF_HUB = hub
+    saved = (decide.flag, decide.system_memory, decide._fetch_model, decide._spawn, decide._process, decide._health, decide.stop_decide)
+    spawned, stopped, seen_while_fetching = [], [], []
+    try:
+        assert decide._model_present() is False, "config.json alone is not a downloaded model"
+        (snap / "model.safetensors").write_text("w")
+        (snap.parent.parent / "blobs").mkdir()
+        (snap.parent.parent / "blobs" / "x.incomplete").write_text("")
+        assert decide._model_present() is False, "a file still arriving means the download is not done"
+        (snap.parent.parent / "blobs" / "x.incomplete").unlink()
+        (snap / "model.safetensors").unlink()
+        decide.flag = lambda name: name == "voice.decide"
+        decide.system_memory = lambda: {"free_percent": 40}
+        def fetch():
+            seen_while_fetching.append(decide.mode())
+            time.sleep(0.3)
+            (snap / "model.safetensors").write_text("w")
+            return True
+        decide._fetch_model = fetch
+        decide._spawn = lambda: spawned.append(1)
+        decide._process = lambda: bool(spawned)
+        decide._health = lambda: None
+        decide.stop_decide = lambda: stopped.append(1)
+        starts = [threading.Thread(target=decide.start_decide) for _ in range(2)]
+        for t in starts: t.start()
+        for t in starts: t.join(5)
+        assert spawned == [1], "two starts at once launch d1 once, after the download"
+        assert seen_while_fetching[0] == {"mode": "rules", "reason": "downloading d1-2B (1.35 GB)"}, seen_while_fetching
+        decide._health = lambda: {"ok": True, "loaded": False, "error": "IncompleteSnapshotError: 1 file(s) are missing"}
+        assert decide.mode() == {"mode": "rules", "reason": "d1 failed to load; it retries at the next Start"}
+        decide.start_decide()
+        assert stopped == [1] and spawned == [1, 1], "a d1 that failed to load is restarted at the next Start"
+    finally:
+        (decide.flag, decide.system_memory, decide._fetch_model, decide._spawn, decide._process, decide._health, decide.stop_decide) = saved
+        models.HF_HUB = real_hub
+
+
+def studio_config_decide_model():
+    import studio.config as c
+    return c.DECIDE_MODEL
+
+
+@check
 def decide_launcher_and_stop_patterns_agree_and_never_look_like_the_vision_engine():
     from studio.services import decide
     import studio.config as c

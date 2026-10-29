@@ -11,6 +11,7 @@ import re
 import secrets
 import signal
 import subprocess
+import threading
 import time
 
 import httpx
@@ -19,7 +20,7 @@ from studio import config
 from studio.config import DSPARK_PY, HF_CLI, LOGS, ROOT
 from studio.infra.logs import open_log
 from studio.infra.system import _pid_alive, _read_pid, system_memory
-from studio.services.models import snapshot_file
+from studio.services.models import _incomplete, snapshot_file
 from studio.storage.flags import flag
 
 QUESTIONS = {
@@ -131,6 +132,7 @@ def prefetch_call(plan, text, web_fast, files=False):
 DECIDE_PATTERN = rf"^[^ ]*python[^ ]* decide.py --port {config.DECIDE_PORT}"   # stop.sh has the same pattern: keep in sync
 MIN_FREE_PERCENT = 20                     # macOS's free percentage (it counts reclaimable pages); 40 % on 28 Oct with Qwen at 256K
 _last = {"reason": ""}                    # why the last start did not run d1, for the Voice view
+_start_lock = threading.Lock()            # Voice's enable job and Start can both start d1: one at a time, so one download, one d1
 
 
 def decide_command():
@@ -139,7 +141,9 @@ def decide_command():
 
 
 def _model_present():
-    return snapshot_file(config.DECIDE_MODEL, "config.json") is not None
+    """d1's weights are on disk: model.safetensors is in the snapshot and no file is still arriving (a download writes its
+    small files, config.json among them, long before the weights)."""
+    return snapshot_file(config.DECIDE_MODEL, "model.safetensors") is not None and not _incomplete(config.DECIDE_MODEL)
 
 
 def _fetch_model():
@@ -179,12 +183,23 @@ def start_decide():
     if free is not None and free < MIN_FREE_PERCENT:
         _last["reason"] = f"memory: {free}% free"
         return {"mode": "rules", "reason": _last["reason"]}
-    if not _model_present() and not _fetch_model():
-        _last["reason"] = "d1 could not be downloaded (see logs/decide-setup.log)"
-        return {"mode": "rules", "reason": _last["reason"]}
-    _last["reason"] = ""
-    if not _process():
-        _spawn()
+    with _start_lock:
+        if not _model_present():
+            _last["reason"] = "downloading d1-2B (1.35 GB)"
+            if not (_fetch_model() and _model_present()):
+                _last["reason"] = "d1 could not be downloaded (see logs/decide-setup.log)"
+                return {"mode": "rules", "reason": _last["reason"]}
+        _last["reason"] = ""
+        health = _health()
+        if _process() and health and health.get("error"):
+            stop_decide()                     # it failed to load (an incomplete download, a bad file): start it fresh
+            for _ in range(20):
+                if not _process():
+                    break
+                time.sleep(0.25)
+            _spawn()
+        elif not _process():
+            _spawn()
     return mode()
 
 
@@ -206,6 +221,8 @@ def mode():
     health = _health()
     if health and health.get("loaded"):
         return {"mode": "d1", "reason": ""}
-    reason = _last["reason"] or (health.get("error") or "d1 is loading" if health else
-                                 "d1 is loading" if _process() else "d1 is not running")
+    if _last["reason"]:
+        return {"mode": "rules", "reason": _last["reason"]}
+    reason = ("d1 failed to load; it retries at the next Start" if health and health.get("error") else
+              "d1 is loading" if health or _process() else "d1 is not running")
     return {"mode": "rules", "reason": reason}
