@@ -6,7 +6,7 @@ import { lib, loadLibrary } from "../library/library.mjs";
 import { loadAgent, loadSearch, refreshContextWindow } from "../modules.mjs";
 
 // ---------------- settings
-async function loadManage() { loadStorage(); loadVersions(); loadSearch(); loadAgent(); loadMcp(); loadContext(); loadLibrary().then(() => {
+async function loadManage() { loadStorage(); loadVersions(); loadSearch(); loadAgent(); loadMcp(); loadContext(); loadFeatures(); loadLibrary().then(() => {
   const inst = lib.chat.concat(lib.image).filter((m) => m.installed);
   $("modelsSum").textContent = `${inst.length} downloaded · ${human(inst.reduce((a, m) => a + m.size_bytes, 0))} on disk · ${human(lib.disk_free_bytes)} free`;
 }); }
@@ -20,6 +20,23 @@ async function loadContext() {
   $("ctxSetSum").textContent = `${r.value.toLocaleString()} tokens` + (r.effective !== r.value ? ` · ${r.effective.toLocaleString()} for the active model` : "") + (live ? (r.restart_required ? ` · the running engine still uses ${live.toLocaleString()}; it restarts with the new size on your next message` : ` · the running engine uses this size`) : " · applies when the engine next starts");
   $("ctxNotes").innerHTML = (r.notes || []).map((n) => `<div class="row"><div class="grow"><div class="sub">${esc(n)}</div></div></div>`).join("");
 }
+// Voice and web answers: switches for flags in data/settings.json (GET/POST /api/features); each applies without a restart.
+async function loadFeatures() {
+  let r; try { r = await api("/api/features"); } catch { return; }
+  const on = Object.fromEntries(r.features.map((f) => [f.name, f.on]));
+  document.querySelectorAll("#featSet [data-feature]").forEach((sw) => { sw.checked = !!on[sw.dataset.feature]; });
+  $("featDecide").disabled = !on["voice.enabled"];                       // the check runs beside Voice
+  $("featSum").textContent = [on["voice.enabled"] ? (on["voice.decide"] ? "Voice on, with the live-facts check" : "Voice on") : "Voice off",
+    on["harness.web_fast"] ? "faster web answers on" : "faster web answers off"].join(" · ");
+  $("micBtn").hidden = $("navVoice").hidden = !on["voice.enabled"];      // the mic button and the Voice view follow the switch
+}
+document.querySelectorAll("#featSet [data-feature]").forEach((sw) => {
+  sw.onchange = async () => {
+    try { await jpost("/api/features", { name: sw.dataset.feature, on: sw.checked }); toast(`${sw.closest(".row").querySelector(".ttl").textContent} ${sw.checked ? "on" : "off"}`); }
+    catch (err) { toast(err.message); }
+    loadFeatures();
+  };
+});
 $("ctxSelect").onchange = () => { $("ctxCustom").hidden = $("ctxSelect").value !== "custom"; };
 async function saveContext(value) {
   try { const r = await jpost("/api/context-window", { value }); toast(`Context window set to ${r.value.toLocaleString()} tokens`); await loadContext(); refreshContextWindow(); }

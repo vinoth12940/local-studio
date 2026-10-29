@@ -1034,5 +1034,19 @@
   ],
   "path": "/api/voice/events",
   "name": "voice_events"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/features",
+  "name": "features"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/features",
+  "name": "set_feature"
  }
 ]

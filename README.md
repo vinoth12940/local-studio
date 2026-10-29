@@ -102,9 +102,8 @@ SHA-256.
   indexes in the background.
 - **Computer use:** Settings → Computer access. It needs [CuaDriver](https://github.com/trycua/cua) 0.28.2 or newer,
   with its Accessibility and Screen Recording permissions, and Google Chrome.
-- **Voice** *(preview):* add `"voice": {"enabled": true}` to
-  `~/Library/Application Support/Local Studio/data/settings.json`, then reopen the app. See the
-  [guide](docs/GUIDE.md#voice-preview).
+- **Voice** *(preview):* Settings → Voice and web answers. The same section turns on the live-facts check for voice
+  and faster web answers. See the [guide](docs/GUIDE.md#voice-preview).
 
 ### Handy shortcuts
 

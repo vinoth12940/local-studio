@@ -109,10 +109,11 @@ A hands-free conversation with the same agent:
 Speech is recognized with Parakeet TDT 0.6B v3 and spoken with Phonon, both on this Mac; audio is never written to disk.
 The microphone opens only while Voice is on. Voice speaks English.
 
-Voice is off by default while it is in preview. To turn it on:
-1. Quit Local Studio.
-2. Add `"voice": {"enabled": true}` to `~/Library/Application Support/Local Studio/data/settings.json`.
-3. Open Local Studio again.
+Voice is off by default while it is in preview. Turn it on in **Settings → Voice and web answers**; no restart is needed.
+The same section has two more switches:
+- **Live-facts check for voice:** before a spoken reply, Liquid's d1-2B decides in about 0.1 s whether the question needs
+  a search, and that search starts at once (LFM Open License v1.0; a 1.35 GB download the first time Voice starts with it).
+- **Faster web answers:** a web search also reads the top two pages, and news comes from dated headlines.
 
 **Voice** then appears in the sidebar. The first time you open it, it downloads its speech models once, and macOS asks
 for microphone access.

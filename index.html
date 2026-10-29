@@ -1287,6 +1287,16 @@ dialog::backdrop { background: var(--overlay); }
             <button class="btn sm danger" id="srDelete">Delete index</button></div>
         </div>
 
+        <div class="section" id="featSet">
+          <div class="sh"><div><h3>Voice and web answers</h3><p id="featSum">–</p></div></div>
+          <div class="row"><div class="grow"><div class="ttl">Voice</div><div class="sub">Talk to Local Studio and hear it answer. The microphone, speech recognition and voices stay on this Mac; the first start downloads them.</div></div>
+            <label class="switch"><input type="checkbox" id="featVoice" data-feature="voice.enabled"><span></span></label></div>
+          <div class="row"><div class="grow"><div class="ttl">Live-facts check for voice</div><div class="sub">Before a spoken reply, Liquid's d1-2B decides in about 0.1 s whether the question needs a search, so live questions start from real sources. LFM Open License v1.0; a 1.35 GB download on first use. Needs Voice.</div></div>
+            <label class="switch"><input type="checkbox" id="featDecide" data-feature="voice.decide"><span></span></label></div>
+          <div class="row"><div class="grow"><div class="ttl">Faster web answers</div><div class="sub">A web search also reads the top two pages, and news comes from dated headlines, so answers arrive about three times faster with their sources and dates.</div></div>
+            <label class="switch"><input type="checkbox" id="featWebFast" data-feature="harness.web_fast"><span></span></label></div>
+        </div>
+
         <div class="section" id="ctxSet">
           <div class="sh"><div><h3>Context window</h3><p id="ctxSetSum">–</p></div></div>
           <div class="row"><div class="grow"><div class="ttl">Maximum context window</div>
