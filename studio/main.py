@@ -12,6 +12,7 @@ from studio.api import attachments as api_attachments
 from studio.api import chat as api_chat
 from studio.api import chats as api_chats
 from studio.api import engines as api_engines
+from studio.api import features as api_features
 from studio.api import images as api_images
 from studio.api import mcp as api_mcp
 from studio.api import memory as api_memory
@@ -117,6 +118,7 @@ MODULES = (
     "studio.services.updates",
     "studio.api.updates",
     "studio.api.storage",
+    "studio.api.features",
 )
 for _m in MODULES:
     importlib.import_module(_m)
@@ -136,7 +138,7 @@ for _router in (api_system.router, api_models.router, api_engines.router, api_ch
                 api_processes.router, api_terminal.router, api_mcp.router, api_workspace.router, api_attachments.router,
                 api_chats.router, api_images.router, api_search.router, api_agent.router, api_updates.router,
                 api_storage.router, api_workflow.router, api_reviews.router, api_triggers.router, api_worktrees.router, api_workflow_runs.router,
-                api_voice.router):
+                api_voice.router, api_features.router):
     app.include_router(_router)
 
 

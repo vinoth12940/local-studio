@@ -1269,6 +1269,38 @@ def image_jobs_check_memory_and_never_stop_the_chat_model_without_consent():
 
 
 @check
+def settings_switches_turn_voice_and_web_features_on_and_off():
+    """Voice, the live-facts check and faster web answers are flags in data/settings.json; Settings shows them as switches.
+    Only these three can be switched from the page, and turning one off stops what it runs."""
+    from fastapi.testclient import TestClient
+    import studio.services.decide as decide
+    import studio.services.voice as services_voice
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    _with_settings({"harness": {"coding_workflow": True}, "voice": {"enabled": True}})
+    stopped = []
+    saved = (services_voice._stop_voice, decide.stop_decide)
+    services_voice._stop_voice = lambda: stopped.append("voice")
+    decide.stop_decide = lambda: stopped.append("decide")
+    try:
+        r = c.get("/api/features")
+        assert r.status_code == 200, r.text
+        assert {f["name"]: f["on"] for f in r.json()["features"]} == {"voice.enabled": True, "voice.decide": False, "harness.web_fast": False}
+        assert c.post("/api/features", json={"name": "harness.web_fast", "on": True}).json() == {"name": "harness.web_fast", "on": True}
+        assert app.flag("harness.web_fast") is True and app.load_settings()["harness"]["coding_workflow"] is True, "other settings stay"
+        assert c.post("/api/features", json={"name": "voice.decide", "on": True}).json()["on"] is True and not stopped
+        assert app.load_settings()["voice"] == {"enabled": True, "decide": True}
+        c.post("/api/features", json={"name": "voice.decide", "on": False})
+        assert stopped == ["decide"], "switching the check off unloads d1"
+        c.post("/api/features", json={"name": "voice.enabled", "on": False})
+        assert stopped == ["decide", "voice"] and app.flag("voice.enabled") is False, "switching Voice off stops the voice service"
+        assert c.post("/api/features", json={"name": "security.api_token", "on": False}).status_code == 400, "only these switches"
+        assert c.post("/api/features", json={"name": "harness.web_fast", "on": "yes"}).status_code == 400
+    finally:
+        services_voice._stop_voice, decide.stop_decide = saved
+        app.SETTINGS.unlink(missing_ok=True)
+
+
+@check
 def lfm3_runs_on_mlx_vlm_with_its_own_sampling_and_waits_for_new_enough_engines():
     """LFM3's MLX checkpoints carry an auto_map, which mlx-dspark serve refuses, and mlx-lm has no lfm3 module: they run on the
     mlx-vlm engine even for text. LFM3 arrived in mlx-vlm 0.7.11 and llama.cpp b11960; on older engines the user is told to

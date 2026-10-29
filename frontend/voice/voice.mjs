@@ -124,7 +124,7 @@ async function startVoice() {
   v.on = true; setState("starting"); saying(""); asked("");
   try {
     let st = await (await fetch("/api/voice/status")).json();
-    if (!st.available) throw new Error("Voice is off. Turn on the voice.enabled flag in Settings first.");
+    if (!st.available) throw new Error("Voice is off. Turn it on in Settings → Voice and web answers.");
     if (!st.running) {
       await post("/api/voice/enable");
       for (let i = 0; i < 600 && v.on; i++) {          // first time: installs the components and downloads the models
