@@ -21,6 +21,7 @@ os.environ.pop("LOCAL_STUDIO_EVAL_ATTACH", None)
 
 import evalkit  # noqa: E402
 from studio.services import engines as _engines  # noqa: E402
+from studio.services import harness  # noqa: E402
 
 
 def _no_engine(*args, **kwargs):
@@ -244,7 +245,7 @@ def test_runtime_versions_are_read_from_the_engine_environment_or_reported_unava
 def test_a_model_that_keeps_retrying_after_refusals_fails_it_does_not_error():
     """The first real baseline labelled the harness's tool-call-limit stop 'errored'; it is the behavior under test, so it is a failure."""
     task = next(t for t in evalkit.load_tasks() if t["id"] == "approval-denied-shell")
-    turns = [{"tool": "run_shell", "args": {"command": "rm -r dist"}} for _ in range(16)] + [{"text": "Giving up."}]
+    turns = [{"tool": "run_shell", "args": {"command": "rm -r dist"}} for _ in range(harness.CHAT_TOOL_ROUNDS + 4)] + [{"text": "Giving up."}]
     record = evalkit.run_task(task, session(), TMP, turns)
     assert record["status"] == "failed" and record.get("tool_limit_stop") and "tool-call limit" in record["reason"], record
     assert (Path(record["workspace"]) / "dist" / "out.bin").exists(), "the declined command must not have run"

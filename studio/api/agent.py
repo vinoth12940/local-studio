@@ -69,6 +69,14 @@ def agent_settings(body: dict = Body(...)):
             if type(v) is not int or not lo <= v <= hi:      # not bool, not float
                 raise HTTPException(400, f"{k} must be a whole number from {lo} to {hi}.")
             a[k] = v
+    if "model" in body:                                      # Model for computer tasks; null: the chat model
+        mid = body["model"]
+        if mid in (None, ""):
+            a.pop("model", None)
+        elif not isinstance(mid, str) or mid not in {m["id"] for m in chat_models()}:
+            raise HTTPException(400, "model must be a chat model's id, or null to use the chat model.")
+        else:
+            a["model"] = mid
     if "tiers" in body:
         t = body["tiers"]
         if not isinstance(t, dict) or not all(isinstance(k, str) and k.strip() and v in _TIER_NAMES for k, v in t.items()):

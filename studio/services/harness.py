@@ -230,7 +230,24 @@ def chat_tools(web_fast):
     for tool in CHAT_TOOLS:
         tools += [WEB_FAST_SEARCH_TOOL, NEWS_SEARCH_TOOL] if tool["function"]["name"] == "web_search" else [tool]
     return tools
-CHAT_TOOL_ROUNDS = 12
+CHAT_TOOL_ROUNDS = 50                 # rounds of tool calls one reply may make, unless Settings → Tool rounds per reply says otherwise
+TOOL_ROUNDS_RANGE = (10, 200)
+
+
+def valid_tool_rounds(value):
+    return isinstance(value, int) and not isinstance(value, bool) and TOOL_ROUNDS_RANGE[0] <= value <= TOOL_ROUNDS_RANGE[1]
+
+
+def tool_rounds():
+    """This reply's limit: data/settings.json "tool_rounds" when it is in range, else the default."""
+    value = load_settings().get("tool_rounds")
+    return value if valid_tool_rounds(value) else CHAT_TOOL_ROUNDS
+ENGINE_ERROR_NOTE = ("Your last reply could not be read by the engine ({error}). If you were calling a tool, call it again "
+                     "with valid arguments: whole numbers as plain digits, text as plain text. Otherwise answer again.")
+TOOL_LIMIT_NOTE = ("This turn has reached its tool-call limit, so no tool can run now: do not call one. In a few short lines, "
+                   "tell the user what you did, what you checked works, and what is still left, claiming nothing you did not "
+                   "check. They can say \"continue\" to let you keep going.")
+SEARCH_RETRY_WAITS = (1.0, 2.0)     # seconds before the second and third try of a DuckDuckGo search
 
 
 _WORKSPACE_INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md", ".localstudio.md", ".claude/CLAUDE.md", ".cursorrules")
@@ -928,6 +945,27 @@ def _news_search(query, since, timezone):
             "untrusted_source_text": True}
 
 
+def _duckduckgo(query):
+    """DuckDuckGo's organic results. Its HTML endpoint answers about 4 ordinary searches in 10 with a "No results found"
+    page or HTTP 202, and the same query a second later has results, so an empty or refused page is tried again."""
+    url, error = "https://html.duckduckgo.com/html/?" + urlencode({"q": query}), None
+    for wait in (0, *SEARCH_RETRY_WAITS):
+        time.sleep(wait)
+        try:
+            _, _, text = services_web._fetch_public_web(url)
+        except (ValueError, httpx.HTTPError) as failed:
+            error = failed
+            continue
+        parser = _WebSearchResults()
+        parser.feed(text)
+        if parser.results:
+            return parser.results
+        error = None
+    if error:
+        raise error
+    return []
+
+
 def _chat_read_tool(name, args, timezone=None):
     """Read-only chat tools. Returns evidence or an explicit error, never a made-up answer."""
     if not isinstance(args, dict): return {"error": "Tool arguments must be a JSON object"}
@@ -961,10 +999,7 @@ def _chat_read_tool(name, args, timezone=None):
             query = args.get("query")
             if not isinstance(query, str) or not query.strip() or len(query) > 500:
                 raise ValueError("web_search needs a query of 1–500 characters")
-            _, _, text = services_web._fetch_public_web("https://html.duckduckgo.com/html/?" + urlencode({"q": query}))
-            parser = _WebSearchResults()
-            parser.feed(text)
-            results = parser.results
+            results = _duckduckgo(query)
             sites = re.findall(r"(?<!\S)site:([\w.-]+)", query, re.I)
             if len(sites) == 1:       # honor a single explicit domain filter even if the provider ignores it
                 domain = sites[0].lower().strip(".")
@@ -1004,9 +1039,7 @@ def _chat_read_tool(name, args, timezone=None):
         if name == "read_file" and args.get("path") is not None and args.get("file_id") is None:
             return _read_local_path(args.get("path"), args.get("start_line", 1), args.get("max_lines", 160),
                                     args.get("start_page", 1), args.get("max_pages", 2))
-        if name == "search_files" and (args.get("scope") == "workspace" or (flag("harness.coding_workflow") and _chat_workspace.get() and args.get("scope") != "indexed")):
-            if not _chat_workspace.get():
-                raise ValueError("Choose an active workspace before searching scope=workspace")
+        if name == "search_files" and _chat_workspace.get() and (args.get("scope") == "workspace" or (flag("harness.coding_workflow") and args.get("scope") != "indexed")):
             query = args.get("query")
             if not isinstance(query, str) or not query.strip() or len(query) > 500:
                 raise ValueError("Use a short workspace filename or text to search")
@@ -1027,6 +1060,8 @@ def _chat_read_tool(name, args, timezone=None):
                 if not isinstance(query, str) or not query.strip() or len(query) > 500 or sort not in ("relevance", "newest"):
                     raise ValueError("Use a short file name/topic and sort=relevance or newest")
                 result = services_search._search_proxy("POST", "/search", json={"query": query, "sort": sort, "limit": 12}).json()
+                if args.get("scope") == "workspace":        # small models ask for it in plain chats: no workspace means the index
+                    result["scope_note"] = "No workspace is open in this chat, so this searched your indexed files instead."
                 return {**result, "sort": sort, "note": "These are indexed candidates, not proof of the latest document. Compare document_date evidence and read_file. mtime is only the file's modification time. Missing or unindexed files may be newer."}
             fid = args.get("file_id")
             if type(fid) is not int or fid < 1: raise ValueError("read_file needs a file_id from search_files or a file path")
@@ -1314,7 +1349,7 @@ def _opens_thinking(body):
 
 async def _chat_engine_turn(url, body, state):
     """One streamed model turn. Native calls are assembled without interpreting prose as actions."""
-    state.update(calls={}, content="", reasoning="", first=None, n_out=0, timings=None, usage=None, finish=None)
+    state.update(calls={}, content="", reasoning="", first=None, n_out=0, timings=None, usage=None, finish=None, engine_error=None)
     split = _PromptOpenedThinking() if _opens_thinking(body) else None
     body = {**body, "messages": fold_system_messages(body.get("messages") or [])}
     async with httpx.AsyncClient(timeout=None) as client:
@@ -1326,6 +1361,12 @@ async def _chat_engine_turn(url, body, state):
                 if line[5:].strip() == "[DONE]": break
                 try: event = json.loads(line[5:].strip())
                 except ValueError: continue
+                if event.get("error") and not event.get("choices"):
+                    # The engine failed mid-reply (mlx-vlm's tool parser raises on a non-number for an integer parameter):
+                    # the caller decides whether the model gets another try, so the UI does not end the turn on it here.
+                    error = event["error"]
+                    state["engine_error"] = str(error.get("message") or error) if isinstance(error, dict) else str(error)
+                    continue
                 delta = ((event.get("choices") or [{}])[0] or {}).get("delta") or {}
                 if split and delta:
                     delta = split.feed(delta)

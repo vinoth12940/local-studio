@@ -3,11 +3,12 @@ import { $, api, confirmBox, esc, human, jpost, toast } from "../core/util.mjs";
 import { listState, loadChats } from "../chat/list.mjs";
 import { chDetach } from "../chat/computer.mjs";
 import { lib, loadLibrary } from "../library/library.mjs";
-import { loadAgent, loadSearch, refreshContextWindow } from "../modules.mjs";
+import { agRenderModel, loadAgent, loadSearch, refreshContextWindow } from "../modules.mjs";
 
 // ---------------- settings
-async function loadManage() { loadStorage(); loadVersions(); loadSearch(); loadAgent(); loadMcp(); loadContext(); loadFeatures(); loadLibrary().then(() => {
+async function loadManage() { loadStorage(); loadVersions(); loadSearch(); loadAgent(); loadMcp(); loadContext(); loadToolRounds(); loadFeatures(); loadLibrary().then(() => {
   const inst = lib.chat.concat(lib.image).filter((m) => m.installed);
+  agRenderModel();
   $("modelsSum").textContent = `${inst.length} downloaded · ${human(inst.reduce((a, m) => a + m.size_bytes, 0))} on disk · ${human(lib.disk_free_bytes)} free`;
 }); }
 // Maximum context window. The engine keeps the window it started with, so a change applies on the next engine start.
@@ -20,6 +21,19 @@ async function loadContext() {
   $("ctxSetSum").textContent = `${r.value.toLocaleString()} tokens` + (r.effective !== r.value ? ` · ${r.effective.toLocaleString()} for the active model` : "") + (live ? (r.restart_required ? ` · the running engine still uses ${live.toLocaleString()}; it restarts with the new size on your next message` : ` · the running engine uses this size`) : " · applies when the engine next starts");
   $("ctxNotes").innerHTML = (r.notes || []).map((n) => `<div class="row"><div class="grow"><div class="sub">${esc(n)}</div></div></div>`).join("");
 }
+// Tool rounds per reply: how many rounds of tool calls one reply may make (GET/POST /api/tool-rounds); applies from the next message.
+async function loadToolRounds() {
+  let r; try { r = await api("/api/tool-rounds"); } catch { return; }
+  Object.assign($("roundsInput"), { value: r.value, min: r.min, max: r.max });
+  $("roundsSum").textContent = `${r.value} rounds per reply${r.value === r.default ? " (default)" : ""} · ${r.min} to ${r.max}`;
+}
+async function saveToolRounds(value) {
+  try { const r = await jpost("/api/tool-rounds", { value }); toast(`Tool rounds per reply set to ${r.value}`); }
+  catch (err) { toast(err.message); }
+  loadToolRounds();
+}
+$("roundsSave").onclick = () => saveToolRounds(Number($("roundsInput").value));
+$("roundsReset").onclick = () => saveToolRounds(null);
 // Voice and web answers: switches for flags in data/settings.json (GET/POST /api/features); each applies without a restart.
 async function loadFeatures() {
   let r; try { r = await api("/api/features"); } catch { return; }

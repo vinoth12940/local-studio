@@ -73,6 +73,14 @@
    ]
   },
   {
+   "name": "SEARCH_RETRY_WAITS",
+   "destination": "studio.services.harness",
+   "patched": "rebind",
+   "suites": [
+    "check_agent.py"
+   ]
+  },
+  {
    "name": "SEARCH_URL",
    "destination": "studio.config",
    "patched": "rebind",

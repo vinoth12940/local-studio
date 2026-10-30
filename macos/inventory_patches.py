@@ -30,7 +30,7 @@ DESTINATION = {
     "_download": "studio.services.models", "downloads": "studio.services.models", "model_installed": "studio.services.models",
     "_engine_ready": "studio.services.engines", "_stop_engine": "studio.services.engines", "native_context": "studio.services.models",
     "engine_state": "studio.services.engines", "ensure_engine": "studio.services.engines",
-    "_chat_sessions": "studio.services.harness", "_chat_read_tool": "studio.services.harness",
+    "_chat_sessions": "studio.services.harness", "_chat_read_tool": "studio.services.harness", "SEARCH_RETRY_WAITS": "studio.services.harness",
     "_fetch_public_web": "studio.services.web",
     "jobs": "studio.services.images",
     "_enable_search": "studio.services.search", "_search_process": "studio.services.search", "_search_proxy": "studio.services.search",

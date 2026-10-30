@@ -1307,6 +1307,14 @@ dialog::backdrop { background: var(--overlay); }
           <div id="ctxNotes"></div>
         </div>
 
+        <div class="section" id="roundsSet">
+          <div class="sh"><div><h3>Tool rounds</h3><p id="roundsSum">–</p></div></div>
+          <div class="row"><div class="grow"><div class="ttl">Tool rounds per reply</div>
+            <div class="sub">How many rounds of tool calls (reading files, running commands, searching) one reply may make before it stops and tells you what is done and what is left. More rounds let long coding tasks finish; a model stuck in a loop uses them all. Applies from your next message.</div></div>
+            <input class="agnum" id="roundsInput" type="number" min="10" max="200" step="1" aria-label="Tool rounds per reply">
+            <button class="btn sm" id="roundsSave">Save</button><button class="btn sm" id="roundsReset">Reset</button></div>
+        </div>
+
         <div class="section" id="agSet">
           <div class="sh"><div><h3>Computer access</h3><p id="agSetSum">–</p></div>
             <label class="switch"><input type="checkbox" id="agEnable"><span></span></label></div>
@@ -1326,6 +1334,8 @@ dialog::backdrop { background: var(--overlay); }
             <div class="row" id="agLimits"><div class="grow"><div class="ttl">Limits</div><div class="sub">A task stops at whichever comes first. Time spent waiting for you does not count.</div></div>
               <label class="field" style="flex-direction:row; align-items:center; gap:8px">Steps<input class="agnum" id="agSteps" type="number" min="1" max="200" step="1"></label>
               <label class="field" style="flex-direction:row; align-items:center; gap:8px">Minutes<input class="agnum" id="agMins" type="number" min="1" max="120" step="1"></label></div>
+            <div class="row"><div class="grow"><div class="ttl">Model for computer tasks</div><div class="sub">Small chat models such as LFM3 1.7B can't operate a browser reliably. A task switches to this model, and chat switches back on your next message.</div></div>
+              <div class="sel sm"><select id="agModel" aria-label="Model for computer tasks"></select></div></div>
             <div class="row"><div class="grow"><div class="ttl">Browser profile</div><div class="sub">The sign-ins and cookies the agent's browser keeps. Your own browser is not touched.</div></div>
               <button class="btn sm danger" id="agReset">Reset</button></div>
           </div>
