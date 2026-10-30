@@ -10,7 +10,7 @@ The backend lives in studio/. This file is the entrypoint that `uvicorn app:app`
 and the process patterns in stop.sh) and the module the check suites import.
 """
 # macos/build.sh and release.sh read the version from this line with sed; studio/config.py parses it from here too.
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.7.3"
 
 from studio.main import app, owner_module as _owner_module  # noqa: E402,F401
 

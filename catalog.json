@@ -109,7 +109,8 @@
         "top_k": 50,
         "repetition_penalty": 1.1
       },
-      "blurb": "Liquid AI's tiny agent model: trained for tool use and agent work, with a 256K context. About 2 GB, so it leaves room for everything else."
+      "blurb": "Liquid AI's tiny agent model: trained for tool use and agent work, with a 256K context. About 2 GB, so it leaves room for everything else.",
+      "thinking_preopened": true
     },
     {
       "id": "lfm3-vl-2b",
@@ -131,7 +132,8 @@
         "min_p": 0.0,
         "repetition_penalty": 1.1
       },
-      "blurb": "Liquid AI's small vision model: reads photos, charts and screenshots, finds objects, and thinks before it answers."
+      "blurb": "Liquid AI's small vision model: reads photos, charts and screenshots, finds objects, and thinks before it answers.",
+      "thinking_preopened": true
     },
     {
       "id": "gguf-qwen3-coder-30b",
