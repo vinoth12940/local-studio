@@ -5,6 +5,7 @@ Moved from app.py in the refactor's P1 split.
 
 import fnmatch
 import os
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException
@@ -89,6 +90,54 @@ def api_workspace_files(workspace: str | None = None, q: str = "", limit: int = 
             scored.append((sc, item))
     scored.sort(key=lambda pair: pair[0])
     return {"workspace": str(base), "items": [pair[1] for pair in scored[:cap]]}
+
+
+TREE_CAP = 1000
+
+
+@router.get("/api/workspace/tree")
+def api_workspace_tree(workspace: str | None = None, dir: str = ""):
+    """One folder of the Code view's explorer tree: its folders, then its files, hidden by the same rules as the file
+    search. Only folders inside the workspace."""
+    try:
+        base = (_harness_path_fence(workspace, write=False) if workspace else _harness_root()).resolve()
+        target = _harness_path_fence(str(base / dir), write=False).resolve() if dir else base
+    except ValueError as err:
+        raise HTTPException(400, str(err))
+    if not target.is_relative_to(base):
+        raise HTTPException(400, "Only folders inside the workspace can be listed")
+    if not target.is_dir():
+        raise HTTPException(404, f"Folder not found: {dir}")
+    entries = []
+    for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        name, is_dir = child.name, child.is_dir()
+        if is_dir and (name.startswith(".") or name in _HARNESS_SKIP_DIRS or name in _HARNESS_SENSITIVE_NAMES
+                       or name.lower().endswith(".app") or child.is_symlink()):
+            continue
+        if not is_dir and ((name.startswith(".") and name not in _WORKSPACE_INSTRUCTION_FILES)
+                           or any(fnmatch.fnmatch(name.lower(), g) for g in _HARNESS_SECRET_GLOBS)):
+            continue
+        try:
+            size = None if is_dir else child.stat(follow_symlinks=False).st_size
+        except OSError:
+            continue
+        entries.append({"name": name, "path": child.relative_to(base).as_posix(), "type": "dir" if is_dir else "file", "size": size})
+        if len(entries) >= TREE_CAP:
+            break
+    return {"workspace": str(base), "dir": target.relative_to(base).as_posix() if target != base else "",
+            "entries": entries, "truncated": len(entries) >= TREE_CAP}
+
+
+def _committed_text(target):
+    """The file as of the last commit, for the Code view's side-by-side diff; None when it is new, untracked, too large,
+    binary, or not in a git repository."""
+    try:
+        res = subprocess.run(["git", "--no-pager", "show", f"HEAD:./{target.name}"], cwd=target.parent, capture_output=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode or len(res.stdout) > 512_000 or b"\x00" in res.stdout[:4096]:
+        return None
+    return res.stdout.decode("utf-8", errors="replace")
 
 
 @router.get("/api/workspace/info")
@@ -178,6 +227,7 @@ def api_workspace_read_file(path: str, workspace: str | None = None):
         "syntax_check": diag.get("syntax_check", "skipped"),
         "syntax_ok": diag.get("syntax_ok", True),
         "diff": df.get("diff", ""),
+        "head": _committed_text(target),
     }
 
 

@@ -6541,6 +6541,42 @@ def chat_resume_flag_adds_ids_without_changing_payloads_or_reposting():
     streams._STREAMS.clear()
 
 @check
+def code_view_lists_one_folder_and_returns_the_committed_version():
+    """The VS Code-style Code view: its explorer tree loads one folder at a time (the fuzzy file search stops at 100 files)
+    with the same hiding rules, never outside the workspace, and a file comes with its last committed text so a diff can
+    be shown side by side (None when the file is new or the folder has no git)."""
+    import shutil
+    import subprocess
+    ws = TMP / "code-tree"
+    shutil.rmtree(ws, ignore_errors=True)
+    (ws / "src" / "deep").mkdir(parents=True)
+    (ws / "node_modules" / "x").mkdir(parents=True)
+    (ws / "src" / "app.py").write_text("print(1)\n")
+    (ws / "README.md").write_text("# hi\n")
+    (ws / ".env").write_text("SECRET=1")
+    (ws / "server.pem").write_text("key")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+    subprocess.run(["git", "init", "-q"], cwd=ws, check=True)
+    subprocess.run(git + ["add", "src/app.py", "README.md"], cwd=ws, check=True)
+    subprocess.run(git + ["commit", "-qm", "one"], cwd=ws, check=True)
+    (ws / "src" / "app.py").write_text("print(2)\n")
+    (ws / "src" / "new.py").write_text("x = 1\n")
+    with Env() as e:
+        r = e.c.get("/api/workspace/tree", params={"workspace": str(ws)}).json()
+        assert [(x["name"], x["type"]) for x in r["entries"]] == [("src", "dir"), ("README.md", "file")], r
+        r = e.c.get("/api/workspace/tree", params={"workspace": str(ws), "dir": "src"}).json()
+        assert [(x["path"], x["type"]) for x in r["entries"]] == [("src/deep", "dir"), ("src/app.py", "file"), ("src/new.py", "file")], r
+        for outside in ("..", "../..", "/etc", "src/../.."):
+            assert e.c.get("/api/workspace/tree", params={"workspace": str(ws), "dir": outside}).status_code == 400, outside
+        f = e.c.get("/api/workspace/file", params={"workspace": str(ws), "path": "src/app.py"}).json()
+        assert f["content"] == "print(2)\n" and f["head"] == "print(1)\n", f
+        assert e.c.get("/api/workspace/file", params={"workspace": str(ws), "path": "src/new.py"}).json()["head"] is None
+    shutil.rmtree(ws / ".git")
+    with Env() as e:
+        assert e.c.get("/api/workspace/file", params={"workspace": str(ws), "path": "src/app.py"}).json()["head"] is None
+
+
+@check
 def search_files_without_a_workspace_searches_the_index():
     """Found on 1.7.2 with LFM3: asked to find a passport in a chat with no Code workspace open, it called search_files with
     scope=workspace and got "Choose an active workspace" (twice, in two chats). With no workspace, that is the index."""

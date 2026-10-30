@@ -268,6 +268,10 @@ function turnHTML(m, i, live = false) {
         ? `<span class="undo-done">Turn reverted</span>`
         : `<button class="linkbtn undo-btn" data-undo-turn="${esc(m.checkpoint.turn_id)}" title="Revert all ${m.checkpoint.files?.length || 1} file edit(s) from this turn">Revert turn (${m.checkpoint.count || m.checkpoint.files?.length || 1})</button>`)
     : "";
+  const files = m.checkpoint?.files || [], n = m.checkpoint?.count || files.length || 1;
+  const changes = !live && m.checkpoint?.turn_id && !m.checkpoint.undone
+    ? `<div class="chchanges"><span class="nm" title="${esc(files.join(", "))}">${n} file${n === 1 ? "" : "s"} changed${files.length ? ` · ${esc(files.join(", "))}` : ""}</span><button class="btn sm" data-review-files="${esc(files.join("\n"))}">Review</button><button class="btn sm undo-btn" data-undo-turn="${esc(m.checkpoint.turn_id)}" title="Revert every file edit from this turn">Undo</button></div>`
+    : "";
   const actions = live ? "" : `<div class="actions"><button class="iconbtn" data-act="copy" title="Copy">${icon("i-copy")}</button>${m.agent_run ? "" : `<button class="iconbtn" data-act="regen" title="Regenerate">${icon("i-redo")}</button>`}${ckptHTML}${perfLine(m.stats)}</div>${perfGrid(m.stats)}`;
   const resume = m.stream_pending && m.stream_id && !live ? `<button class="btn sm" data-resume-stream>Resume reply</button>` : "";
   const agentTail = (agentRid ? `<div class="agtask"><button class="linkbtn" data-agview="${esc(agentRid)}">Task · view steps</button></div>` : "")
@@ -276,7 +280,7 @@ function turnHTML(m, i, live = false) {
   const stepsBlock = hasRounds
     ? `${chPlanHTML(m)}${chRoundsHTML(m)}${thoughtHTML(m, live)}`
     : `${thoughtHTML(m, live)}${chPlanHTML(m)}${chToolsHTML(m)}`;
-  return `<div class="turn bot" data-i="${i}">${stepsBlock}${chHarnessCardHTML(m)}<div class="chverificationwrap">${chVerificationHTML(m)}</div><div class="content">${body}${tail}</div>${resume}${agentTail}${live ? "" : sourcesHTML(m) + chWebSourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${actions}</div>`;
+  return `<div class="turn bot" data-i="${i}">${stepsBlock}${chHarnessCardHTML(m)}<div class="chverificationwrap">${chVerificationHTML(m)}</div><div class="content">${body}${tail}</div>${resume}${agentTail}${live ? "" : sourcesHTML(m) + chWebSourcesHTML(m)}${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}${cut}${changes}${actions}</div>`;
 }
 $("thread").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.classList?.contains("chhcard-inp")) {

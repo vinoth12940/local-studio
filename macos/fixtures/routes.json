@@ -353,6 +353,13 @@
   "methods": [
    "GET"
   ],
+  "path": "/api/workspace/tree",
+  "name": "api_workspace_tree"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
   "path": "/api/workspace/info",
   "name": "api_workspace_info"
  },

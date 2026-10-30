@@ -1,13 +1,12 @@
 // code/terminal.mjs: moved from index.html's inline script in the refactor's P2 split.
-import { $, api, esc, jpost, newId, store, toast } from "../core/util.mjs";
+import { $, api, esc, jpost, store, toast, vendorLoad } from "../core/util.mjs";
 import { showView } from "../ui/views.mjs";
-import { chLive, listState, newChat, saveChat, updateWorkspaceUI } from "../chat/list.mjs";
-import { autosize, compactCurrentChat, ctxUsage, fmtTok, toggleMode } from "../chat/composer.mjs";
-import { send } from "../chat/live.mjs";
+import { listState, newChat, saveChat, updateWorkspaceUI } from "../chat/list.mjs";
+import { autosize, ctxUsage, fmtTok, toggleMode } from "../chat/composer.mjs";
 import {
-  activeCodeWs, codeCloseFile, codeConfirmDiscard, codeDirty, codeEdViewMode, codeEmpty, codeGitInfo, codeInstFiles,
-  codeJump, codeOpenPath, codeSelectExTab, codeShowAllChanges, codeSyncDirty, loadCodeProcesses, loadCodeView,
-  openCodeFile, renderCodeExplorer, saveCodeFile, setCodeEditorMode, updateCodeGutter
+  activeCodeWs, codeActivate, codeCloseFile, codeCloseTab, codeConfirmDiscard, codeDirty, codeEdViewMode, codeEmpty, codeGitInfo,
+  codeInstFiles, codeJump, codeOpenPath, codeSelectExTab, codeShowAllChanges, codeToggleCtx, codeToggleDir, loadCodeProcesses,
+  loadCodeView, openCodeFile, renderCodeExplorer, saveCodeFile, setCodeEditorMode
 } from "./editor.mjs";
 
 // terminal: a real login shell on a pty (app.py "terminal"), drawn by xterm.js which loads on first use, from the copy
@@ -18,15 +17,21 @@ const XTERM_FILES = [
   ["script", "frontend/vendor/xterm/addon-fit.min.js", "sha384-XGqKrV8Jrukp1NITJbOEHwg01tNkuXr6uB6YEj69ebpYU3v7FvoGgEg23C1Gcehk"]];
 let xtermLoad = null, codeTermS = null;                // codeTermS: { term, fit, id, ws, offset, ctrl, dead, inq, busy, rows, cols }
 function loadXterm() {
-  xtermLoad ||= (async () => {
-    for (const [tag, url, sri] of XTERM_FILES) await new Promise((ok, fail) => {
-      const el = document.createElement(tag);
-      if (tag === "link") { el.rel = "stylesheet"; el.href = url; } else el.src = url;
-      el.integrity = sri; el.crossOrigin = "anonymous"; el.onload = ok;
-      el.onerror = () => fail(new Error("The terminal could not load its xterm.js files. Reinstall Local Studio to restore them."));
-      document.head.appendChild(el);
-    });
-  })().catch((err) => { xtermLoad = null; throw err; });
+  xtermLoad ||= vendorLoad(async () => {
+    // Monaco's AMD loader (code/monaco.mjs) defines a global define.amd; xterm's files would register with it instead of
+    // setting window.Terminal, so it is hidden while they run (never while Monaco loads: vendorLoad runs one job at a time).
+    const amd = window.define?.amd;
+    if (amd) delete window.define.amd;
+    try {
+      for (const [tag, url, sri] of XTERM_FILES) await new Promise((ok, fail) => {
+        const el = document.createElement(tag);
+        if (tag === "link") { el.rel = "stylesheet"; el.href = url; } else el.src = url;
+        el.integrity = sri; el.crossOrigin = "anonymous"; el.onload = ok;
+        el.onerror = () => fail(new Error("The terminal could not load its xterm.js files. Reinstall Local Studio to restore them."));
+        document.head.appendChild(el);
+      });
+    } finally { if (amd) window.define.amd = amd; }
+  }).catch((err) => { xtermLoad = null; throw err; });
   return xtermLoad;
 }
 function codeTermTheme() {
@@ -148,7 +153,55 @@ function codeUpdateStatus() {
     ctx = `<span class="ctxs${pct >= 90 ? " bad" : pct >= 70 ? " warn" : ""}" title="${u.used.toLocaleString()} of ${u.total.toLocaleString()} tokens${u.measured ? "" : " (estimated)"}">ctx ${u.measured ? "" : "~"}${pct}% · ${fmtTok(Math.max(0, u.total - u.used))} free</span>`;
   }
   $("codeStatusTxt").innerHTML = [...parts.map(esc), ctx].filter(Boolean).join(" · ");
+  $("codeChatTitle").textContent = listState.current?.messages?.length ? listState.current.title || "Untitled chat" : "New chat";
+  $("codeModelTxt").textContent = $("hdrSub").textContent || "Model";
 }
+
+// ---------------- layout: each pane sized and shown as the user leaves it (kept per browser, like the theme)
+const CODE_LAYOUT_KEY = "code_layout";
+function codeLayout() { return store.get(CODE_LAYOUT_KEY, {}) || {}; }
+function applyCodeLayout() {
+  const L = codeLayout(), wb = document.querySelector(".code-workbench");
+  for (const [k, v] of [["--ex-w", L.ex], ["--chat-w", L.chat]]) wb.style.setProperty(k, v ? `${v}px` : "");   // "" removes it: the default width
+  wb.classList.toggle("no-ex", !!L.hideEx); wb.classList.toggle("no-chat", !!L.hideChat);
+  document.querySelector(".code-center").classList.toggle("no-term", !!L.hideTerm);
+  $("codeTogEx").classList.toggle("on", !L.hideEx); $("codeTogTerm").classList.toggle("on", !L.hideTerm); $("codeTogChat").classList.toggle("on", !L.hideChat);
+  setTimeout(codeTermFit, 0);
+}
+function setCodeLayout(patch) { store.set(CODE_LAYOUT_KEY, { ...codeLayout(), ...patch }); applyCodeLayout(); }
+function codeSplitDrag(side) {                                                       // side: "ex" (the left divider) or "chat" (the right one)
+  return (e) => {
+    e.preventDefault();
+    const wb = document.querySelector(".code-workbench"), rect = wb.getBoundingClientRect(), split = e.currentTarget;
+    const other = side === "ex" ? document.querySelector(".code-chatpane") : document.querySelector(".code-explorer");
+    const room = rect.width - (other.offsetParent ? other.getBoundingClientRect().width : 0) - 320;   // the editor keeps 320 px
+    let width = 0;
+    split.classList.add("drag"); document.body.style.cursor = "col-resize";
+    window.onmousemove = (m) => {
+      width = Math.round(Math.max(side === "ex" ? 140 : 260, Math.min(room, side === "ex" ? m.clientX - rect.left : rect.right - m.clientX)));
+      wb.style.setProperty(side === "ex" ? "--ex-w" : "--chat-w", `${width}px`);
+    };
+    window.onmouseup = () => {
+      window.onmousemove = window.onmouseup = null;
+      split.classList.remove("drag"); document.body.style.cursor = "";
+      if (width) setCodeLayout({ [side]: width });
+    };
+  };
+}
+$("codeSplitEx").onmousedown = codeSplitDrag("ex");
+$("codeSplitChat").onmousedown = codeSplitDrag("chat");
+$("codeSplitEx").ondblclick = () => setCodeLayout({ ex: 0 });
+$("codeSplitChat").ondblclick = () => setCodeLayout({ chat: 0 });
+$("codeTogEx").onclick = () => setCodeLayout({ hideEx: !codeLayout().hideEx });
+$("codeTogTerm").onclick = () => setCodeLayout({ hideTerm: !codeLayout().hideTerm });
+$("codeTogChat").onclick = () => setCodeLayout({ hideChat: !codeLayout().hideChat });
+$("v-code").addEventListener("keydown", (e) => {                                     // VS Code's keys: ⌘B explorer, ⌘J terminal, ⌥⌘B chat
+  if (!(e.metaKey || e.ctrlKey) || e.shiftKey) return;
+  const k = e.key.toLowerCase(), patch = k === "b" ? (e.altKey ? "hideChat" : "hideEx") : k === "j" && !e.altKey ? "hideTerm" : "";
+  if (!patch) return;
+  e.preventDefault(); e.stopPropagation();
+  setCodeLayout({ [patch]: !codeLayout()[patch] });
+}, true);
 
 function onAgentCodeMutation() {                                                        // refresh after the agent writes or runs something; an unsaved editor is left alone
   clearTimeout(onAgentCodeMutation._t);
@@ -181,24 +234,44 @@ $("codeAutoReadonly").onchange = async () => {
 $("codeGitRefresh").onclick = () => loadCodeView(true);
 $("codeOpenMcp").onclick = () => { showView("manage"); setTimeout(() => $("mcpSet")?.scrollIntoView({ behavior: "smooth" }), 80); };
 $("codeNewTask").onclick = () => { newChat(); $("input").focus(); };
+$("codeChatHistory").onclick = () => ($("expand").style.display !== "none" ? $("expand") : $("collapse")).click();   // past chats are the sidebar's list
+$("codeModelPill").onclick = (e) => { e.stopPropagation(); $("modelBtn").click(); };
+$("codeCtx").onclick = (e) => { const b = e.target.closest("[data-codectx]"); if (b) codeToggleCtx(b.dataset.codectx === "on"); };
 $("codeExToggle").onclick = (e) => { e.stopPropagation(); document.querySelector(".code-workbench").classList.toggle("ex-open"); };
 $("v-code").addEventListener("mousedown", (e) => { if (!e.target.closest(".code-explorer, #codeExToggle")) document.querySelector(".code-workbench").classList.remove("ex-open"); });
 $("codeExTabs").onclick = (e) => { const b = e.target.closest("[data-extab]"); if (b) codeSelectExTab(b.dataset.extab); };
 $("codeFileQ").addEventListener("input", () => { clearTimeout(renderCodeExplorer._t); renderCodeExplorer._t = setTimeout(renderCodeExplorer, 120); });
 $("codeExList").onclick = async (e) => {
   if (e.target.closest("[data-show-full-diff]")) return codeShowAllChanges();
+  const dir = e.target.closest("[data-toggle-dir]");
+  if (dir) return codeToggleDir(dir.dataset.toggleDir);
   const jump = e.target.closest("[data-jump-line]");
   if (jump) return codeJump(+jump.dataset.jumpLine || 1);
   const item = e.target.closest("[data-open-file]");
   if (item && (await openCodeFile(item.dataset.openFile))) { setCodeEditorMode(item.dataset.openDiff ? "diff" : codeEdViewMode); document.querySelector(".code-workbench").classList.remove("ex-open"); }
 };
 $("codeEdMode").onclick = (e) => { const b = e.target.closest("[data-edmode]"); if (b) setCodeEditorMode(b.dataset.edmode); };
-$("codeEditor").addEventListener("input", () => { updateCodeGutter(); codeSyncDirty(); });
-$("codeEditor").addEventListener("scroll", () => { $("codeGutter").scrollTop = $("codeEditor").scrollTop; });
-$("codeEditor").addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveCodeFile(); return; }
-  if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); document.execCommand("insertText", false, "  "); }   // keeps native undo
-});
+$("codeTabs").onclick = (e) => {
+  const x = e.target.closest("[data-tab-close]");
+  if (x) { e.stopPropagation(); codeCloseTab(x.dataset.tabClose); return; }
+  const tab = e.target.closest("[data-tab]");
+  if (tab) openCodeFile(tab.dataset.tab, 0, true).then((ok) => ok || codeActivate(tab.dataset.tab));   // read it again if it has no unsaved edits
+};
+$("codeTabs").onauxclick = (e) => { const tab = e.target.closest("[data-tab]"); if (tab && e.button === 1) codeCloseTab(tab.dataset.tab); };   // middle click closes, as in VS Code
+// The terminal panel's height: drag the line above it (kept per browser, like the theme).
+$("codeTermResize").onmousedown = (e) => {
+  e.preventDefault();
+  const term = $("codeTerm"), startY = e.clientY, startH = term.getBoundingClientRect().height;
+  const max = () => term.parentElement.getBoundingClientRect().height * 0.75;
+  $("codeTermResize").classList.add("drag");
+  window.onmousemove = (m) => { term.style.height = `${Math.round(Math.min(max(), Math.max(120, startH + startY - m.clientY)))}px`; codeTermFit(); };
+  window.onmouseup = () => {
+    window.onmousemove = window.onmouseup = null;
+    $("codeTermResize").classList.remove("drag");
+    store.set("code_term_h", term.style.height); codeTermFit();
+  };
+};
+if (store.get("code_term_h")) $("codeTerm").style.height = store.get("code_term_h");
 $("codeEdSave").onclick = saveCodeFile;
 $("codeEdPin").onclick = () => {
   if (!codeOpenPath) return;
@@ -211,25 +284,13 @@ $("codeTermClear").onclick = () => { codeTermS?.term.clear(); codeTermS?.term.fo
 $("codeTermNew").onclick = () => codeTermStart(true).then(() => codeTermS?.term.focus());
 $("codeModeBtn").onclick = toggleMode;
 $("v-code").addEventListener("click", async (e) => {
-  const cmdBtn = e.target.closest("[data-code-cmd]");
-  if (cmdBtn) {
-    if (listState.streaming || chLive()) return toast("Wait for the reply to finish");
-    const cmd = cmdBtn.dataset.codeCmd;
-    if (cmd === "/compact") return compactCurrentChat();
-    const ws = activeCodeWs();
-    if (!listState.current) listState.current = { id: newId(), title: cmd, messages: [] };
-    if (ws) listState.current.workspace = ws;
-    $("input").value = cmd; autosize(); send();
-    return;
-  }
-  const subBtn = e.target.closest("[data-code-subagent]");
-  if (subBtn) {
-    const prompts = {
-      researcher: "Use delegate_task with role \"researcher\" to explore this workspace and summarize its architecture and key modules.",
-      verifier: "Use delegate_task with role \"verifier\" to inspect the recent changes and run the project's verification checks."
-    };
-    $("input").value = prompts[subBtn.dataset.codeSubagent] || prompts.researcher;
-    autosize(); $("input").focus();
+  const review = e.target.closest("[data-review-files]");
+  if (review) {                                       // the turn's changed files, side by side against the last commit
+    const names = review.dataset.reviewFiles.split("\n").filter(Boolean);
+    const paths = (codeGitInfo?.files || []).map((f) => f.path.split(" -> ").pop()).filter((p) => names.includes(p.split("/").pop()));
+    codeSelectExTab("changes");
+    if (paths.length === 1 && (await openCodeFile(paths[0]))) setCodeEditorMode("diff");
+    else codeShowAllChanges();
     return;
   }
   const stopBtn = e.target.closest("[data-proc-stop]");
@@ -241,6 +302,6 @@ $("v-code").addEventListener("click", async (e) => {
 window.onbeforeunload = (e) => { if (codeDirty()) { e.preventDefault(); e.returnValue = ""; } };
 
 export {
-  codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme, codeUpdateStatus,
+  applyCodeLayout, codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme, codeUpdateStatus,
   loadXterm, onAgentCodeMutation, XTERM_FILES, xtermLoad
 };

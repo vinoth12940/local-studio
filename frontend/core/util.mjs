@@ -33,6 +33,15 @@ function setOptions(el, html, value) {
   if (value !== undefined && el.value !== value) el.value = value;
 }
 
+// Bundled third-party scripts load one job at a time: Monaco's AMD loader (code/monaco.mjs) sets a global define.amd that
+// another library's scripts would register with if they ran while it loads (code/terminal.mjs, xterm.js).
+let vendorChain = Promise.resolve();
+function vendorLoad(job) {
+  const run = vendorChain.then(job);
+  vendorChain = run.catch(() => {});
+  return run;
+}
+
 export {
-  $, api, confirmBox, DEFAULT_MAX_TOKENS, esc, gib, human, icon, jpost, newId, setOptions, store, toast
+  $, api, confirmBox, DEFAULT_MAX_TOKENS, esc, gib, human, icon, jpost, newId, setOptions, store, toast, vendorLoad
 };

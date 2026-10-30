@@ -161,6 +161,678 @@
    "source": "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js",
    "version": "@xterm/xterm 5.5.0",
    "license": "MIT"
+  },
+  {
+   "path": "monaco/LICENSE.txt",
+   "sha384": "sha384-oNVmg+NhaW5KOy8+Et9KYcGZChzZ3QS7Wf+vioguTcXeUnC8DDEyVAQ5ipxN3T8q",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/LICENSE)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/ThirdPartyNotices.txt",
+   "sha384": "sha384-cAeA9hUXf6jPC9v2Ik8ts21rTlZsSgGA+wGojRSjdpS+3r1j9nm1hFZDkmlsbhyi",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/ThirdPartyNotices.txt)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/base/browser/ui/codicons/codicon/codicon.ttf",
+   "sha384": "sha384-7JbEA4N9p7IShUCYjNeFsUfYuAi68DV+AhR1T8Ais0/e3NqJ3JVutl04EqC8lQ21",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/base/browser/ui/codicons/codicon/codicon.ttf)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/base/worker/workerMain.js",
+   "sha384": "sha384-E+dAR/J/5QJorSgHftYIrvbbqdcfQ6JdmC6+/Bk17oJDltobW75bUWcqWEA4M+AA",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/base/worker/workerMain.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/abap/abap.js",
+   "sha384": "sha384-F+YXodQglm5Lf0RV+l7ePBpmU6K3FxqjMJ/IFLOyPx6dHzBbcUbdX+0V2LsZ7aAD",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/abap/abap.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/apex/apex.js",
+   "sha384": "sha384-IYvxCyE/a4zI2TlixPClPAVPYm7S8RKHI95BWJVyAHUgszKip523ICHNscJN4tcH",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/apex/apex.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/azcli/azcli.js",
+   "sha384": "sha384-kDDjQPbyTdAb9B0/ipC2GSOFsAWdME1RnQqAVw83UoosGccTPkQjjCGviTEuciXB",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/azcli/azcli.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/bat/bat.js",
+   "sha384": "sha384-WNn6zw/IF82tsAcCbqPbwH2cpXAIHSvJH/gr1PoyrCkUytPNr/85h4YNeGG59Fg7",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/bat/bat.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/bicep/bicep.js",
+   "sha384": "sha384-HoXksSGHCzm9/WzTb5GA1CfZJNc4W0Ff7aiqhqARLANKoefo7bfsqS7Hb1o7oKI9",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/bicep/bicep.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/cameligo/cameligo.js",
+   "sha384": "sha384-4CPboAVwUdA8l2VorGszks40DhLPRz4DgCF9GzPiQl6amz40ZQwHzQH2h+Nv381Z",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/cameligo/cameligo.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/clojure/clojure.js",
+   "sha384": "sha384-QLBLstgDdWPM0sIu4d6crHaFtnA5I0g60Fw4T7VaJ1zq5c9Cscz8m8RDlHKfjOqy",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/clojure/clojure.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/coffee/coffee.js",
+   "sha384": "sha384-lqB0vkUtd1b7eXP5m07xrS7q0WUwPEwWS4DC0yOLqz+HQ2zY8ABGIfn95qDh+/tv",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/coffee/coffee.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/cpp/cpp.js",
+   "sha384": "sha384-xWERe8RAN9NjvLMTAl1DlIZ1hEpdgajh7V+hXUpJmoOQqmrTbX8ZJ5EE+KcywBt+",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/cpp/cpp.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/csharp/csharp.js",
+   "sha384": "sha384-pw9ORightKvZAeje0N28zJVLybFSBDCvvvZ+oPpuNdPY9788F1Ag2Y93ydQuN2NB",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/csharp/csharp.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/csp/csp.js",
+   "sha384": "sha384-zjWFUJrMbXnLQuTNyuw3Bb+A9EmivtaBu6rCwk+eTGZiLhBvd+Ab7nR/Cn9Wxfqg",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/csp/csp.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/css/css.js",
+   "sha384": "sha384-Cfj8rBoPYfc+sI+pqxLxJa404mlTZMxoZ7gBcf2aDQwAO8pZVc2cJFKLJ+5LBV15",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/css/css.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/cypher/cypher.js",
+   "sha384": "sha384-XG1iNwO+5KMmpYFKAzoehTgaDAgq5TY5/F/2C7CQpRGO7PYCKmQaC+PLBQjfscdU",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/cypher/cypher.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/dart/dart.js",
+   "sha384": "sha384-F+anXug5zIHy7GNTdHxh0ouTS2omcLFPR+cjhRBw3b/THfOdunorCYSGkCRoUPMQ",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/dart/dart.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/dockerfile/dockerfile.js",
+   "sha384": "sha384-PObthbVNI1N3njVrUaUkV1h/N0AUAZ48KSnOAIYYVz4g8IIgL7c3Ft0Rk/2XLFJW",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/dockerfile/dockerfile.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/ecl/ecl.js",
+   "sha384": "sha384-udT31wgXuEGTSYegqVQDxEYQV1P6XWdqPQbs30jwCsinU3oQnNUcSrWDGLnxJNfY",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/ecl/ecl.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/elixir/elixir.js",
+   "sha384": "sha384-U3np7sfS4bj2mJ8thTlVPZ+iTtmUEPe02kkfQNEayXRSap2j7yG/ph1yfdue4Peb",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/elixir/elixir.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/flow9/flow9.js",
+   "sha384": "sha384-8ZJH6wJIQT4cQUHhNYeDq7qCXKxFNmV3symVf9s+RmOP2IMbVMWxxlzN0iJ+ttNH",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/flow9/flow9.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/freemarker2/freemarker2.js",
+   "sha384": "sha384-ICXughSLv3M5PDViViYZRkksBoklqkA8vuqCN9tz9PflQCAyA0/zyG0NZ+zDjjIB",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/freemarker2/freemarker2.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/fsharp/fsharp.js",
+   "sha384": "sha384-fJNf+wKBTtjJSrzLYV/EeNgFrU0NYbYwQ4dEwvaaxquqWPMp6ag88tRICM5PWXQA",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/fsharp/fsharp.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/go/go.js",
+   "sha384": "sha384-aTWWZoUPyRvdVHHTThqvW7cLL7zwt7uXXyQl1PBP33YtZqEROEbImYDycT62PrJ9",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/go/go.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/graphql/graphql.js",
+   "sha384": "sha384-W+dpmI0v2q++UmEIKw8OJkWlElA5DoS1OODFYGZpGtf3rs+VmbezjS50pFVdlqpY",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/graphql/graphql.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/handlebars/handlebars.js",
+   "sha384": "sha384-MYi3jBHCUX4xbGVMqn7a1XZgyzdkeYO0TmRPi/cVspE/NSpRJ+mP70YOKcQJ1hkw",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/handlebars/handlebars.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/hcl/hcl.js",
+   "sha384": "sha384-7ozz44xzexc1SBedMI+yAZgKtlG52/S+Dr6qronL3sxgCUlFfwvNLWb6ZhMYdDpD",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/hcl/hcl.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/html/html.js",
+   "sha384": "sha384-jJFhCqILy9vx0ekxrQ9QKp5x7/xuHlHbojw0O1fXHm/itds9s/VpolToVnTrao9C",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/html/html.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/ini/ini.js",
+   "sha384": "sha384-t5pKQlbatzFTb0uMDAn57bqbhixlmjIJ7rA+IWiWTZ0QeEuaqSIWQHQvSHJ5cWuN",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/ini/ini.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/java/java.js",
+   "sha384": "sha384-FCcva6j5pfIFwQCAQZkspePiAizuaIC7xwGJZMBBkjKp0hxxRBo0FWdYAFP5sQpV",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/java/java.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/javascript/javascript.js",
+   "sha384": "sha384-YYSSe7yqFkfQUQTP2/R5dXw89AI+2wNdquBWmJnB55Qb/HagPtWL3S838P80FEpu",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/javascript/javascript.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/julia/julia.js",
+   "sha384": "sha384-Q4CCTxmn3EIXK4h4txAV9zXOoRis+x7WPQaCK37iJKnbsRaHJ/VKoilmI29pM8S5",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/julia/julia.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/kotlin/kotlin.js",
+   "sha384": "sha384-e2/fkGuaOUQA0zIx71BUdnTcJs7lgKtn9O6xdiAEQNLBV3bkMBu4iVMYOlXS+waC",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/kotlin/kotlin.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/less/less.js",
+   "sha384": "sha384-FQkPcXHv8v6VsctunHDXNz7s5FjlN0fO4WtWStxE0epEj8L/qBNu+A7pn6YdNs6w",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/less/less.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/lexon/lexon.js",
+   "sha384": "sha384-HrZ4+BPOIMM/rIqKWekheiDv68jWzpHtwJcxWfPdDh8LZOEQ79iZ9uV3CXAEI6yB",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/lexon/lexon.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/liquid/liquid.js",
+   "sha384": "sha384-cHbTLFRmPRxu2veqFmG40Ssn4iaK9G1FyVWQE252okWisLGAYvpztJLjxyuwlvX7",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/liquid/liquid.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/lua/lua.js",
+   "sha384": "sha384-FuCF8e5dCg1YCYuN0/cNd8KEpsTPAaa7H1Xr6oS+0jQtjfc03Ttpqigv8C5IDmeA",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/lua/lua.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/m3/m3.js",
+   "sha384": "sha384-wF67ZYTm/YNWZTWvJY5ZPyJJoC25GYJayMs1jNkpNA8dN877z11drlYJLujGBjYT",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/m3/m3.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/markdown/markdown.js",
+   "sha384": "sha384-C47IFBRFv8f58A8rCC4v6uUjDWhEUJCxtaFZXIYfg5n3YE+pIPjS05GSahsrtnBd",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/markdown/markdown.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/mdx/mdx.js",
+   "sha384": "sha384-tNA0qhuQ/83pTICmlfmsod40B/MF0/+qSeawgFk63+SArrX3Ao80x4iJwlJbrkGP",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/mdx/mdx.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/mips/mips.js",
+   "sha384": "sha384-SP7y/CZvQWwaHGB3sexvarn8yJWlGHDbp0MLSYnlxvKSHxTSpGtoHWl7uMZYezEC",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/mips/mips.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/msdax/msdax.js",
+   "sha384": "sha384-iUWDV+jD53ZOY1nWoXTNYeLDRRM5oy0E8IlEuk2U4iIZxuDvIng2xz27zMfjkLI3",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/msdax/msdax.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/mysql/mysql.js",
+   "sha384": "sha384-4TGsuPRxSKqkdfDWrDpMD1vAOb1pJmb3lJM/JRZnG9iktYyWym6nXJQkZ4tYQ6ts",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/mysql/mysql.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/objective-c/objective-c.js",
+   "sha384": "sha384-eg2AJa5Bci4P/OE/E5ys+tTnH533DXrPZR/9dT9z8VtTMkaiwXn/PO523/N0T9zp",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/objective-c/objective-c.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/pascal/pascal.js",
+   "sha384": "sha384-PfHMy/Wt5CoZ78/07/GttkOYWAxcdCOim2BXURndSq9BThQqV9XoarFYO6pgz/o5",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/pascal/pascal.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/pascaligo/pascaligo.js",
+   "sha384": "sha384-n5D69IRr5YzVuGXPxl/JoGfSq2aBSoH1HFjGqE/RPyYGtRdbP9EFVpZnclJiTiZc",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/pascaligo/pascaligo.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/perl/perl.js",
+   "sha384": "sha384-D19vNSC4kuQ4EiApn8LJmpVbfgrXqWJM4f2N6QkF87UKaHg+oafFlVMe/kgAKxsv",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/perl/perl.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/pgsql/pgsql.js",
+   "sha384": "sha384-AXXq0fkxyj63qcvrNu4omPlgtwwBITeF/J0spk5O+WfcdTdM5sxgx8j9X3rJHZXN",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/pgsql/pgsql.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/php/php.js",
+   "sha384": "sha384-o91EG2aKIyt7FezL0cGF2jcBHQa81Hvxhy5YB2aKW1O43xF7OZjMDdE9W+14pjUX",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/php/php.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/pla/pla.js",
+   "sha384": "sha384-CR6Apvj1x4visOu+DhzuDzw574sZqcKsqenPocLiw0WkKvaD4yNd6oenOcBuR8AK",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/pla/pla.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/postiats/postiats.js",
+   "sha384": "sha384-XoRMOVAzAA5Z/h7odDxLwv6R5TYe6/+j7pzlmfx0JnOkclNmB90cJD4Lyf6gX2ym",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/postiats/postiats.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/powerquery/powerquery.js",
+   "sha384": "sha384-YN7jOpK0B+7F5uIn2bjoQj2vA++C8dGli5go/XM1luZlsQ3TuwPYf79SmTACPzzW",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/powerquery/powerquery.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/powershell/powershell.js",
+   "sha384": "sha384-CVa0++8isAAKRdwDoLi0UoJdgVa3Y60FDFacmvEfl9XYJa0bDhQ1RbOp/OD77EHy",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/powershell/powershell.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/protobuf/protobuf.js",
+   "sha384": "sha384-awEVgh6T/OzE2tuyTIB9B5jWEV8W1sWJ0f3VUfMGZBEaSj1VdG68oj6BGZhAtvHs",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/protobuf/protobuf.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/pug/pug.js",
+   "sha384": "sha384-SzZlKbwpiZM7tPGqFttrXm2M36B04jpfATZV4wqwalDDdwBQM//tT8SS5Rhn06TK",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/pug/pug.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/python/python.js",
+   "sha384": "sha384-/Wl5Hgl7Fc9gZLvdjcTzg+L7i8Y8PI2GvOnkyvPeDONgUhsPoBEYKlatO3XfMbFC",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/python/python.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/qsharp/qsharp.js",
+   "sha384": "sha384-BCaGnMU5dpJmyfhgxc6IpjWN27JaNPqpsjG6c3MCCpp4H9+XXReLJWbEhZKp627r",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/qsharp/qsharp.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/r/r.js",
+   "sha384": "sha384-oYRzwD2EHwuPKtxsSgaMwlZ/erlgeKFymoas3t7Ucvh5IWeYN2GPOf/kfiiSlbtZ",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/r/r.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/razor/razor.js",
+   "sha384": "sha384-UKa1iZyOu48TwuM5cQSBHNTdcvPpbzSe/NvVo608PtvYP6ZlD4aHjlsXI+PCRC6u",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/razor/razor.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/redis/redis.js",
+   "sha384": "sha384-3x8cqJ30yVJBqJ2uykeWyCW+6dVivrjSf/2iAQWH7d+wJ/1FIngPI2DpgocOetsR",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/redis/redis.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/redshift/redshift.js",
+   "sha384": "sha384-s3LmV7oZ2U3njYmetmEMzvfvvdNkU5qJg0eOFL2eD/tH0Y+85v1tFlI2hYqvnfzu",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/redshift/redshift.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/restructuredtext/restructuredtext.js",
+   "sha384": "sha384-54Bbev7QKXnBQhIkYxiQR1MepPBNAkiaWDiB7cjzsYp4Cjc4b64xhYeYiSiaNjHZ",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/restructuredtext/restructuredtext.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/ruby/ruby.js",
+   "sha384": "sha384-B5neM77m4I/DEdAZzrkl/3pws0Nhgs04wK/wfbO27T6DfOzxgi6fBihLl26LZ+HH",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/ruby/ruby.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/rust/rust.js",
+   "sha384": "sha384-UGZL96TQ5ZgZriICAd3KKz5/2KGwFR/ytRoEWGubDVjFocjVFb6Ct+yb0L1OhPZ1",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/rust/rust.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/sb/sb.js",
+   "sha384": "sha384-Xn1snDC/bAPyT81YRts61sPPUzFhsOtAWkmPWAoMsc2uyl7gsF/XO57TcWgCHfSq",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/sb/sb.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/scala/scala.js",
+   "sha384": "sha384-zRdgC2VEqZnwi1lo9YVz6UEe1L3z/Ujp1Jze5vIqtcR1edHRITq8s9N3pkp5fKnv",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/scala/scala.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/scheme/scheme.js",
+   "sha384": "sha384-qZsIBPhG7VcT+1IZL2pPMBA9NDYm12wKo5GPvebzN7BZDF56FDc5wyxsvk9zv3Sz",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/scheme/scheme.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/scss/scss.js",
+   "sha384": "sha384-2wrmc++JXHUO/DCwmKOCyPOn9CJ5wWavPdNmr+VrCMVqQfWVQWEASItlWMjD2Byw",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/scss/scss.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/shell/shell.js",
+   "sha384": "sha384-/N/jEriMC282caPhXk6QZoagHMegKlMgMyjEUoLF23qjiM1dugczDR7xWJNA8Qde",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/shell/shell.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/solidity/solidity.js",
+   "sha384": "sha384-u8Ep9FB5xi8QHqHnFG/jIQVS9hM1xabdlf/dcGFzmG5aXcTHmyxjflyhdztjEsHq",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/solidity/solidity.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/sophia/sophia.js",
+   "sha384": "sha384-uiYPsmfoNoy85NyVC+XLdSl+Bz487sNshzUGkMJG6da/0ZLADSAGZpaw1K+9Q2ay",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/sophia/sophia.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/sparql/sparql.js",
+   "sha384": "sha384-DqaY/mFurnXOv22ArGpG7isIP4z8BgOOKt33jneK3O2pvamjNlA9Fclg6YlReZbg",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/sparql/sparql.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/sql/sql.js",
+   "sha384": "sha384-fDR6TWhcDPO+n5kurZeYa0feofNf58DFqCS7A/UaFfzmVRoTwXNtZFaOZBLB0w+W",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/sql/sql.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/st/st.js",
+   "sha384": "sha384-rhBvftk0XLN/SEl3cp/S5yM6iE9CCAQbXUOQHFKJ6Xs4GYTjG6PXaEoUPydBMZ5p",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/st/st.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/swift/swift.js",
+   "sha384": "sha384-coXSxbC4kvcy5lwU4HYi3ZuisIUPf47V8e2aeoSjkpwYFdWAdAJMBTA9y2KF3Y/4",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/swift/swift.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/systemverilog/systemverilog.js",
+   "sha384": "sha384-fMPaMRog0Qz7Nx+pMzhtB/o+1L8GxNxNgJyTfGL3LsPaGG1zS/uGpPpZfGFPAO/5",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/systemverilog/systemverilog.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/tcl/tcl.js",
+   "sha384": "sha384-dVQN3XQmZIB4fYhYsX34H92UAhvzCpuWVaqDspIqTFU14VmvRe85NLtbQnhI1dO1",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/tcl/tcl.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/twig/twig.js",
+   "sha384": "sha384-PjeoFzRzXbOnPLN0NJvTOca3zWBGDm4QBFFcKlaAgAu4R2cD32R6Hz7zWHyT5ECC",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/twig/twig.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/typescript/typescript.js",
+   "sha384": "sha384-iZuX5uXpRo9b1ck7XqemCF1yKsRAsKtYvzJabNVTOK67tY1ZB+ZG9Zum6mNnDf81",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/typescript/typescript.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/typespec/typespec.js",
+   "sha384": "sha384-zpwB/Ju2vmtVsRZ+C6TFzocFHZtTMt/K6XcBmXDxznozOVWCg4/eaVFgMDAzoq4D",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/typespec/typespec.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/vb/vb.js",
+   "sha384": "sha384-8BU8gKYOxcoY8vaFflsQwJeTfcj/N8i+b06doImeFRv2aVidfpQ5WKZcRYj69b1J",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/vb/vb.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/wgsl/wgsl.js",
+   "sha384": "sha384-yxKwwA+96a57x11UPwdQ2+asEbgqPFEg0xYeDI9ZwcBMps8JhH7KJM9N9q3ZwduO",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/wgsl/wgsl.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/xml/xml.js",
+   "sha384": "sha384-ycCvuJVG2aHDFfOmfY+nFa9xCKYVBOr6VIawxPGVj4y0/39/yhAm1XuUP0NSA8l7",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/xml/xml.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/basic-languages/yaml/yaml.js",
+   "sha384": "sha384-xooTL+fT4QcZM34MAF40XoZNk2YQ7Vjw8kle2rJlIjsvUW8D417YeObfR3jY7Trd",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/basic-languages/yaml/yaml.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/editor/editor.main.css",
+   "sha384": "sha384-06yHXpYRlHEPaR4AS0fB/W+lMN09Zh5e1XMtfkNQdHV38OlhfkOEW5M+pCj3QskC",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/editor/editor.main.css)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/editor/editor.main.js",
+   "sha384": "sha384-fj9z+NUc93I3woCCy5IRQfrQ8Amu1E27tllwgb5gz3d9Vr1ymS13xcF6two3e4KH",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/editor/editor.main.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/language/css/cssMode.js",
+   "sha384": "sha384-gMDCNqTq+dkncmqOFiNW7sqCt2fH8mxCO7+/nbFLVca+cdgE22laPIu6q0RExhnT",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/language/css/cssMode.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/language/css/cssWorker.js",
+   "sha384": "sha384-m8TciMwFa+bZgwb2pCjttg37hKsOj3TUYbnmLZiNO09CKG5DvQP9qSw4ONblZbyI",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/language/css/cssWorker.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/language/html/htmlMode.js",
+   "sha384": "sha384-Z9mTGgULWBO8nB9wxfnGZdn4P9qF71glrS7iDOU6xtIDyMAa5+AW3JJHjA03wDPQ",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/language/html/htmlMode.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/language/html/htmlWorker.js",
+   "sha384": "sha384-EqeN2jIwf6xy3w4wgD0AbbPnLw2+e4iuoyEqJtOrglJkAaxij0hUzG/Dh5R4iQ45",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/language/html/htmlWorker.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/language/json/jsonMode.js",
+   "sha384": "sha384-ON1D6f/k0tR0oeAaqJbcIQ+nw97pg7oOWAmzv8Sl6I8h6ECs2Mh8MSj1X5nq0Y60",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/language/json/jsonMode.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/language/json/jsonWorker.js",
+   "sha384": "sha384-/M5NNHL+L6fCC4tQ8EFet5L5vSTDWm2ek99a2GPG6pjKDGBBtjvCAgGcfcsw6jOp",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/language/json/jsonWorker.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/language/typescript/tsMode.js",
+   "sha384": "sha384-LJDXVt7WHdcjvmrQwGPaDPpsAmD0FfVF59daseEl2Ifa/jHppeHXJeJzBPLScQ/e",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/language/typescript/tsMode.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/language/typescript/tsWorker.js",
+   "sha384": "sha384-zxA6if3z1xYplirytIKRk7JyAbAW634/ADgNtSvYwCdedcuLuz8EApt3TC4PsUGB",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/language/typescript/tsWorker.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
+  },
+  {
+   "path": "monaco/vs/loader.js",
+   "sha384": "sha384-pHG02SG8pId94Np3AbPmBEJ1yPqaH0IkJGLSNGXYmuGhkazT8Lr/57WYpbkGjJtu",
+   "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz (package/min/vs/loader.js)",
+   "version": "monaco-editor 0.52.2",
+   "license": "MIT"
   }
  ]
 }
