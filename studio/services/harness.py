@@ -41,7 +41,7 @@ from studio.security.fences import (
 )
 from studio.services.attachments import _extract, TEXT_EXT
 from studio.services.mcp_custom import _call_custom_mcp_tool
-from studio.services.models import chat_model, effective_context
+from studio.services.models import chat_model, chat_models, effective_context
 from studio.services.web import _WebPageText, _WebSearchResults
 from studio.storage.backups import _backup_file
 from studio.storage.memory import _load_agent_memory, _save_agent_memory
@@ -1261,9 +1261,61 @@ def fold_system_messages(messages):
     return [{"role": "system", "content": content}] + rest
 
 
+class _PromptOpenedThinking:
+    """A reply that starts inside a <think> its prompt opened, from an engine that does not split it: mlx-vlm 0.7.11 streams
+    LFM3 (whose template ends the prompt with "<think>") through the tokenizer's response parser with an empty prefix, so
+    every word arrives as content and the thinking ends with a bare </think>. Content up to the first </think> becomes
+    reasoning_content; an engine that sends reasoning itself turns this off."""
+    CLOSE = "</think>"
+
+    def __init__(self):
+        self.active, self.held, self.started = True, "", False
+
+    def feed(self, delta):
+        if not self.active:
+            return delta
+        if delta.get("reasoning_content") or delta.get("reasoning"):
+            self.active = False                         # the engine splits the thinking after all
+            return {**delta, "reasoning_content": self.held + (delta.get("reasoning_content") or delta.get("reasoning") or "")} \
+                if self.held else delta
+        if not delta.get("content"):
+            return delta
+        text = self.held + delta["content"]
+        if not self.started:                            # a model that writes the open tag anyway
+            text, self.started = text.removeprefix("<think>").lstrip("\n"), True
+        rest = {k: v for k, v in delta.items() if k != "content"}
+        cut = text.find(self.CLOSE)
+        if cut < 0:                                     # hold back a tail that may be the start of "</think>"
+            keep = next((n for n in range(len(self.CLOSE) - 1, 0, -1) if text.endswith(self.CLOSE[:n])), 0)
+            self.held = text[len(text) - keep:]
+            thought = text[:len(text) - keep]
+            return {**rest, "reasoning_content": thought} if thought else rest
+        self.active, self.held = False, ""
+        thought, answer = text[:cut], text[cut + len(self.CLOSE):].lstrip("\n")
+        return {**rest, **({"reasoning_content": thought} if thought else {}), **({"content": answer} if answer else {})}
+
+    def unclosed(self, state):
+        """At the end of the stream, for a </think> that never came: with nothing else to show, the model skipped the tag and
+        that text was the answer, unless the budget ran out mid-thought (the cut-off note covers that). A held tail goes back."""
+        if not self.active:
+            return None
+        if state["calls"] or state["finish"] == "length":
+            return {"reasoning_content": self.held} if self.held else None
+        return {"content": state["reasoning"] + self.held} if state["reasoning"] + self.held else None
+
+
+def _opens_thinking(body):
+    """Whether this reply starts inside a prompt-opened <think> the engine will not split: thinking is on, and the request
+    names (as mlx-vlm requests do, by repo) a catalog model marked thinking_preopened."""
+    repo = body.get("model")
+    return bool(repo) and body.get("enable_thinking", True) is not False and \
+        any(m.get("thinking_preopened") and m.get("repo") == repo for m in chat_models())
+
+
 async def _chat_engine_turn(url, body, state):
     """One streamed model turn. Native calls are assembled without interpreting prose as actions."""
     state.update(calls={}, content="", reasoning="", first=None, n_out=0, timings=None, usage=None, finish=None)
+    split = _PromptOpenedThinking() if _opens_thinking(body) else None
     body = {**body, "messages": fold_system_messages(body.get("messages") or [])}
     async with httpx.AsyncClient(timeout=None) as client:
         async with client.stream("POST", f"{url}/v1/chat/completions", json=body) as response:
@@ -1275,6 +1327,9 @@ async def _chat_engine_turn(url, body, state):
                 try: event = json.loads(line[5:].strip())
                 except ValueError: continue
                 delta = ((event.get("choices") or [{}])[0] or {}).get("delta") or {}
+                if split and delta:
+                    delta = split.feed(delta)
+                    event = {**event, "choices": [{**event["choices"][0], "delta": delta}] + event["choices"][1:]}
                 for part in delta.get("tool_calls") or []:
                     call = state["calls"].setdefault(part.get("index", 0), {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
                     if isinstance(part.get("id"), str): call["id"] += part["id"]
@@ -1289,6 +1344,11 @@ async def _chat_engine_turn(url, body, state):
                 state["timings"] = event.get("timings") or state["timings"]
                 state["usage"] = event.get("usage") or state["usage"]
                 yield event
+    tail = split and split.unclosed(state)
+    if tail:
+        state["content"] += tail.get("content") or ""
+        state["reasoning"] += tail.get("reasoning_content") or ""
+        yield {"choices": [{"index": 0, "delta": tail, "finish_reason": None}]}
 
 
 def _summarize_messages_deterministic(messages: list[dict]) -> str:

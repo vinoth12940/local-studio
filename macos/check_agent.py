@@ -4885,6 +4885,36 @@ def chat_action_deltas(name="use_computer", args="{}"):
 
 
 @check
+def lfm3_thinking_opened_by_the_prompt_reaches_the_thinking_section():
+    """Found on 1.7.2 with LFM3 1.7B (MLX): its template ends the prompt with "<think>", and mlx-vlm 0.7.11 streams with
+    LFM3's response-template parser given an empty prefix, so the whole reply arrives as content: "...thinking...</think>
+    answer". llama.cpp splits the same model correctly."""
+    def streamed(model_id, *chunks, **body):
+        with Env(enabled=False) as e, ChatEngine(*chunks):
+            r = e.c.post("/api/chat", json={"model_id": model_id, "messages": [{"role": "user", "content": "date?"}], **body})
+        events = [ev for ev in sse(r.text) if isinstance(ev, dict) and ev.get("choices")]
+        pick = lambda key: "".join((ev["choices"][0].get("delta") or {}).get(key) or "" for ev in events)
+        return pick("reasoning_content"), pick("content")
+    as_mlx_vlm_sends_it = [chat_delta(content="We need the date. "), chat_delta(content="Use the clock.</th"),
+                           chat_delta(content="ink>\n\nToday is "), chat_delta(content="Wednesday.")]
+    assert streamed("lfm3-1.7b", *as_mlx_vlm_sends_it) == ("We need the date. Use the clock.", "Today is Wednesday.")
+    assert streamed("lfm3-vl-2b", *as_mlx_vlm_sends_it) == ("We need the date. Use the clock.", "Today is Wednesday.")
+    assert streamed(TEXT_MLX, *as_mlx_vlm_sends_it)[1] == "We need the date. Use the clock.</think>\n\nToday is Wednesday.", \
+        "a model whose prompt does not open <think> is left alone"
+    assert streamed("lfm3-1.7b", chat_delta(reasoning_content="Think."), chat_delta(content="Answer.")) == ("Think.", "Answer."), \
+        "an engine that splits the thinking itself is passed through"
+    assert streamed("lfm3-1.7b", chat_delta(content="Answer."), enable_thinking=False) == ("", "Answer."), \
+        "thinking off: the template writes <think></think>, so nothing is thinking"
+    assert streamed("lfm3-1.7b", chat_delta(content="It is Wednesday."), voice=True) == ("", "It is Wednesday."), \
+        "a spoken turn turns thinking off, so its whole reply is spoken"
+    assert streamed("lfm3-1.7b", chat_delta(content="Today is Wednesday.")) == ("Today is Wednesday.", "Today is Wednesday."), \
+        "a reply whose </think> never came was the answer: it is shown as one, not an empty reply"
+    thought, answer = streamed("lfm3-1.7b", {"choices": [{"delta": {"content": "Still working"}, "finish_reason": "length"}]})
+    assert thought == "Still working" and answer.startswith("The reply was cut off"), \
+        "a reply cut off mid-thought keeps the cut-off note"
+
+
+@check
 def chat_restarts_the_engine_when_the_context_window_setting_changed():
     """The engine keeps the window it started with: a changed setting must trigger ensure_engine, an unchanged one must not."""
     context, native = app.CONTEXT, studio.services.models.native_context
