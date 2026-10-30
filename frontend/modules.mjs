@@ -45,14 +45,15 @@ export {
   activeJob, deleteImage, gallery, lbItem, loadGallery, openLightbox, track
 } from "./images/images.mjs";
 export {
-  activeCodeWs, CODE_CHECKED, CODE_MUTATING, codeCloseFile, codeConfirmDiscard, codeDirty, codeEdViewMode, codeEmpty,
-  codeExSeq, codeExTab, codeFileDiff, codeFullDiff, codeGitInfo, codeInstFiles, codeJump, codeMarkActive, codeOpenPath,
-  codeOriginalContent, codeSelectExTab, codeShowAllChanges, codeShowDiag, codeSyncDirty, codeWsQ, loadCodeProcesses,
-  loadCodeView, openCodeFile, renderCodeExplorer, renderDiffLinesHTML, saveCodeFile, setCodeEditorMode,
-  updateCodeGutter
+  activeCodeWs, CODE_CHECKED, CODE_MUTATING, codeActivate, codeCloseFile, codeCloseTab, codeConfirmDiscard, codeContextFor,
+  codeDirty, codeEdViewMode, codeEmpty, codeExSeq, codeExTab, codeFileDiff, codeFullDiff, codeGitInfo, codeInstFiles,
+  codeJump, codeMarkActive, codeOpenPath, codeOriginalContent, codeSelectExTab, codeShowAllChanges, codeShowDiag,
+  codeSyncDirty, codeToggleCtx, codeToggleDir, codeWsQ, loadCodeProcesses, loadCodeView, openCodeFile, renderCodeExplorer,
+  renderDiffLinesHTML, saveCodeFile, setCodeEditorMode
 } from "./code/editor.mjs";
+export { loadMonaco, MONACO_FILES, refreshMonacoTheme } from "./code/monaco.mjs";
 export {
-  codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme, codeUpdateStatus,
+  applyCodeLayout, codeTermFit, codeTermLabel, codeTermS, codeTermSend, codeTermStart, codeTermStream, codeTermTheme, codeUpdateStatus,
   loadXterm, onAgentCodeMutation, XTERM_FILES, xtermLoad
 } from "./code/terminal.mjs";
 export {
@@ -81,7 +82,7 @@ export {
   agSize, agStart, agStateText, agStepRow, agStopRun, agSync, agTakeoverRun, loadAgent, loadAgentRuns
 } from "./agent/agent.mjs";
 export {
-  agGrant, agLimit, agRenderSettings, agRenderTiers, agSave, agSetTier, agTierSelect
+  agGrant, agLimit, agRenderModel, agRenderSettings, agRenderTiers, agSave, agSetTier, agTierSelect
 } from "./settings/agent.mjs";
 export { loadWorkflow, openWorkflow, refreshWorkflow, syncWorkflow, takeWorkflowResume, workflowRequest, workflowState } from "./chat/workflow.mjs";
 export { startVoice, stopVoice, voiceHeard, voiceOnEnd, voiceOnEvent, voiceRequest, voiceState, voiceViewShown } from "./voice/voice.mjs";

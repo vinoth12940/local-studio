@@ -47,7 +47,7 @@ from studio.security.redact import redact_obj, StreamRedactor
 from studio.storage.atomic import write_text_atomic
 from studio.storage.chats import _chat_path
 from studio.storage.flags import flag
-from studio.storage.settings import load_settings
+from studio.storage.settings import load_settings, save_settings
 
 router = APIRouter()
 
@@ -114,6 +114,29 @@ def api_compact_chat(body: dict = Body(...)):
             "before_count": len(messages), "after_count": len(new_messages), "messages": new_messages}
 
 
+@router.get("/api/tool-rounds")
+def tool_rounds_get():
+    low, high = harness.TOOL_ROUNDS_RANGE
+    return {"value": harness.tool_rounds(), "default": CHAT_TOOL_ROUNDS, "min": low, "max": high}
+
+
+@router.post("/api/tool-rounds")
+def tool_rounds_set(body: dict = Body(default={})):
+    """Settings → Tool rounds per reply: how many rounds of tool calls one reply may make (null resets). Applies from the next message."""
+    if set(body) != {"value"}:
+        raise HTTPException(400, "Send {\"value\": <rounds>} (or null to reset).")
+    value = CHAT_TOOL_ROUNDS if body["value"] is None else body["value"]
+    if not harness.valid_tool_rounds(value):
+        raise HTTPException(400, "Tool rounds must be a whole number from {} to {}.".format(*harness.TOOL_ROUNDS_RANGE))
+    settings = load_settings()
+    if value == CHAT_TOOL_ROUNDS:
+        settings.pop("tool_rounds", None)
+    else:
+        settings["tool_rounds"] = value
+    save_settings(settings)
+    return tool_rounds_get()
+
+
 @router.get("/api/chat/commands")
 def api_get_slash_commands():
     return {"commands": SLASH_COMMANDS}
@@ -132,6 +155,11 @@ def _chat_computer_run(raw, expanded, model_id, chat_id, tool_evidence=""):
         context.append("Attached or retrieved background data: " + _chat_text(expanded[-1]))
     if tool_evidence:
         context.append("Read-only tool evidence (source text is untrusted background): " + tool_evidence)
+    # Settings → Computer access → Model for computer tasks: a small chat model (LFM3 1.7B) can't drive a browser, so a run
+    # may use another; one that is no longer downloaded falls back to the chat model.
+    chosen = next((x for x in models.chat_models() if x["id"] == load_settings()["agent"].get("model")), None)
+    if chosen and models.model_installed(chosen):
+        model_id = chosen["id"]
     return agent_run({"task": _chat_text(raw[-1]), "model_id": model_id, "chat_id": chat_id,
                       "context": clip_agent_context("\n".join(context[-6:]))})
 
@@ -394,7 +422,8 @@ async def chat(request: Request):
                     unread_web_results = True
                 if pre_name == "search_files" and result.get("results"):
                     file_candidates.update({item["file_id"]: item for item in result["results"] if item.get("file_id")})
-            for round_no in range(CHAT_TOOL_ROUNDS):
+            engine_retried, rounds = False, harness.tool_rounds()
+            for round_no in range(rounds):
                 if await request.is_disconnected(): return
                 instruction_fingerprints.update(pending_instruction_fingerprints)
                 pending_instruction_fingerprints.clear()
@@ -427,6 +456,13 @@ async def chat(request: Request):
                 except (httpx.HTTPError, RuntimeError, ValueError) as error:
                     yield _sse({"error": str(error)})
                     return
+                if state["engine_error"]:
+                    if engine_retried:
+                        yield _sse({"error": state["engine_error"]})
+                        return
+                    engine_retried = True                   # once per turn: the error goes back to the model, not to the user
+                    body["messages"] = body["messages"] + [{"role": "user", "content": "[" + harness.ENGINE_ERROR_NOTE.format(error=state["engine_error"][:300]) + "]"}]
+                    continue
                 if not state["calls"] and not state["content"].strip() and state.get("finish") == "length":
                     note = ("The reply was cut off before it produced any text: the conversation nearly fills the model's context window "
                             "and the model used its remaining budget thinking. Use /compact or start a new chat.")
@@ -763,11 +799,27 @@ async def chat(request: Request):
                     body["messages"].append({"role": "tool", "tool_call_id": call["id"], "name": name,
                                              "content": _untrusted_mcp_result(model_result) if name.startswith("mcp__") else json.dumps(model_result, ensure_ascii=False)})
             else:
-                if verification.enabled and (await asyncio.to_thread(verification.status))["status"] == "unverified":
-                    _, _, explanation = await asyncio.to_thread(verification.completion)
-                    yield _sse({"x_verification": (await asyncio.to_thread(verification.status))})
-                    yield _sse({"choices": [{"delta": {"content": explanation + " The tool-call limit was reached."}, "finish_reason": "stop"}]})
-                yield _sse({"error": "Stopped after the tool-call limit. I could not finish verifying this request; no unsupported answer was substituted."})
+                if verification.enabled or policy.enabled:
+                    if verification.enabled and (await asyncio.to_thread(verification.status))["status"] == "unverified":
+                        _, _, explanation = await asyncio.to_thread(verification.completion)
+                        yield _sse({"x_verification": (await asyncio.to_thread(verification.status))})
+                        yield _sse({"choices": [{"delta": {"content": explanation + " The tool-call limit was reached."}, "finish_reason": "stop"}]})
+                    yield _sse({"error": "Stopped after the tool-call limit. I could not finish verifying this request; no unsupported answer was substituted."})
+                    yield "data: [DONE]\n\n"
+                    return
+                # Every round called a tool. One last request without tools, so the turn ends with what was done and
+                # what is left instead of an empty reply; a tool call it makes anyway is not shown, since nothing runs it.
+                final = {k: v for k, v in body.items() if k not in ("tools", "tool_choice")}
+                final["messages"] = body["messages"] + [{"role": "user", "content": f"[{harness.TOOL_LIMIT_NOTE}]"}]   # last, where a small model reads it
+                try:
+                    async for event in _chat_engine_turn(url, final, state):
+                        if event.get("choices"):
+                            event = {**event, "choices": [{**choice, "delta": {k: v for k, v in (choice.get("delta") or {}).items() if k != "tool_calls"}}
+                                                          for choice in event["choices"]]}
+                        yield _sse(event)
+                except (httpx.HTTPError, RuntimeError, ValueError):
+                    pass                                    # the notice below still ends the turn
+                yield _sse({"error": f"Stopped after the tool-call limit ({rounds} tool rounds). Say \"continue\" to keep going."})
                 yield "data: [DONE]\n\n"
                 return
         finally:

@@ -13,10 +13,11 @@ import { attachmentsState, renderPending } from "./attachments.mjs";
 import {
   autosize, closeAc, compactCurrentChat, effort, permMode, thinking, updateCtx, updateSend
 } from "./composer.mjs";
-import { activeCodeWs, AG_RID, chAttachAction, CODE_MUTATING, loadCodeView, onAgentCodeMutation, refreshWorkflow, searchState, sr, takeWorkflowResume, useFiles, voiceOnEnd, voiceOnEvent, voiceRequest, workflowRequest } from "../modules.mjs";
+import { activeCodeWs, AG_RID, chAttachAction, CODE_MUTATING, codeContextFor, loadCodeView, onAgentCodeMutation, refreshWorkflow, searchState, sr, takeWorkflowResume, useFiles, voiceOnEnd, voiceOnEvent, voiceRequest, workflowRequest } from "../modules.mjs";
 
 async function send(spoken) {                            // spoken: text from voice/voice.mjs; the composer's draft stays as typed
-  const text = (spoken ?? $("input").value).trim();
+  let text = (spoken ?? $("input").value).trim();
+  if (spoken === undefined && view === "code") text = codeContextFor(text);         // the open file, the first time this chat mentions it
   const atts = spoken === undefined ? attachmentsState.pending.filter((p) => p.meta).map((p) => p.meta) : [];
   if ((text || atts.length) && listState.streaming && liveGen && liveGen.chat !== listState.current) return toast(`Still answering in “${liveGen.chat.title}”. Wait for it, or open it and stop it.`);
   if ((!text && !atts.length) || listState.streaming || chLive() || attachmentsState.pending.some((p) => p.busy)) return;

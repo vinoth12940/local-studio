@@ -3,6 +3,7 @@ import { $, confirmBox, esc, jpost, toast } from "../core/util.mjs";
 import { AG_CUA_MIN, AG_CUA_URL, AG_TIER, AG_TIER_ORDER, agTierKey } from "../agent/helpers.mjs";
 import { ag, agPermMissing } from "../agent/state.mjs";
 import { loadAgent } from "../agent/agent.mjs";
+import { lib } from "../library/library.mjs";
 
 // ---- settings
 function agRenderSettings() {
@@ -13,6 +14,7 @@ function agRenderSettings() {
   $("agSetBody").style.display = st.enabled ? "" : "none";
   if (document.activeElement !== $("agSteps")) $("agSteps").value = s.max_steps ?? "";
   if (document.activeElement !== $("agMins")) $("agMins").value = s.max_minutes ?? "";
+  agRenderModel();
   const sig = JSON.stringify([st.enabled, c, s, st.permissions]);
   if (sig === ag.setSig) return;
   ag.setSig = sig;
@@ -27,6 +29,16 @@ function agRenderSettings() {
   tel.innerHTML = `<div class="grow"><div class="ttl">Telemetry</div><div class="sub">${c.telemetry === true ? "On. CuaDriver may send usage data off this Mac." : c.telemetry === false ? "Off." : "Unknown."}</div></div>${c.telemetry === true ? `<button class="btn sm" data-agtele>Turn off</button>` : ""}`;
   agRenderTiers();
 }
+// Model for computer tasks: the downloaded chat models (the library may load after the status; settings.mjs calls this again).
+export function agRenderModel() {
+  const sel = $("agModel"), chosen = ag.st?.settings?.model || "";
+  if (!sel || document.activeElement === sel) return;
+  const models = (lib.chat || []).filter((m) => m.installed);
+  sel.innerHTML = `<option value="">Same as the chat model</option>` + models.map((m) =>
+    `<option value="${esc(m.id)}"${m.id === chosen ? " selected" : ""}>${esc(m.name)}${m.vision ? " · reads screenshots" : ""}</option>`).join("");
+  sel.value = models.some((m) => m.id === chosen) ? chosen : "";
+}
+$("agModel").onchange = () => agSave({ model: $("agModel").value || null });
 function agTierSelect(name, tier) {
   return `<div class="sel sm"><select data-agtier="${esc(name)}" title="${esc(name)}">${Object.entries(AG_TIER).map(([v, l]) => `<option value="${v}"${v === tier ? " selected" : ""}>${l}</option>`).join("")}</select></div>`;
 }

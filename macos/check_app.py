@@ -519,7 +519,10 @@ def ui_loads_nothing_from_another_host():
         assert got == want, f"frontend/vendor/{rel} changed without VENDOR.json"
     pinned = re.findall(r"""["'](frontend/vendor/[^"']+)["'][^\n]*?["']?(sha384-[A-Za-z0-9+/=]+)""",
                         page + "\n".join(modules.values()))
-    assert len(pinned) == 4, f"marked and the three xterm files carry integrity attributes: {pinned}"
+    assert {rel.removeprefix("frontend/vendor/") for rel, _ in pinned} == {
+        "marked/marked.min.js", "xterm/xterm.min.css", "xterm/xterm.min.js", "xterm/addon-fit.min.js",
+        "monaco/vs/editor/editor.main.css", "monaco/vs/loader.js", "monaco/vs/editor/editor.main.js"} and len(pinned) == 7, \
+        f"marked, the three xterm files and Monaco's stylesheet, loader and editor carry integrity attributes: {pinned}"
     for rel, sri in pinned:
         assert listed[rel.removeprefix("frontend/vendor/")] == sri, f"{rel}: its integrity attribute is not VENDOR.json's hash"
     fonts = (REPO / "frontend/vendor/fonts/fonts.css").read_text()

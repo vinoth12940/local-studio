@@ -87,6 +87,8 @@ AGENT_INEXACT_BIND = ("Couldn't attach to the agent's browser window exactly. Cl
 AGENT_BIND_TRIES = 10                                        # list_windows polls for the isolated browser's window (0.5 s apart)
 AGENT_SEARCH_PARTS = 12                                      # read_page(query) reads at most this many parts of a long page...
 AGENT_SEARCH_SECONDS = 3.0                                   # ...and stops reading further parts after this long
+AGENT_LOAD_TRIES = 8                                         # a tab still blank at a web address is read again this often...
+AGENT_LOAD_WAIT = 0.5                                        # ...this many seconds apart, before what it shows is taken as the page
 AGENT_FOUND_LINES = 60                                       # the most matching lines read_page(query) returns
 _STALE_MARKERS = ("browser_binding_stale", "browser_ref_stale", "browser_tab_not_found")
 # The page's window stopped matching the native window (a popup or a new window appeared). Never a ref-stale retry: the same
@@ -422,14 +424,21 @@ class Adapter:
         mint no new snapshot, so the refs of every part read stay good and all of them are in the view's ref map."""
         self._image_for = None
         self._typed = set()                                  # fields typed into since this read: their value in the view is out of date
-        dom = self._state({"snapshot_format": "dom_refs_v1"})        # input types, autocomplete, links; the gate depends on it
-        if _cua_problem(dom) or not dom.get("data"):
-            raise McpError("could not read the page's form fields: " + (_cua_problem(dom) or "no data"))
-        if _served_here(dom["data"].get("url")):            # before anything else is read from it
-            self._leave_local()
-        sem = self._state({"snapshot_format": "semantic_v2", "include_screenshot": True})
-        if _cua_problem(sem) or not sem.get("data"):
-            raise McpError(_cua_problem(sem) or "the page could not be read")
+        for attempt in range(AGENT_LOAD_TRIES):
+            dom = self._state({"snapshot_format": "dom_refs_v1"})    # input types, autocomplete, links; the gate depends on it
+            if _cua_problem(dom) or not dom.get("data"):
+                raise McpError("could not read the page's form fields: " + (_cua_problem(dom) or "no data"))
+            if _served_here(dom["data"].get("url")):        # before anything else is read from it
+                self._leave_local()
+            sem = self._state({"snapshot_format": "semantic_v2", "include_screenshot": True})
+            if _cua_problem(sem) or not sem.get("data"):
+                raise McpError(_cua_problem(sem) or "the page could not be read")
+            sd, page = sem["data"], sem["data"].get("page") or {}
+            loading = page.get("title") == "about:blank" and _url_scheme(page.get("url") or "") in ("http", "https") \
+                and not (sd.get("refs") or str(sd.get("outline") or "").strip())   # a loading tab has only its empty root
+            if not loading or attempt == AGENT_LOAD_TRIES - 1:
+                break
+            _agent_sleep(AGENT_LOAD_WAIT)                    # right after open_url the tab is still the blank one it came from
         sd, dd = sem["data"], dom["data"]
         if _served_here((sd.get("page") or {}).get("url")):  # it moved between the two reads
             self._leave_local()
@@ -1284,7 +1293,7 @@ class _AgentLoop:
         self.names = {t["function"]["name"] for t in AGENT_TOOLS}
         self.t0, self.waited = _agent_now(), 0.0              # time spent waiting for the user does not count toward the limit
         self.n, self.history, self.warned, self.reuse = 0, [], set(), False
-        self.last, self.repeats = None, 0
+        self.last, self.repeats, self.seen = None, 0, None
         self.step_note = None                                 # the free note of the step in progress, for its event
         self.secrets: list = []                               # text this run typed into sensitive fields: never kept in a note
 
@@ -1482,11 +1491,12 @@ class _AgentLoop:
 
     def record(self, n, tool, args, facts, result, decision, thought, shot=None):
         key = (tool, json.dumps(args, sort_keys=True, default=str))
-        if result.startswith(("Error", "Blocked")):
-            self.repeats = self.repeats + 1 if key == self.last else 1
-            self.last = key
-        else:
-            self.last, self.repeats = None, 0
+        failed = result.startswith(("Error", "Blocked"))
+        # A failure repeats when it fails again; a success only when, seeing the same page, it got the same result: scrolling
+        # past the end, or reopening the page that is open, changes nothing, and a small model can do it until the step limit.
+        outcome = (key, failed, None if failed else (result, self.seen))
+        self.repeats = self.repeats + 1 if outcome == self.last else 1
+        self.last = outcome
         if self.repeats == 3:
             result += " " + AGENT_REPEAT_HINT
         shown = _agent_redact(tool, args, facts)
@@ -1508,6 +1518,7 @@ class _AgentLoop:
     def step(self):
         run, ad = self.run, self.ad
         view = self.look()
+        self.seen = (view or {}).get("text")
         image = self.sparse(view)
         call, thought = self.think(view, image)
         self.check_stop()                                    # Stop pressed while the model was thinking: its call is never carried out

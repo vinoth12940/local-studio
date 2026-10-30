@@ -185,6 +185,20 @@
   "methods": [
    "GET"
   ],
+  "path": "/api/tool-rounds",
+  "name": "tool_rounds_get"
+ },
+ {
+  "methods": [
+   "POST"
+  ],
+  "path": "/api/tool-rounds",
+  "name": "tool_rounds_set"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
   "path": "/api/chat/commands",
   "name": "api_get_slash_commands"
  },
@@ -334,6 +348,13 @@
   ],
   "path": "/api/workspace/files",
   "name": "api_workspace_files"
+ },
+ {
+  "methods": [
+   "GET"
+  ],
+  "path": "/api/workspace/tree",
+  "name": "api_workspace_tree"
  },
  {
   "methods": [

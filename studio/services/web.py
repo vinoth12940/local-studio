@@ -105,7 +105,8 @@ class _WebSearchResults(HTMLParser):
             link = urljoin("https://duckduckgo.com", attrs.get("href", ""))
             if _host(link) in ("duckduckgo.com", "www.duckduckgo.com"):
                 link = parse_qs(urlsplit(link).query).get("uddg", [""])[0]
-            if _url_scheme(link) in ("http", "https") and _host(link) and not _local_kind(_host(link)):
+            if _url_scheme(link) in ("http", "https") and _host(link) and not _local_kind(_host(link)) \
+                    and not _host(link).endswith("duckduckgo.com"):         # an ad's click-through (duckduckgo.com/y.js)
                 self.results.append({"url": link, "title": "", "snippet": ""})
                 self.field, self.parts = "title", []
         elif tag == "a" and "result__snippet" in classes and self.results:

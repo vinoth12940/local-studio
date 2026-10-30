@@ -1704,6 +1704,34 @@ def link_domains_from_dom():
 
 
 @check
+def a_read_right_after_opening_a_page_waits_for_it_to_load():
+    """Found on 1.7.3: apple.com's first read came back as "Page: about:blank" with no text, because the tab had not loaded
+    yet, and the model was told the page could not be read. A blank tab at a web address is read again until it loads."""
+    loads = {"left": 2}
+
+    def state(args):
+        if "pid" in args:
+            return _tr(_fx("browser_bind"))
+        if args.get("snapshot_format") == "semantic_v2":
+            sem = copy.deepcopy(_fx("browser_semantic_login"))
+            if loads["left"] > 0:
+                loads["left"] -= 1
+                sem.update(refs=[], content_refs=[{**sem["content_refs"][0], "name": ""}], outline="")   # as CuaDriver sends it: an empty root
+                sem["page"]["title"] = "about:blank"
+            return _tr(sem, image=PNG if args.get("include_screenshot") else None)
+        return _tr(_fx("browser_domrefs_login"))
+
+    c, a = web_adapter(get_browser_state=state)
+    a.execute("open_url", {"url": "https://github.com/login"})
+    view = a.observe()
+    assert not view["sparse"] and view["interactive"] > 0 and "about:blank" not in view["text"], view["text"][:200]
+    assert loads["left"] == 0 and len(SLEPT) == 2, SLEPT
+    loads["left"] = 99                                       # a page that never loads: a bounded wait, then what it shows
+    SLEPT.clear()
+    assert a.observe()["sparse"] and 0 < len(SLEPT) <= 8, SLEPT
+
+
+@check
 def loopback_pages_are_never_read():
     """A page served by this Mac (a link click or a script redirect the gate never saw) yields no view: the tab goes to
     about:blank and the read is an error. Nothing from it reaches the model, the history or the vouched domains."""
@@ -2840,6 +2868,48 @@ class Env:
 
 def sse(body):
     return [json.loads(ln[5:]) for ln in body.splitlines() if ln.startswith("data:") and ln[5:].strip() != "[DONE]"]
+
+
+@check
+def computer_tasks_can_use_their_own_model():
+    """Found on 1.7.3: with LFM3 1.7B as the chat model, a computer task scrolled and reopened one page until its step
+    limit; Qwen3.6 35B-A3B did the same task in 3 steps. Settings → Computer access → Model for computer tasks picks the
+    model a run uses (by default the chat model), and a model that is no longer downloaded falls back to the chat model."""
+    from unittest.mock import patch
+    calls, raw = [], [{"role": "user", "content": "Find the MacBook Air price on apple.com"}]
+    with Env() as e, patch("studio.api.chat.agent_run", side_effect=lambda body: calls.append(body) or {"run_id": "r1"}):
+        app._chat_computer_run(raw, raw, "lfm3-1.7b", None)
+        assert calls[-1]["model_id"] == "lfm3-1.7b", "by default a task runs on the chat model"
+        assert e.c.put("/api/agent/settings", json={"model": "qwen3.6-35b-a3b"}).json()["model"] == "qwen3.6-35b-a3b"
+        assert e.c.get("/api/agent/status").json()["settings"]["model"] == "qwen3.6-35b-a3b"
+        app._chat_computer_run(raw, raw, "lfm3-1.7b", None)
+        assert calls[-1]["model_id"] == "qwen3.6-35b-a3b"
+        studio.services.models.model_installed = lambda m: m["id"] != "qwen3.6-35b-a3b"
+        app._chat_computer_run(raw, raw, "lfm3-1.7b", None)
+        assert calls[-1]["model_id"] == "lfm3-1.7b", "a deleted model is not a dead end"
+        for bad in ("no-such-model", 7, "flux-dev"):
+            assert e.c.put("/api/agent/settings", json={"model": bad}).status_code == 400, bad
+        assert "model" not in e.c.put("/api/agent/settings", json={"model": None}).json()
+
+
+@check
+def scripted_run_stops_repeating_an_action_that_changes_nothing():
+    """Found on 1.7.3 with LFM3 1.7B: on apple.com it scrolled past the end of the page 30 times and reopened the address
+    it was on 12 times, until the step limit. Those results are not errors, so the repeat guard never counted them."""
+    end = "You're at the end of the page."
+    model = Model(*[tc("scroll", direction="down") for _ in range(4)], tc("done", answer="Not found."))
+    with Env(model=model, adapter=FakeAdapter(fview(("e1", "link", "Mac")), results={"scroll": end})) as e:
+        e.start("Find the MacBook Air price on https://shop.example")
+        e.finish()
+        steps = e.ev("step")
+        assert [s["tool"] for s in steps] == ["scroll"] * 4 and e.end()["reason"] == "stuck", ([s["tool"] for s in steps], e.end())
+        assert app.AGENT_REPEAT_HINT in steps[2]["result"] and app.AGENT_REPEAT_HINT not in steps[1]["result"]
+    parts = [fview(("e1", "link", f"Item {k}"), text=f"Page: Shop\nURL: https://shop.example/\nPart {k}") for k in range(1, 6)]
+    model = Model(*[tc("scroll", direction="down") for _ in range(5)], tc("done", answer="Read it all."))
+    with Env(model=model, adapter=FakeAdapter(*parts, results={"scroll": "Showing the next part of the page; read it in the current view."})) as e:
+        e.start("Read https://shop.example")
+        e.finish()
+        assert e.end()["status"] == "done", "the same action that keeps moving through the page is progress"
 
 
 @check
@@ -5142,6 +5212,46 @@ def web_search_reads_organic_results_and_honors_domain():
 
 
 @check
+def web_search_retries_duckduckgos_empty_and_throttled_pages():
+    """Found on 1.7.3: DuckDuckGo's HTML endpoint answers about 4 ordinary searches in 10 with a "No results found" page (or
+    HTTP 202), and the same query a second later has results; web_search gave up on the first try. Its ads' click-through
+    links (duckduckgo.com/y.js) also came through as sources."""
+    real, waits = app._fetch_public_web, studio.services.harness.SEARCH_RETRY_WAITS
+    empty = ('<div class="result results_links result--no-result"><div class="no-results__message">'
+             '<h1>No results found for <strong>q</strong></h1></div></div>')
+    ad = ('<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fduckduckgo.com%2Fy.js%3Fad_domain%3Damazon.com">'
+          'Deals</a><a class="result__snippet">Ad</a>')
+    good = '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.espn.com%2Fcricket%2F">Scores</a><a class="result__snippet">Live.</a>'
+    answers, calls = [], []
+    def fetch(url):
+        calls.append(url)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return url, "text/html", answer
+    studio.services.web._fetch_public_web = fetch
+    studio.services.harness.SEARCH_RETRY_WAITS = (0, 0)
+    try:
+        answers[:] = [empty, ad + good]
+        result = app._chat_read_tool("web_search", {"query": "india vs new zealand score"})
+        assert [r["url"] for r in result["results"]] == ["https://www.espn.com/cricket/"] and len(calls) == 2, (result, calls)
+        calls.clear()
+        answers[:] = [ValueError("The source returned HTTP 202; its contents could not be verified"), good]
+        assert app._chat_read_tool("web_search", {"query": "bitcoin price"}).get("results") and len(calls) == 2
+        calls.clear()
+        answers[:] = [empty, empty, empty]
+        result = app._chat_read_tool("web_search", {"query": "cheap laptop deals"})
+        assert result["verified"] is False and len(calls) == 3, "three tries at most, then the honest error"
+        calls.clear()
+        answers[:] = [good]
+        assert not app._chat_read_tool("web_search", {"query": "site:apple.com scores"}).get("results") and len(calls) == 1, \
+            "a site: filter that leaves nothing is an answer, not a throttled page"
+    finally:
+        studio.services.web._fetch_public_web = real
+        studio.services.harness.SEARCH_RETRY_WAITS = waits
+
+
+@check
 def web_page_evidence_keeps_publication_dates_and_bounds_prompt_size():
     real = app._fetch_public_web
     html = '<title>Release</title><meta property="article:published_time" content="2026-10-16"><header>Published October 16, 2026</header><nav>Ignore navigation</nav><article>' + 'verified source facts ' * 1000 + '</article>'
@@ -5611,8 +5721,65 @@ def failed_tools_return_evidence_and_repeats_are_bounded():
             assert any(event.get("x_tool", {}).get("status") == "error" for event in sse(result.text))
         with Env() as e, ChatEngine(*chat_action_deltas(name="get_current_datetime")) as engine:
             result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Today?"}]})
-            assert len(engine.seen) <= app.CHAT_TOOL_ROUNDS and "tool-call limit" in result.text and not e.sessions
+            # every round calls a tool: the rounds run out, then one last request without tools may only answer
+            assert len(engine.seen) == app.CHAT_TOOL_ROUNDS + 1 and not engine.seen[-1].get("tools")
+            assert "tool-call limit" in result.text and not e.sessions
     finally: studio.services.harness._chat_read_tool = real
+
+
+@check
+def an_engine_error_mid_reply_gets_one_retry():
+    """Found on 1.7.2 with LFM3 (MLX): mlx-vlm's tool-call parser runs int() on every integer parameter, so a model that
+    wrote "...?" for read_file's start_line made the engine send {"error": "invalid literal for int() ..."} mid-stream,
+    and that ended the turn. The model now gets one more try with the error in front of it; a second failure still shows."""
+    broken = {"error": "invalid literal for int() with base 10: '...?'"}
+    turns = [[chat_delta(content="Reading it."), broken], [chat_delta(content="The README is about CuaDriver's profile.")]]
+    with Env() as e, ChatEngine(turns=turns) as engine:
+        result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Read the README."}]})
+    events = [ev for ev in sse(result.text) if isinstance(ev, dict)]
+    text = "".join((ev["choices"][0].get("delta") or {}).get("content") or "" for ev in events if ev.get("choices"))
+    assert len(engine.seen) == 2 and "invalid literal" in engine.seen[1]["messages"][-1]["content"], engine.seen[-1]["messages"][-1:]
+    assert "CuaDriver's profile" in text and not any(ev.get("error") for ev in events), events[-3:]
+    with Env() as e, ChatEngine(turns=[[broken], [broken]]) as engine:
+        result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Read the README."}]})
+    errors = [ev["error"] for ev in sse(result.text) if isinstance(ev, dict) and ev.get("error")]
+    assert len(engine.seen) == 2 and errors and "invalid literal" in errors[-1], errors
+
+
+@check
+def tool_rounds_setting_bounds_each_reply():
+    """Asked for on 1.7.3: coding turns stopped at 12 rounds of tool calls. Settings → Tool rounds per reply sets the limit
+    (data/settings.json "tool_rounds", default 50, 10 to 200) and applies from the next message."""
+    with Env() as e:
+        assert e.c.get("/api/tool-rounds").json() == {"value": 50, "default": 50, "min": 10, "max": 200}
+        assert e.c.post("/api/tool-rounds", json={"value": 20}).json()["value"] == 20 and app.load_settings()["tool_rounds"] == 20
+        for bad in (5, 500, "30", 12.5, True):
+            assert e.c.post("/api/tool-rounds", json={"value": bad}).status_code == 400, bad
+        assert e.c.post("/api/tool-rounds", json={"rounds": 20}).status_code == 400
+        with ChatEngine(*chat_action_deltas(name="get_current_datetime")) as engine:
+            result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Today?"}]})
+        assert len(engine.seen) == 21 and "(20 tool rounds)" in result.text, len(engine.seen)
+        assert e.c.post("/api/tool-rounds", json={"value": None}).json()["value"] == 50 and "tool_rounds" not in app.load_settings()
+
+
+@check
+def tool_limit_ends_with_a_summary_not_an_empty_reply():
+    """Found on 1.7.3: a coding turn that used all its tool rounds ended with no answer at all, only "Stopped after the
+    tool-call limit". The model now gets one more request, without tools, to say what it did and what is left."""
+    summary = "I set up the venv and fixed two bugs; the game still needs one run to confirm."
+    turns = [chat_action_deltas(name="get_current_datetime") for _ in range(app.CHAT_TOOL_ROUNDS)] + \
+            [chat_action_deltas(name="get_current_datetime") + [chat_delta(content=summary)]]
+    with Env() as e, ChatEngine(turns=turns) as engine:
+        result = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Fix the game."}]})
+    events = [ev for ev in sse(result.text) if isinstance(ev, dict)]
+    text = "".join((ev["choices"][0].get("delta") or {}).get("content") or "" for ev in events if ev.get("choices"))
+    assert len(engine.seen) == app.CHAT_TOOL_ROUNDS + 1 and not engine.seen[-1].get("tools"), [len(engine.seen)]
+    assert "limit" in engine.seen[-1]["messages"][-1]["content"], "the last request says why no tool can run"
+    assert summary in text, text
+    assert not any((ev["choices"][0].get("delta") or {}).get("tool_calls") for ev in events[-3:] if ev.get("choices")), \
+        "a tool call in the summary request is not shown: nothing runs it"
+    errors = [ev["error"] for ev in events if ev.get("error")]
+    assert errors and errors[-1].startswith("Stopped after the tool-call limit") and "continue" in errors[-1], errors
 
 
 @check
@@ -6372,6 +6539,57 @@ def chat_resume_flag_adds_ids_without_changing_payloads_or_reposting():
         assert e.c.get('/api/chat/streams/'+sid+'?after=999999').status_code==400
         assert not e.sessions
     streams._STREAMS.clear()
+
+@check
+def code_view_lists_one_folder_and_returns_the_committed_version():
+    """The VS Code-style Code view: its explorer tree loads one folder at a time (the fuzzy file search stops at 100 files)
+    with the same hiding rules, never outside the workspace, and a file comes with its last committed text so a diff can
+    be shown side by side (None when the file is new or the folder has no git)."""
+    import shutil
+    import subprocess
+    ws = TMP / "code-tree"
+    shutil.rmtree(ws, ignore_errors=True)
+    (ws / "src" / "deep").mkdir(parents=True)
+    (ws / "node_modules" / "x").mkdir(parents=True)
+    (ws / "src" / "app.py").write_text("print(1)\n")
+    (ws / "README.md").write_text("# hi\n")
+    (ws / ".env").write_text("SECRET=1")
+    (ws / "server.pem").write_text("key")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+    subprocess.run(["git", "init", "-q"], cwd=ws, check=True)
+    subprocess.run(git + ["add", "src/app.py", "README.md"], cwd=ws, check=True)
+    subprocess.run(git + ["commit", "-qm", "one"], cwd=ws, check=True)
+    (ws / "src" / "app.py").write_text("print(2)\n")
+    (ws / "src" / "new.py").write_text("x = 1\n")
+    with Env() as e:
+        r = e.c.get("/api/workspace/tree", params={"workspace": str(ws)}).json()
+        assert [(x["name"], x["type"]) for x in r["entries"]] == [("src", "dir"), ("README.md", "file")], r
+        r = e.c.get("/api/workspace/tree", params={"workspace": str(ws), "dir": "src"}).json()
+        assert [(x["path"], x["type"]) for x in r["entries"]] == [("src/deep", "dir"), ("src/app.py", "file"), ("src/new.py", "file")], r
+        for outside in ("..", "../..", "/etc", "src/../.."):
+            assert e.c.get("/api/workspace/tree", params={"workspace": str(ws), "dir": outside}).status_code == 400, outside
+        f = e.c.get("/api/workspace/file", params={"workspace": str(ws), "path": "src/app.py"}).json()
+        assert f["content"] == "print(2)\n" and f["head"] == "print(1)\n", f
+        assert e.c.get("/api/workspace/file", params={"workspace": str(ws), "path": "src/new.py"}).json()["head"] is None
+    shutil.rmtree(ws / ".git")
+    with Env() as e:
+        assert e.c.get("/api/workspace/file", params={"workspace": str(ws), "path": "src/app.py"}).json()["head"] is None
+
+
+@check
+def search_files_without_a_workspace_searches_the_index():
+    """Found on 1.7.2 with LFM3: asked to find a passport in a chat with no Code workspace open, it called search_files with
+    scope=workspace and got "Choose an active workspace" (twice, in two chats). With no workspace, that is the index."""
+    from unittest.mock import patch
+    assert not app._chat_workspace.get(), "this check runs outside any workspace"
+    found = {"results": [{"file_id": 7, "name": "Passport.pdf", "path": "/Users/x/Documents/Passport.pdf"}]}
+    with patch("studio.services.harness.flag", side_effect=lambda name: name == "harness.coding_workflow"), \
+         patch("studio.services.harness.load_settings", return_value={"search": {"enabled": True}}), \
+         patch("studio.services.search._search_proxy", return_value=types.SimpleNamespace(json=lambda: found)) as proxy:
+        result = app._chat_read_tool("search_files", {"query": "passport", "scope": "workspace"})
+    assert proxy.call_count == 1 and result.get("results") == found["results"], result
+    assert "no workspace" in result.get("scope_note", "").lower(), result
+
 
 @check
 def harness_workspace_search_stays_local_without_an_index():

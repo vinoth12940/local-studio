@@ -154,7 +154,7 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .content ul, .content ol { padding-left: 24px; margin: 0 0 14px; } .content li { margin: 4px 0; }
 .content a { color: var(--ink); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--brand) 60%, transparent); text-underline-offset: 3px; }
 .content a:hover { text-decoration-color: var(--brand); }
-.content code, .codeblock pre, .chtdetail, .chhcard-preview, .code-textarea, .code-diff-view { font-variant-ligatures: none; }
+.content code, .codeblock pre, .chtdetail, .chhcard-preview, .code-diff-view { font-variant-ligatures: none; }
 .content code { font-family: "JetBrains Mono", monospace; font-size: .86em; background: var(--soft); padding: 2px 5px; border-radius: 5px; }
 .content blockquote { margin: 0 0 14px; border-left: 3px solid var(--line-2); padding-left: 14px; color: var(--ink-2); }
 .content table { border-collapse: collapse; margin: 0 0 14px; font-size: 14px; width: 100%; display: block; overflow-x: auto; }
@@ -720,7 +720,21 @@ dialog::backdrop { background: var(--overlay); }
 .code-topbar .sep-v { width: 1px; height: 18px; background: var(--line-2); margin: 0 2px; flex-shrink: 0; }
 .code-topbar .check { align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
 .code-topbar .check input { margin: 0; accent-color: var(--ok); }
-.code-workbench { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: 236px minmax(0, 1fr) 380px; overflow: hidden; }
+.code-workbench { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--ex-w, 236px) minmax(0, 1fr) var(--chat-w, 380px); overflow: hidden; }
+/* Each pane is the user's to size and hide, as in VS Code: drag a divider (double-click resets it), or use the buttons in the
+   top bar (⌘B explorer, ⌘J terminal, ⌥⌘B chat). The widths are CSS variables the drag sets; code/terminal.mjs keeps them. */
+.code-explorer { grid-column: 1; } .code-center { grid-column: 2; } .code-chatpane { grid-column: 3; }   /* each pane keeps its column when another is hidden */
+.code-workbench.no-ex { --ex-w: 0px !important; } .code-workbench.no-ex .code-explorer, .code-workbench.no-ex #codeSplitEx { display: none; }
+.code-workbench.no-chat { --chat-w: 0px !important; } .code-workbench.no-chat .code-chatpane, .code-workbench.no-chat #codeSplitChat { display: none; }
+.code-split { position: absolute; top: 0; bottom: 0; width: 7px; z-index: 6; cursor: col-resize; }
+#codeSplitEx { left: calc(var(--ex-w, 236px) - 3px); } #codeSplitChat { right: calc(var(--chat-w, 380px) - 4px); }
+.code-split::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; transition: background .12s; }
+.code-split:hover::after, .code-split.drag::after { background: var(--brand); width: 2px; left: 2px; }
+.code-center.no-term #codeTerm, .code-center.no-term #codeTermResize { display: none; }
+.code-layoutbtns { display: flex; gap: 2px; flex-shrink: 0; }
+.code-layoutbtns .iconbtn { width: 28px; height: 28px; color: var(--muted); }
+.code-layoutbtns .iconbtn.on { color: var(--ink); }
+.code-layoutbtns .iconbtn svg { width: 17px; height: 17px; }
 .code-explorer { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--side); min-height: 0; overflow: hidden; }
 .code-ex-tabs { display: flex; gap: 2px; margin: 8px 8px 6px; padding: 2px; background: var(--soft); border-radius: 8px; }
 .code-ex-tabs button { flex: 1; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
@@ -752,9 +766,34 @@ dialog::backdrop { background: var(--overlay); }
 .code-ed-bar .btn.sm { height: 26px; padding: 0 10px; flex-shrink: 0; }
 .code-ed-main { flex: 1; min-height: 0; display: flex; position: relative; overflow: hidden; }
 .code-ed-wrap { display: flex; flex: 1; min-width: 0; height: 100%; overflow: hidden; }
-.code-gutter { width: 52px; padding: 12px 10px 12px 4px; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; color: var(--muted); background: var(--side); border-right: 1px solid var(--line); user-select: none; overflow: hidden; flex-shrink: 0; white-space: pre; opacity: .8; }
-.code-textarea { flex: 1; min-width: 0; height: 100%; padding: 12px 14px; border: 0; outline: 0; resize: none; background: var(--bg); color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; tab-size: 2; white-space: pre; overflow: auto; }
-.code-textarea:disabled { background: var(--bg); }
+.code-monaco { flex: 1; min-width: 0; height: 100%; }
+.code-ed-wrap { position: relative; }
+.code-ed-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; font-size: 13px; color: var(--muted); background: var(--code-bg); }
+.code-ed-empty[hidden] { display: none; }
+/* File tabs, as in VS Code: the open one sits on the editor's background with a brand line; a dot marks unsaved edits */
+.code-tabs { display: flex; align-items: stretch; height: 34px; background: var(--side); border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; flex-shrink: 0; scrollbar-width: none; }
+.code-tabs[hidden] { display: none; }
+.code-tab { display: flex; align-items: center; gap: 4px; max-width: 220px; padding: 0 6px 0 12px; border-right: 1px solid var(--line); font: 12px "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--muted); cursor: pointer; white-space: nowrap; user-select: none; flex-shrink: 0; }
+.code-tab .nm { overflow: hidden; text-overflow: ellipsis; }
+.code-tab:hover { color: var(--ink); background: var(--hover); }
+.code-tab.on { color: var(--ink); background: var(--code-bg); box-shadow: inset 0 2px 0 var(--brand); }
+.code-tab .x { width: 18px; height: 18px; display: grid; place-items: center; border: 0; border-radius: 4px; background: none; color: inherit; font-size: 14px; line-height: 1; cursor: pointer; opacity: 0; }
+.code-tab:hover .x, .code-tab.on .x { opacity: .7; }
+.code-tab .x:hover { background: var(--line); opacity: 1; }
+.code-tab.dirty .x { opacity: 1; font-size: 0; }
+.code-tab.dirty .x::before { content: "●"; font-size: 10px; }
+.code-tab.dirty .x:hover { font-size: 14px; }
+.code-tab.dirty .x:hover::before { content: none; }
+/* The explorer's folder tree */
+.code-ex-item .chev { flex: none; width: 12px; color: var(--muted); font-size: 13px; line-height: 1; }
+.code-ex-item .chev::before { content: "›"; display: inline-block; transition: transform .1s; }
+.code-ex-item.open .chev::before { transform: rotate(90deg); }
+.code-ex-item .chev.none::before { content: ""; }
+.code-ex-item.dir .name { color: var(--ink-2); }
+.code-term-resize { height: 5px; margin-top: -3px; position: relative; z-index: 2; cursor: row-resize; flex-shrink: 0; }
+.code-term-resize:hover, .code-term-resize.drag { background: var(--brand); opacity: .55; }
+.code-edstatus { display: flex; align-items: center; gap: 12px; height: 22px; padding: 0 12px; border-top: 1px solid var(--line); background: var(--side); font: 11px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); white-space: pre; overflow: hidden; flex-shrink: 0; }
+.code-edstatus .grow { flex: 1; }
 .code-diff-view { flex: 1; min-width: 0; height: 100%; overflow: auto; padding: 8px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5; background: var(--bg); }
 .code-diff-line { display: block; padding: 0 14px; white-space: pre-wrap; word-break: break-all; min-height: 1.5em; color: var(--ink-2); }
 .code-diff-line.add { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ink); }
@@ -772,10 +811,6 @@ dialog::backdrop { background: var(--overlay); }
 .code-xterm { flex: 1; min-height: 0; padding: 6px 4px 4px 12px; background: var(--code-bg); overflow: hidden; }
 .code-xterm .xterm, .code-xterm .xterm-viewport { background: transparent !important; }
 .code-xterm .xterm-viewport::-webkit-scrollbar { width: 8px; } .code-xterm .xterm-viewport::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 8px; }
-.code-status { display: flex; align-items: center; gap: 8px; padding: 0 12px 8px; font-size: 11.5px; color: var(--muted); min-width: 0; flex-shrink: 0; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
-.code-modebtn { flex: none; border: 0; background: none; padding: 1px 6px; margin-left: -6px; border-radius: 5px; color: var(--muted); font: inherit; cursor: pointer; }
-.code-modebtn:hover { background: var(--hover); color: var(--ink); }
-.code-modebtn.on { color: var(--brand); }
 .code-status-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .code-procs[hidden] { display: none; }
 .code-procs { padding: 4px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; max-height: 64px; overflow-y: auto; flex-shrink: 0; }
@@ -783,14 +818,49 @@ dialog::backdrop { background: var(--overlay); }
 .code-proc .cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .code-proc .btn.sm { height: 20px; padding: 0 7px; font-size: 10.5px; }
 .code-chatpane { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--bg); min-width: 0; min-height: 0; overflow: hidden; }
-.code-chat-hdr { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; height: 40px; border-bottom: 1px solid var(--line); background: var(--side); flex-shrink: 0; min-width: 0; }
-.code-chat-hdr b { font-size: 13px; flex-shrink: 0; }
-.code-chat-hdr .sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
-.code-chat-hdr .btn.sm { height: 26px; padding: 0 9px; font-size: 12px; flex-shrink: 0; }
-.code-cmds { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 10px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
-.code-cmds button { height: 24px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; cursor: pointer; }
-.code-cmds button:hover { background: var(--hover); color: var(--ink); border-color: var(--line-2); }
-.code-cmds button.sub { font-family: inherit; }
+/* The agent chat, as in Claude Code, Codex and Copilot: the chat's name, past chats and a new chat; the conversation; one
+   input box with the open file attached, the edit mode and the model. Slash commands come up when you type /. */
+.code-chat-hdr { display: flex; align-items: center; gap: 2px; padding: 0 6px 0 14px; height: 38px; border-bottom: 1px solid var(--line); flex-shrink: 0; min-width: 0; }
+.code-chat-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: var(--ink); }
+.code-chat-hdr .iconbtn { width: 28px; height: 28px; color: var(--muted); flex-shrink: 0; }
+.code-chat-hdr .iconbtn:hover { color: var(--ink); }
+.code-chat-hdr .iconbtn svg { width: 16px; height: 16px; }
+.codeonly { display: none !important; }
+.code-chatpane .codeonly { display: inline-flex !important; }
+.code-chatpane .codectx { display: flex !important; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
+.code-chatpane .codectx:empty { display: none !important; }
+.codechip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 4px 0 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); font: 11.5px "JetBrains Mono", ui-monospace, monospace; color: var(--ink-2); max-width: 100%; }
+.codechip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.codechip.off { opacity: .55; text-decoration: line-through; }
+.codechip button { width: 16px; height: 16px; border: 0; border-radius: 4px; background: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; padding: 0; }
+.codechip button:hover { background: var(--line); color: var(--ink); }
+.code-chatpane #codeModeBtn.on { color: var(--brand); border-color: var(--brand); }
+.code-chatpane #codeModeBtn { flex: none; }
+.code-chatpane #codeModelPill { flex: 0 1 auto; min-width: 44px; max-width: 150px; gap: 3px; overflow: hidden; }
+.code-chatpane #codeModelPill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-chatpane #codeModelPill svg { width: 12px; height: 12px; flex: none; }
+.code-chatpane .crow .sel, .code-chatpane #micBtn { display: none; }
+.code-chatpane .crow .grow { order: 5; } .code-chatpane #attachBtn { order: 6; border: 0 !important; } .code-chatpane #send { order: 7; }
+.code-chatpane .welcome .starters { display: none; }
+.code-chatpane .welcome { justify-content: flex-end; padding: 0 10px 10px; }
+.code-chatpane .welcome h1 { margin-top: auto; }
+.code-chatpane .welcome .lead { margin-bottom: auto; }
+.code-chatpane .welcome .composer-wrap { padding: 0; }
+/* Agent steps as one line each, a mark for done, failed or running; the details open on click */
+.code-chatpane .chattoolstep { font: 12px "JetBrains Mono", ui-monospace, monospace; }
+.code-chatpane .chattoolstep .tres { display: none; }
+.code-chatpane details.chattoolstep[open] .tres { display: block; }
+.code-chatpane .chattoolstep .tdot { width: auto; height: auto; background: none !important; border: 0; animation: none; }
+.code-chatpane .chattoolstep.st-done .tdot::before { content: "✓"; color: var(--ok); }
+.code-chatpane .chattoolstep.st-error .tdot::before { content: "✕"; color: var(--bad); }
+.code-chatpane .chattoolstep.st-running .tdot::before { content: "◌"; color: var(--brand); }
+.code-chatpane .chattoolstep .tname { font-weight: 500; }
+.code-chatpane .turn.user .bubble, .code-chatpane .turn.user .ub { border-radius: 10px; }
+.chchanges { display: none; }
+.code-chatpane .chchanges { display: flex; align-items: center; gap: 6px; margin: 8px 0 4px; padding: 6px 8px 6px 10px; border: 1px solid var(--line); border-radius: 9px; font-size: 12px; color: var(--muted); }
+.code-chatpane .chchanges .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-chatpane .chchanges .btn.sm { height: 24px; padding: 0 9px; font-size: 12px; }
+.code-chatpane .actions .undo-btn[data-undo-turn] { display: none; }
 .code-chat-body { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; }
 .code-chatpane .thread { max-width: 100%; padding: 14px 14px 18px; }
 .code-chatpane .composer-wrap { max-width: 100%; padding: 0 10px 10px; }
@@ -802,7 +872,7 @@ dialog::backdrop { background: var(--overlay); }
 .ctxfoot.click { cursor: pointer; } .ctxfoot.click:hover { background: var(--hover); color: var(--ink); }
 .ctxring { width: 12px; height: 12px; border-radius: 50%; flex: none; background: conic-gradient(var(--ctxc, var(--muted)) calc(var(--ctxp, 0) * 1%), var(--line-2) 0); -webkit-mask: radial-gradient(circle, transparent 3px, #000 3.5px); mask: radial-gradient(circle, transparent 3px, #000 3.5px); }
 .ctxfoot.warn { color: var(--warn); --ctxc: var(--warn); } .ctxfoot.bad { color: var(--bad); --ctxc: var(--bad); }
-.code-status .ctxs.warn { color: var(--warn); } .code-status .ctxs.bad { color: var(--bad); }
+.code-edstatus .ctxs.warn { color: var(--warn); } .code-edstatus .ctxs.bad { color: var(--bad); }
 .foot .modefoot { border: 0; background: none; padding: 1px 6px; border-radius: 5px; font: inherit; color: var(--muted); cursor: pointer; }
 .foot .modefoot:hover { background: var(--hover); color: var(--ink); }
 .foot .modefoot.on { color: var(--brand); }
@@ -823,11 +893,14 @@ dialog::backdrop { background: var(--overlay); }
 .code-chatpane .starters button { justify-content: flex-start; height: auto; min-height: 32px; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; text-align: left; white-space: normal; }
 #codeExToggle { display: none; }
 @container codev (max-width: 1080px) {
-  .code-workbench { grid-template-columns: 196px minmax(0, 1fr) 330px; }
+  .code-workbench { grid-template-columns: var(--ex-w, 196px) minmax(0, 1fr) var(--chat-w, 330px); }
+  #codeSplitEx { left: calc(var(--ex-w, 196px) - 3px); } #codeSplitChat { right: calc(var(--chat-w, 330px) - 4px); }
   .code-wspath, .code-ed-meta { display: none; }
 }
 @container codev (max-width: 820px) {
-  .code-workbench { grid-template-columns: minmax(0, 1fr) 310px; }
+  .code-workbench { grid-template-columns: minmax(0, 1fr) var(--chat-w, 310px); }
+  #codeSplitEx { display: none; } #codeSplitChat { right: calc(var(--chat-w, 310px) - 4px); }
+  .code-center { grid-column: 1; } .code-chatpane { grid-column: 2; }
   .code-explorer { display: none; position: absolute; left: 0; top: 0; bottom: 0; width: 250px; z-index: 20; box-shadow: var(--shadow); }
   .code-workbench.ex-open .code-explorer { display: flex; }
   #codeExToggle { display: inline-flex; }
@@ -835,6 +908,7 @@ dialog::backdrop { background: var(--overlay); }
 }
 @container codev (max-width: 560px) {
   .code-workbench { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .code-center, .code-chatpane { grid-column: 1; } #codeSplitChat { display: none; }
   .code-chatpane { border-left: 0; border-top: 1px solid var(--line); }
   .code-term { height: 140px; }
 }
@@ -844,6 +918,10 @@ dialog::backdrop { background: var(--overlay); }
 <svg width="0" height="0" style="position:absolute">
   <symbol id="i-logo" viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"><path d="M9 2.5v3M12 2.5v3M15 2.5v3M9 18.5v3M12 18.5v3M15 18.5v3M2.5 9h3M2.5 12h3M2.5 15h3M18.5 9h3M18.5 12h3M18.5 15h3"/></g><rect x="5.5" y="5.5" width="13" height="13" rx="3" fill="currentColor" stroke="none"/><path d="M12 7.6c.4 2.4 2 4 4.4 4.4-2.4.4-4 2-4.4 4.4-.4-2.4-2-4-4.4-4.4 2.4-.4 4-2 4.4-4.4z" fill="var(--side)" stroke="none"/></symbol>
   <symbol id="i-side" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
+  <symbol id="i-pleft" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/><path d="M5.5 8h1.5M5.5 11h1.5"/></symbol>
+  <symbol id="i-pbottom" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 14.5h18"/></symbol>
+  <symbol id="i-pright" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M15 4v16"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/></symbol>
   <symbol id="i-new" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
   <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="1.8"/><path d="M21 15l-4.5-4.5L6 21"/></symbol>
@@ -983,9 +1061,12 @@ dialog::backdrop { background: var(--overlay); }
           </div>
           <div class="acmenu" id="acMenu"></div>
           <div class="atts" id="atts"></div>
+          <div class="codectx codeonly" id="codeCtx"></div>
           <textarea id="input" rows="1" placeholder="Message · Type @ to mention files or / for commands"></textarea>
           <div class="crow">
             <button class="iconbtn" id="attachBtn" title="Attach images or documents (PDF, Word, Excel, text, code)" style="width:32px;height:32px;border:1px solid var(--line);border-radius:9px"><svg class="i"><use href="#i-clip"/></svg></button>
+            <button class="pillbtn codeonly" id="codeModeBtn" title="Who approves file edits · shift+tab switches">✎ Ask before edits</button>
+            <button class="pillbtn codeonly" id="codeModelPill" title="Choose the model"><span id="codeModelTxt">Model</span><svg class="i"><use href="#i-down"/></svg></button>
             <input type="file" id="fileInput" multiple hidden accept="image/*,.pdf,.docx,.xlsx,.xlsm,.txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.css,.js,.ts,.tsx,.jsx,.py,.rb,.go,.rs,.java,.kt,.swift,.c,.h,.cpp,.hpp,.cs,.php,.sh,.zsh,.sql,.toml,.ini,.cfg,.log,.r,.scala,.lua,.dart,.vue,.svelte">
             <button class="pillbtn on" id="thinkPill" title="Think before answering"><svg class="i"><use href="#i-bulb"/></svg>Think</button>
             <div class="sel"><select id="effortSel" title="Effort"><option value="">Auto effort</option><option value="low">Low effort</option><option value="high">High effort</option><option value="xhigh">Max effort</option></select></div>
@@ -1041,9 +1122,17 @@ dialog::backdrop { background: var(--overlay); }
         <button class="btn sm" id="codeOpenMcp" title="Configure MCP tool servers">MCP</button>
         <button class="btn sm" id="codeWorkflow" title="Coding tasks, modes, and workflow controls">Workflow</button>
         <button class="btn sm" id="codeGitRefresh" title="Refresh files and git status" aria-label="Refresh"><svg class="i"><use href="#i-redo"/></svg></button>
+        <span class="sep-v"></span>
+        <div class="code-layoutbtns">
+          <button class="iconbtn on" id="codeTogEx" title="Show or hide the explorer (⌘B)" aria-label="Explorer"><svg class="i"><use href="#i-pleft"/></svg></button>
+          <button class="iconbtn on" id="codeTogTerm" title="Show or hide the terminal (⌘J)" aria-label="Terminal"><svg class="i"><use href="#i-pbottom"/></svg></button>
+          <button class="iconbtn on" id="codeTogChat" title="Show or hide the agent chat (⌥⌘B)" aria-label="Agent chat"><svg class="i"><use href="#i-pright"/></svg></button>
+        </div>
       </div>
 
       <div class="code-workbench">
+        <div class="code-split" id="codeSplitEx" title="Drag to resize · double-click to reset"></div>
+        <div class="code-split" id="codeSplitChat" title="Drag to resize · double-click to reset"></div>
         <aside class="code-explorer">
           <div class="code-ex-tabs" id="codeExTabs">
             <button data-extab="files" class="on">Files</button>
@@ -1057,6 +1146,7 @@ dialog::backdrop { background: var(--overlay); }
         </aside>
 
         <div class="code-center">
+          <div class="code-tabs" id="codeTabs" hidden></div>
           <div class="code-ed-bar">
             <button class="btn sm" id="codeExToggle" title="Show files">Files</button>
             <span class="code-ed-path" id="codeEdPath">No file open</span>
@@ -1073,11 +1163,14 @@ dialog::backdrop { background: var(--overlay); }
 
           <div class="code-ed-main">
             <div class="code-ed-wrap" id="codeEdWrap">
-              <div class="code-gutter" id="codeGutter">1</div>
-              <textarea class="code-textarea" id="codeEditor" spellcheck="false" disabled placeholder="Pick a file on the left, or ask the agent on the right to change something."></textarea>
+              <div class="code-monaco" id="codeMonaco"></div>
+              <div class="code-ed-empty" id="codeEdEmpty">Pick a file on the left, or ask the agent on the right to change something.</div>
             </div>
+            <div class="code-monaco" id="codeMonacoDiff" style="display:none"></div>
             <div class="code-diff-view" id="codeDiffWrap" style="display:none"></div>
           </div>
+
+          <div class="code-term-resize" id="codeTermResize" title="Drag to resize the terminal"></div>
 
           <div class="code-term" id="codeTerm">
             <div class="code-term-bar">
@@ -1092,27 +1185,16 @@ dialog::backdrop { background: var(--overlay); }
             <div class="code-procs" id="codeProcList" hidden></div>
             <div class="code-xterm" id="codeXterm"></div>
           </div>
+          <div class="code-edstatus"><span class="code-status-txt" id="codeStatusTxt"></span><span class="grow"></span><span id="codeEdStatus"></span></div>
         </div>
 
         <aside class="code-chatpane">
           <div class="code-chat-hdr">
-            <svg class="i" style="width:15px;height:15px"><use href="#i-code"/></svg>
-            <b>Agent</b>
-            <span class="sub" id="codeChatSub"></span>
-            <button class="btn sm" id="codeNewTask" title="Start a new task in this workspace">New task</button>
-          </div>
-          <div class="code-cmds">
-            <button data-code-cmd="/review" title="Review uncommitted changes for bugs, security and conventions">/review</button>
-            <button data-code-cmd="/test" title="Run the test suite and fix failures">/test</button>
-            <button data-code-cmd="/commit" title="Draft a commit message from the diff and commit">/commit</button>
-            <button data-code-cmd="/simplify" title="Simplify recently changed code">/simplify</button>
-            <button data-code-cmd="/init" title="Generate AGENTS.md project instructions">/init</button>
-            <button data-code-cmd="/compact" title="Summarize older turns to free up context">/compact</button>
-            <button class="sub" data-code-subagent="researcher" title="Explore the workspace in a separate sub-agent context">Research</button>
-            <button class="sub" data-code-subagent="verifier" title="Check recent changes in a separate sub-agent context">Verify</button>
+            <span class="code-chat-title" id="codeChatTitle">New chat</span>
+            <button class="iconbtn" id="codeChatHistory" title="Past chats" aria-label="Past chats"><svg class="i"><use href="#i-history"/></svg></button>
+            <button class="iconbtn" id="codeNewTask" title="New chat in this workspace" aria-label="New chat"><svg class="i"><use href="#i-plus"/></svg></button>
           </div>
           <div class="code-chat-body" id="codeChatDock"></div>
-          <div class="code-status"><button class="code-modebtn" id="codeModeBtn" title="Shift+Tab in the message box also switches">✎ Ask before edits</button><span class="code-status-txt" id="codeStatusTxt"></span></div>
         </aside>
       </div>
     </section>
@@ -1307,6 +1389,14 @@ dialog::backdrop { background: var(--overlay); }
           <div id="ctxNotes"></div>
         </div>
 
+        <div class="section" id="roundsSet">
+          <div class="sh"><div><h3>Tool rounds</h3><p id="roundsSum">–</p></div></div>
+          <div class="row"><div class="grow"><div class="ttl">Tool rounds per reply</div>
+            <div class="sub">How many rounds of tool calls (reading files, running commands, searching) one reply may make before it stops and tells you what is done and what is left. More rounds let long coding tasks finish; a model stuck in a loop uses them all. Applies from your next message.</div></div>
+            <input class="agnum" id="roundsInput" type="number" min="10" max="200" step="1" aria-label="Tool rounds per reply">
+            <button class="btn sm" id="roundsSave">Save</button><button class="btn sm" id="roundsReset">Reset</button></div>
+        </div>
+
         <div class="section" id="agSet">
           <div class="sh"><div><h3>Computer access</h3><p id="agSetSum">–</p></div>
             <label class="switch"><input type="checkbox" id="agEnable"><span></span></label></div>
@@ -1326,6 +1416,8 @@ dialog::backdrop { background: var(--overlay); }
             <div class="row" id="agLimits"><div class="grow"><div class="ttl">Limits</div><div class="sub">A task stops at whichever comes first. Time spent waiting for you does not count.</div></div>
               <label class="field" style="flex-direction:row; align-items:center; gap:8px">Steps<input class="agnum" id="agSteps" type="number" min="1" max="200" step="1"></label>
               <label class="field" style="flex-direction:row; align-items:center; gap:8px">Minutes<input class="agnum" id="agMins" type="number" min="1" max="120" step="1"></label></div>
+            <div class="row"><div class="grow"><div class="ttl">Model for computer tasks</div><div class="sub">Small chat models such as LFM3 1.7B can't operate a browser reliably. A task switches to this model, and chat switches back on your next message.</div></div>
+              <div class="sel sm"><select id="agModel" aria-label="Model for computer tasks"></select></div></div>
             <div class="row"><div class="grow"><div class="ttl">Browser profile</div><div class="sub">The sign-ins and cookies the agent's browser keeps. Your own browser is not touched.</div></div>
               <button class="btn sm danger" id="agReset">Reset</button></div>
           </div>
