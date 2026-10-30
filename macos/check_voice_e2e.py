@@ -53,6 +53,7 @@ MODEL_ID = live_model_id()
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402
 from studio.services import engines  # noqa: E402
+from studio.services import models  # noqa: E402
 from studio.services import voice as services_voice  # noqa: E402
 
 
@@ -156,10 +157,12 @@ def serve_app():
 
 
 def main():
-    if not MODEL_ID or not engines._engine_ready("text"):
+    # The engine a spoken turn of this model uses (LFM3 runs only on mlx-vlm); /api/chat must find it ready, never start it.
+    mode = models.engine_mode(models.chat_model(MODEL_ID)) if MODEL_ID else None
+    if not mode or not engines._engine_ready(mode):
         print("   blocked: no chat model is loaded in Local Studio (load one, then run this again)")
         return 2
-    print(f"   model: {MODEL_ID} (attach-only)")
+    print(f"   model: {MODEL_ID} on the {mode} engine (attach-only)")
     server = serve_app()
     client = httpx.Client(trust_env=False)
     report = {"model": MODEL_ID, "at": time.strftime("%Y-%m-%d %H:%M:%S"), "cases": []}
