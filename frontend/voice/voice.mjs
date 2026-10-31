@@ -74,7 +74,10 @@ function explainError(e) {
   return "The reply failed.";
 }
 function asked(text) { const el = $("vvAsk"); if (el) el.textContent = text || ""; }
-function saying(text) { const el = $("vvSay"); if (el) { el.textContent = text || ""; el.scrollTop = el.scrollHeight; } }   // the whole reply so far; the newest words stay in view
+function saying(text) {                                  // the whole reply so far; the newest words stay in view, the top fades only when it overflows
+  const el = $("vvSay"); if (!el) return;
+  el.textContent = text || ""; el.scrollTop = el.scrollHeight; el.classList.toggle("fade", el.scrollHeight > el.clientHeight + 2);
+}
 function syncBar() { const bar = $("voiceBar"); if (bar) bar.hidden = !v.on || view === "voice"; }
 // The display's bars: your level while listening, a speech-like movement while it speaks, a slow ripple while it thinks.
 const BAR_SHAPE = [0.35, 0.55, 0.75, 0.9, 1, 0.9, 0.75, 0.55, 0.35];
@@ -83,12 +86,14 @@ function drawOrb() {
   const orb = $("vOrb"); if (orb) orb.style.transform = `scale(${(1 + Math.min(1, amp) * 0.9).toFixed(3)})`;
   if (view !== "voice") return;
   const t = performance.now() / 1000, thinking = v.state === "thinking";
+  const hud = $("vvHud"), lvl = thinking ? 0.12 + 0.08 * Math.sin(t * 3) : Math.min(1, amp);
+  if (hud && Math.abs(lvl - (drawOrb.last ?? -1)) > 0.015) { drawOrb.last = lvl; hud.style.setProperty("--amp", lvl.toFixed(2)); }   // on the orb only: the transcript never restyles
   document.querySelectorAll("#vvBars span").forEach((el, i) => {
     const a = thinking ? 0.18 + 0.12 * Math.sin(t * 5 + i * 0.7) : Math.max(0.08, Math.min(1, amp * BAR_SHAPE[i] * (0.7 + 0.6 * Math.random())));
     el.style.transform = `scaleY(${a.toFixed(3)})`;
   });
 }
-function restBars() { document.querySelectorAll("#vvBars span").forEach((el) => { el.style.transform = "scaleY(0.1)"; }); }
+function restBars() { document.querySelectorAll("#vvBars span").forEach((el) => { el.style.transform = "scaleY(0.1)"; }); drawOrb.last = 0; $("vvHud")?.style.setProperty("--amp", "0"); }
 
 // The transcript beside the display: what you said, the tools it used, and what it said aloud.
 const tr = { you: null, bot: null, count: 0, chatId: undefined };
@@ -517,13 +522,13 @@ function voiceOnEnd(bot) {
 }
 
 // ---------------------------------------------------------------- controls
-const CHECK = '<svg class="i"><use href="#i-check"/></svg>';
 function renderCharacters() {
   const c = character(), sel = $("vChar");
   if (sel) { sel.innerHTML = CHARACTERS.map((x) => `<option value="${x.id}">${x.name}</option>`).join(""); sel.value = c.id; }
   const list = $("vvChars");
-  if (list) list.innerHTML = CHARACTERS.map((x) => `<button class="vv-ch${x.id === c.id ? " on" : ""}" data-ch="${x.id}" aria-pressed="${x.id === c.id}">`
-    + `<i style="background:${x.color}"></i><span><b>${x.name}</b><small>${x.tag}</small></span>${CHECK}</button>`).join("");
+  if (list) list.innerHTML = CHARACTERS.map((x) => `<button class="vv-ch${x.id === c.id ? " on" : ""}" data-ch="${x.id}" aria-pressed="${x.id === c.id}" title="${x.tag}" style="--cc:${x.color}">`
+    + `<i style="background:${x.color}"></i><b>${x.name}</b></button>`).join("");
+  if ($("vvChTag")) $("vvChTag").textContent = c.tag;
   $("vv")?.style.setProperty?.("--vc", c.color);
   if ($("vvName")) $("vvName").textContent = c.name;
 }
@@ -565,6 +570,14 @@ $("vvLog").onclick = (e) => {
 };
 $("vvChars").onclick = (e) => { const b = e.target.closest?.("[data-ch]"); if (b) pickCharacter(b.dataset.ch); };
 renderCharacters();
+// The side panel (voices, models, transcript) can be hidden for a clean stage; the choice is kept.
+function applyPanel() {
+  const on = store.get("voicePanel", true) !== false;
+  $("vv").dataset.panel = on ? "shown" : "hidden";
+  $("vvPanel").setAttribute("aria-pressed", String(on)); $("vvPanel").setAttribute("aria-label", on ? "Hide side panel" : "Show side panel");
+}
+$("vvPanel").onclick = () => { store.set("voicePanel", store.get("voicePanel", true) === false); applyPanel(); };
+applyPanel();
 // The mic button and the Voice item appear only when the voice.enabled flag is on.
 (async () => {
   try {
