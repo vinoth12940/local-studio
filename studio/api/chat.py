@@ -331,6 +331,11 @@ async def chat(request: Request):
         said = said if raw_messages and raw_messages[-1].get("role") == "user" and said[-1] else []   # only this turn's words
         preflight = (asyncio.ensure_future(asyncio.to_thread(decide.preflight, said[-1], said[-2] if len(said) > 1 else None))
                      if voice_note and not warm and said and flag("voice.decide") else None)
+        # harness.web_fast: a typed question that plainly asks for live facts gets the same search first, from the word rules
+        # alone (d1 runs only while Voice is on). LFM3 1.7B answered "no live weather service" without searching otherwise.
+        # Plain chats only: a coding turn (a workspace) and a slash command are left to the model.
+        typed_plan = (decide.rules(said[-1]) if not voice_note and not warm and said and not workspace
+                      and not said[-1].startswith("/") and flag("harness.web_fast") else None)
         # The agent holds the machine: only its own engine may answer (requests run one at a time).
         if agent_lock.locked() and (mode, m["id"]) != (agent_engine["mode"], agent_engine["model_id"]):
             yield _sse({"error": AGENT_BUSY_MSG})
@@ -385,7 +390,8 @@ async def chat(request: Request):
         observed_steps = set()
         _chat_sessions[session.id] = session
         try:
-            pick = decide.prefetch_call(await preflight, said[-1], flag("harness.web_fast"), use_files) if preflight else None
+            plan = (await preflight) if preflight else typed_plan
+            pick = decide.prefetch_call(plan, said[-1], flag("harness.web_fast"), use_files) if plan else None
             if pick:
                 # A spoken turn that needs live facts (or the user's files): run that search now and hand the model its result
                 # as the first tool result, so it answers from evidence in what would have been its second round.

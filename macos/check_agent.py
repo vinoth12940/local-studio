@@ -5579,12 +5579,52 @@ def voice_turns_prefetch_live_facts_before_the_first_round():
             evidence_sent = engine.seen[0]["messages"][-1]["content"]
             assert "/Users/x/Documents" not in evidence_sent and '"snippet_is_partial": true' in evidence_sent, \
                 "a prefetched file search is trimmed exactly as the loop trims one"
-        reads.clear()
+        asked = []
+        decide.preflight = lambda text, previous, timeout=0.25: asked.append(text) or plans[text]
         with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
             e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Bitcoin price right now?"}]})
-            assert reads == [], "typed chat never prefetches"
+            assert asked == [], "a typed turn never asks d1 (it runs only while Voice is on); the word rules decide it"
     finally:
         studio.services.harness._chat_read_tool, decide.preflight = real_read, real_pre
+        app.save_settings(original)
+
+
+@check
+def typed_live_questions_search_first_with_faster_web_answers():
+    """Found on 1.7.3 and 1.7.4 with LFM3 1.7B: with harness.web_fast on, a typed "What is the weather in Chennai right
+    now?" got a clock call and "I don't have a live weather service", twice in two runs; spoken turns searched because the
+    live-facts check runs the search first. Typed turns now get that search from the word rules, in plain chats only."""
+    real_read, original = app._chat_read_tool, app.load_settings()
+    reads = []
+    def evidence(name, args, timezone=None):
+        reads.append((name, args))
+        return {"results": [{"url": "https://weather.com/", "title": "Chennai weather"}],
+                "pages": [{"url": "https://weather.com/", "text": "Chennai: 30 °C, humid."}]}
+    studio.services.harness._chat_read_tool = evidence
+    ask = lambda text, **extra: {"model_id": TEXT_MLX, "messages": [{"role": "user", "content": text}], **extra}
+    turns = [chat_action_deltas(name="reply", args='{"text":"About 30 degrees."}')]
+    ws = TMP / "typed-prefetch-ws"
+    ws.mkdir(exist_ok=True)
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
+            r = e.c.post("/api/chat", json=ask("What is the weather in Chennai right now?"))
+        assert reads == [("web_search", {"query": "What is the weather in Chennai right now?"})], reads
+        assert engine.seen[0]["messages"][-1]["role"] == "tool" and "30 °C" in engine.seen[0]["messages"][-1]["content"]
+        assert any(ev.get("x_tool", {}).get("id") == "pre-0" for ev in sse(r.text) if isinstance(ev, dict))
+        for said, extra in (("Hello there, how are you?", {}), ("And tomorrow?", {}), ("/review", {}),
+                            ("What is the weather in Chennai right now?", {"workspace": str(ws)})):
+            reads.clear()
+            with Env(enabled=False) as e, ChatEngine(turns=list(turns)):
+                e.c.post("/api/chat", json=ask(said, **extra))
+            assert reads == [], (said, extra, reads)          # greetings, follow-ups, commands and coding turns: the model decides
+        app.save_settings({**original, "harness": {"web_fast": False}})
+        reads.clear()
+        with Env(enabled=False) as e, ChatEngine(turns=list(turns)):
+            e.c.post("/api/chat", json=ask("What is the weather in Chennai right now?"))
+        assert reads == [], "only with faster web answers on"
+    finally:
+        studio.services.harness._chat_read_tool = real_read
         app.save_settings(original)
 
 
