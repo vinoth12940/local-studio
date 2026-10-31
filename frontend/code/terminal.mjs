@@ -1,7 +1,9 @@
 // code/terminal.mjs: moved from index.html's inline script in the refactor's P2 split.
 import { $, api, esc, jpost, store, toast, vendorLoad } from "../core/util.mjs";
 import { showView } from "../ui/views.mjs";
-import { listState, newChat, saveChat, updateWorkspaceUI } from "../chat/list.mjs";
+import { listState, newChat, renderHistory } from "../chat/list.mjs";
+import { renderThread } from "../chat/thread.mjs";
+import { chDetach } from "../chat/computer.mjs";
 import { autosize, ctxUsage, fmtTok, toggleMode } from "../chat/composer.mjs";
 import {
   activeCodeWs, codeActivate, codeCloseFile, codeCloseTab, codeConfirmDiscard, codeDirty, codeEdViewMode, codeEmpty, codeGitInfo,
@@ -214,7 +216,9 @@ $("codeWsPick").onclick = async () => {
     const r = await jpost("/api/search/choose-folder");
     if (!r?.path) return;
     listState.codeWorkspace = r.path; store.set("code_workspace", r.path);
-    if (listState.current) { listState.current.workspace = r.path; updateWorkspaceUI(); if (listState.current.messages.length) await saveChat(listState.current); }
+    const cur = listState.current;                                                   // a session stays with its folder: another folder starts its own
+    if (cur && cur.workspace !== r.path) { if (cur.messages.length) { chDetach(); listState.current = null; } else cur.workspace = r.path; }
+    renderThread(); renderHistory();
     codeCloseFile(); $("codeFileQ").value = "";
     toast(`Workspace: ${r.path}`);
     loadCodeView(); codeTermStart(true);

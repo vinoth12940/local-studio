@@ -2,8 +2,8 @@
 import { $, DEFAULT_MAX_TOKENS, store, toast } from "../core/util.mjs";
 import { setCollapsed } from "./theme.mjs";
 import {
-  agFetchStatus, agOpen, codeTermS, codeTermStart, codeTermTheme, loadCodeView, loadGallery, loadLibrary, loadManage,
-  loadSearch, renderHistory, renderThread, scrollBottom, updateHeader, voiceViewShown
+  agFetchStatus, agOpen, chResume, codeTermS, codeTermStart, codeTermTheme, loadCodeView, loadGallery, loadLibrary, loadManage,
+  loadSearch, renderHistory, renderThread, scrollBottom, switchSession, updateHeader, voiceViewShown
 } from "../modules.mjs";
 
 // ---------------- views
@@ -22,6 +22,7 @@ function syncChatDock() {
   if (wrap && (!w || !w.contains(wrap)) && wrap.parentElement !== host) host.appendChild(wrap);
 }
 function showView(v) {
+  const swapped = switchSession(view, v);                                               // Chat, Code and Voice: each its own conversation
   view = v;
   document.querySelectorAll(".view").forEach((s) => s.classList.toggle("on", s.id === "v-" + v));
   document.querySelectorAll(".navitem[data-view]").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
@@ -45,6 +46,7 @@ function showView(v) {
   voiceViewShown(v);
   if (v === "chat") { setTimeout(() => $("input").focus(), 0); agFetchStatus(); }
   renderHistory();
+  if (swapped) chResume();
   if (innerWidth < 820) setCollapsed(true);
 }
 document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));

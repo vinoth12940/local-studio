@@ -1062,6 +1062,39 @@ def chat_metadata_cache_detects_external_and_atomic_changes():
 
 
 @check
+def conversations_are_listed_with_their_kind():
+    """Chat, Code and Voice keep separate conversations, and each view lists only its own. A conversation with a workspace
+    (older ones included) is Code, one marked voice is Voice, anything else is Chat; a Chat or Voice one never keeps a
+    workspace, so nothing in Code can bind a folder to it."""
+    from fastapi.testclient import TestClient
+    c = TestClient(app.app, base_url="http://127.0.0.1:7860")
+    saved = {
+        "0c0de00000000001": ({"kind": "code", "workspace": "/tmp/proj"}, {"kind": "code", "workspace": "/tmp/proj"}),
+        "0c0de00000000002": ({"workspace": "/tmp/old"}, {"kind": "code", "workspace": "/tmp/old"}),
+        "0c0de00000000003": ({"kind": "voice"}, {"kind": "voice"}),
+        "0c0de00000000004": ({"kind": "chat"}, {}),
+        "0c0de00000000005": ({}, {}),
+        "0c0de00000000006": ({"kind": "chat", "workspace": "/tmp/leak"}, {}),
+        "0c0de00000000007": ({"kind": "voice", "workspace": "/tmp/leak"}, {"kind": "voice"}),
+    }
+    original = app.load_settings()
+    try:
+        for cid, (fields, _) in saved.items():
+            assert c.put(f"/api/chats/{cid}", json={"title": cid, "messages": [], **fields}).status_code == 200
+        for index in (False, True):
+            app.save_settings({**original, "performance": {"chat_index": index}})
+            listed = {x["id"]: {k: v for k, v in x.items() if k in ("kind", "workspace")} for x in c.get("/api/chats").json() if x["id"] in saved}
+            assert listed == {cid: want for cid, (_, want) in saved.items()}, (index, listed)
+        for cid in ("0c0de00000000006", "0c0de00000000007"):
+            assert "workspace" not in c.get(f"/api/chats/{cid}").json(), "a Chat or Voice conversation never keeps a workspace"
+        assert c.get("/api/chats/0c0de00000000002").json()["workspace"] == "/tmp/old", "older Code conversations keep theirs"
+    finally:
+        app.save_settings(original)
+        for cid in saved:
+            c.delete(f"/api/chats/{cid}")
+
+
+@check
 def search_render_pool_does_not_starve_quick_routes():
     from studio.infra.workers import isolated_io
     import anyio.to_thread

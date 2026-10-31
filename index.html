@@ -292,6 +292,17 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .vv-m.you p { color: #c5ced6; }
 .vv-step, .vv-empty { margin: 0; font-size: 12.5px; color: #6c7884; }
 .vv-note.err, .vv-step.err { color: #ff8f80; }
+.vv-type { margin-top: 18px; display: flex; gap: 8px; width: min(460px, 100%); }
+.vv-type[hidden] { display: none; }
+.vv-type input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: #e9eef2; background: #121a21; border: 1px solid #26323c; border-radius: 10px; padding: 9px 12px; }
+.vv-type input:focus { outline: none; border-color: var(--vc); }
+.vv-type button, .vv-appr button { font: inherit; font-size: 13px; border-radius: 10px; border: 1px solid #26323c; background: transparent; color: #e9eef2; padding: 0 14px; cursor: pointer; }
+.vv-type button { background: var(--vc); border-color: var(--vc); color: #0c0f12; }
+.vv-appr { display: flex; gap: 8px; margin-top: 6px; }
+.vv-appr button { padding: 5px 12px; font-size: 12.5px; }
+.vv-appr button:hover:not(:disabled) { background: #151c22; }
+.vv-appr button:disabled { opacity: .5; cursor: default; }
+.vv-step.appr { color: #e9eef2; }
 @keyframes vvspin { to { transform: rotate(360deg); } }
 @keyframes vvspinr { to { transform: rotate(-360deg); } }
 @media (prefers-reduced-motion: reduce) { .vv-r1, .vv-r2 { animation: none; } }
@@ -864,7 +875,7 @@ dialog::backdrop { background: var(--overlay); }
 .code-chat-body { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; }
 .code-chatpane .thread { max-width: 100%; padding: 14px 14px 18px; }
 .code-chatpane .composer-wrap { max-width: 100%; padding: 0 10px 10px; }
-.code-chatpane .composer-wrap .foot, .code-chatpane #filesPill, .code-chatpane #wsPill { display: none; }
+.code-chatpane .composer-wrap .foot, .code-chatpane #filesPill { display: none; }
 .code-chatpane #compactBtn { display: none !important; }                                   /* the pane has its own /compact chip */
 .foot { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 12px; }
 .ctxfoot { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 1px 6px; border-radius: 5px; font: inherit; color: var(--muted); cursor: default; }
@@ -1071,7 +1082,6 @@ dialog::backdrop { background: var(--overlay); }
             <button class="pillbtn on" id="thinkPill" title="Think before answering"><svg class="i"><use href="#i-bulb"/></svg>Think</button>
             <div class="sel"><select id="effortSel" title="Effort"><option value="">Auto effort</option><option value="low">Low effort</option><option value="high">High effort</option><option value="xhigh">Max effort</option></select></div>
             <button class="pillbtn" id="filesPill" aria-label="My files"><svg class="i"><use href="#i-file"/></svg><span class="pl">My files</span></button>
-            <button class="pillbtn" id="wsPill" aria-label="Workspace folder" title="Set active workspace folder for file & shell tools"><svg class="i"><use href="#i-folder"/></svg><span class="pl" id="wsTxt">Workspace</span><span id="wsClear" style="display:none;margin-left:4px;opacity:0.6">&times;</span></button>
             <button class="pillbtn" id="compactBtn" title="Compact older conversation turns into a structured state checkpoint" style="display:none"><svg class="i"><use href="#i-spark"/></svg><span class="pl">Compact</span></button>
             <div class="grow"></div>
             <button class="iconbtn micbtn" id="micBtn" title="Talk to the assistant (voice, on this Mac)" aria-label="Talk" hidden><svg class="i"><use href="#i-mic"/></svg></button>
@@ -1099,6 +1109,7 @@ dialog::backdrop { background: var(--overlay); }
             <div class="vv-c"><button class="vv-btn" id="vvType" aria-label="Type instead"><svg class="i"><use href="#i-keys"/></svg></button><span>Type</span></div>
             <div class="vv-c"><button class="vv-btn go" id="vvGo" aria-label="Start talking"><svg class="i"><use href="#i-mic" id="vvGoIcon"/></svg></button><span id="vvGoTxt">Start</span></div>
           </div>
+          <form class="vv-type" id="vvTypeRow" hidden><input id="vvTypeIn" autocomplete="off" aria-label="Type instead of talking" placeholder="Type instead of talking"><button type="submit">Send</button></form>
         </div>
         <aside class="vv-side">
           <section class="vv-voices"><h3>Voice</h3><div class="vv-chars" id="vvChars"></div></section>

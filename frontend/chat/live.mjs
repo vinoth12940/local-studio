@@ -4,7 +4,7 @@ import { chatEvents } from "./stream.mjs";
 import { md } from "../core/markdown.mjs";
 import { view } from "../ui/views.mjs";
 import { poll } from "../ui/engine.mjs";
-import { chLive, listState, renderHistory, saveChat, updateWorkspaceUI } from "./list.mjs";
+import { chatKind, chLive, kindOfView, listState, renderHistory, saveChat, updateWorkspaceUI } from "./list.mjs";
 import {
   chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chToolStepsInner, chVerificationHTML, drawSpark, fmtSecs, modelThinks, renderThread,
   scrollBottom, showPerf, threadState, turnHTML, verificationResult
@@ -15,19 +15,24 @@ import {
 } from "./composer.mjs";
 import { activeCodeWs, AG_RID, chAttachAction, CODE_MUTATING, codeContextFor, loadCodeView, onAgentCodeMutation, refreshWorkflow, searchState, sr, takeWorkflowResume, useFiles, voiceOnEnd, voiceOnEvent, voiceRequest, workflowRequest } from "../modules.mjs";
 
-async function send(spoken) {                            // spoken: text from voice/voice.mjs; the composer's draft stays as typed
+// spoken: text from voice/voice.mjs, which always goes to the Voice conversation (on screen or not); the composer's draft
+// stays as typed. Typed text goes to the open view's conversation. Only a Code conversation has a workspace.
+async function send(spoken) {
+  const kind = spoken === undefined ? kindOfView(view) : "voice", shown = kind === kindOfView(view);
+  let chat = shown ? listState.current : listState.sessions[kind];
   let text = (spoken ?? $("input").value).trim();
-  if (spoken === undefined && view === "code") text = codeContextFor(text);         // the open file, the first time this chat mentions it
+  if (spoken === undefined && kind === "code") text = codeContextFor(text);         // the open file, the first time this chat mentions it
   const atts = spoken === undefined ? attachmentsState.pending.filter((p) => p.meta).map((p) => p.meta) : [];
-  if ((text || atts.length) && listState.streaming && liveGen && liveGen.chat !== listState.current) return toast(`Still answering in “${liveGen.chat.title}”. Wait for it, or open it and stop it.`);
+  if ((text || atts.length) && listState.streaming && liveGen && liveGen.chat !== chat) {
+    return toast(chatKind(liveGen.chat) === "voice" ? "Voice is still answering. Wait for it, or press End in Voice." : `Still answering in “${liveGen.chat.title}”. Wait for it, or open it and stop it.`);
+  }
   if ((!text && !atts.length) || listState.streaming || chLive() || attachmentsState.pending.some((p) => p.busy)) return;
-  if (view === "code" && !activeCodeWs()) await loadCodeView();
-  const workspace = view === "code" ? activeCodeWs() : listState.current?.workspace;
-  if (view === "code" && !workspace) return toast("Choose a workspace folder before sending a coding task.");
-  if (workspace) {
-    if (!listState.current) listState.current = { id: newId(), title: "New coding task", messages: [] };
-    listState.current.workspace = workspace;
-    updateWorkspaceUI();
+  if (kind === "code") {
+    if (!activeCodeWs()) await loadCodeView();
+    const workspace = activeCodeWs();
+    if (!workspace) return toast("Choose a workspace folder before sending a coding task.");
+    if (!chat) chat = { id: newId(), title: "New coding task", kind, messages: [] };
+    chat.workspace = workspace;
   }
   closeAc();
   if (spoken === undefined && (text === "/compact" || text.startsWith("/compact "))) {
@@ -37,12 +42,13 @@ async function send(spoken) {                            // spoken: text from vo
   }
   if (spoken === undefined) { $("input").value = ""; attachmentsState.pending = []; renderPending(); autosize(); }
   const title = (text || atts.map((a) => a.name).join(", ")).replace(/\s+/g, " ").slice(0, 48);
-  if (!listState.current) listState.current = { id: newId(), title, messages: [] };
-  else if (!listState.current.messages.length) listState.current.title = title;                            // a placeholder ("New coding task", "New chat") until the first message
-  listState.current.messages.push({ role: "user", content: text, attachments: atts.length ? atts : undefined });
-  saveChat(listState.current);                                                                    // in the sidebar now, so the user can leave and come back mid-reply
-  renderThread(); scrollBottom(true);
-  generate();
+  if (!chat) chat = { id: newId(), title, kind, messages: [] };
+  else if (!chat.messages.length) chat.title = title;                                             // a placeholder ("New coding task", "New chat") until the first message
+  if (shown) listState.current = chat; else listState.sessions[kind] = chat;
+  chat.messages.push({ role: "user", content: text, attachments: atts.length ? atts : undefined });
+  saveChat(chat);                                                                                 // in the sidebar now, so the user can leave and come back mid-reply
+  if (shown && (view === "chat" || view === "code")) { updateWorkspaceUI(); renderThread(); scrollBottom(true); }
+  generate(null, chat);
 }
 // The reply being generated. It outlives the view: the user may open other chats or views meanwhile, and whenever its
 // chat is drawn again (renderThread) turnHTML puts an empty live skeleton in its place and the stream re-attaches to it.
@@ -57,9 +63,9 @@ const liveSkeletonHTML = (i, waitingText = "Thinking…") => `<div class="turn b
     <div class="chverificationwrap"></div>
     <div class="content"><span class="shimmer">${waitingText}</span></div>
     <div class="err" hidden></div></div>`;
-async function generate(resumeBot = null) {
+async function generate(resumeBot = null, target = null) {    // target: the conversation to answer in, when it is not on screen
   if (resumeBot && (listState.streaming || !resumeBot.stream_id)) return;
-  const chat = listState.current;
+  const chat = target || listState.current;
   const bot = resumeBot || { role: "assistant", content: "", reasoning: "" };
   // Replay rebuilds the reply from event zero; keep the saved version until it completes.
   const savedReply = resumeBot ? structuredClone(resumeBot) : null;
@@ -72,7 +78,10 @@ async function generate(resumeBot = null) {
   if (resumeBot) $("thread").querySelector(`.turn.bot[data-i="${idx}"]`)?.remove();
   // Stable DOM for the live reply: the thinking panel and answer are updated in place, so the
   // panel keeps its open/closed state and its own scroll position while tokens stream in.
-  $("thread").insertAdjacentHTML("beforeend", liveSkeletonHTML(idx, listState.current.messages.some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"));
+  // A conversation that is not on screen (a spoken turn while Chat is open) streams into a detached copy instead.
+  const onScreen = chat === listState.current && (view === "chat" || view === "code");
+  const host = onScreen ? $("thread") : document.createElement("div");
+  host.insertAdjacentHTML("beforeend", liveSkeletonHTML(idx, chat.messages.some((x) => x.attachments?.length) ? "Reading attachments…" : "Thinking…"));
   let el, planWrap, roundsWrap, th, tl, tb, noteEl, liveToolsEl, cardWrap, verificationWrap, contentEl, errEl;
   let userToggled = false;                               // a click on the header means "leave it as I set it"
   const setOpen = (v) => { th.open = v; };
@@ -94,26 +103,26 @@ async function generate(resumeBot = null) {
       else { tl.className = "tl"; tl.innerHTML = thoughtLabel(); }
     }
   };
-  bind($("thread").lastElementChild);
+  bind(host.lastElementChild);
   const attach = () => {                                 // called by renderThread after it redrew this chat
     const node = listState.current === chat && $("thread").querySelector(`.turn.bot[data-live="1"][data-i="${chat.messages.indexOf(bot)}"]`);
     if (node && node !== el) { bind(node); if (raf) { raf < 0 ? clearTimeout(-raf) : cancelAnimationFrame(raf); } paint(); }
   };
   liveGen = { chat, bot, attach };
-  threadState.stick = true; scrollBottom(true);
+  if (onScreen) { threadState.stick = true; scrollBottom(true); }
 
   const s = store.get("settings", {});
   const messages = [];
   if (s.sys) messages.push({ role: "system", content: s.sys });
-  listState.current.messages.slice(0, -1).filter((m) => !(m.agent_run && !m.content)).forEach((m) => messages.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map((a) => a.id) } : {}) }));
+  chat.messages.slice(0, -1).filter((m) => !(m.agent_run && !m.content)).forEach((m) => messages.push({ role: m.role, content: m.content, ...(m.attachments ? { attachments: m.attachments.map((a) => a.id) } : {}) }));
   const body = { messages, chat_id: chat.id, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
   try { Object.assign(body, workflowRequest(chat), takeWorkflowResume() || {}); }
   catch (error) { bot.error = error.message; liveGen = null; renderThread(); renderHistory(); return; }     // nothing is streaming: no permanent skeleton
   if (effort && modelThinks()) body.reasoning_effort = effort;
   if (s.temp) body.temperature = +s.temp;
   if (!chat.workspace && useFiles && sr?.running && !sr.error && !searchState.noFilesOnce) body.use_files = true;
-  if (listState.current?.workspace) body.workspace = listState.current.workspace;
-  if (listState.current?.workspace && permMode === "accept_edits") body.permission_mode = "accept_edits";
+  if (chat.workspace) body.workspace = chat.workspace;
+  if (chat.workspace && permMode === "accept_edits") body.permission_mode = "accept_edits";
   Object.assign(body, voiceRequest());                   // a spoken turn: short plain sentences, the character's style
   searchState.noFilesOnce = false;
   listState.streaming = new AbortController(); updateSend(); renderHistory();
@@ -203,7 +212,7 @@ async function generate(resumeBot = null) {
     // Approval is interactive UI: paint it now, even when a previously queued
     // animation frame was suspended while the window was covered.
     if (raf) { raf < 0 ? clearTimeout(-raf) : cancelAnimationFrame(raf); }
-    paint(); updateSend(); scrollBottom(true);
+    paint(); updateSend(); if (el.isConnected) scrollBottom(true);
   };
   let streamFinished = false;
   try {

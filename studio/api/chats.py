@@ -13,7 +13,7 @@ from studio.storage.flags import flag
 from studio.storage.chat_index import chat_metadata
 from studio.services.agent.loop import _forget_chat_context
 from studio.storage.atomic import write_text_atomic
-from studio.storage.chats import _chat_path
+from studio.storage.chats import _chat_path, chat_kind, chat_summary
 
 router = APIRouter()
 
@@ -27,8 +27,7 @@ def list_chats():
     out = []
     for p in CHATS.glob("*.json"):
         try:
-            c = json.loads(p.read_text())
-            out.append({"id": c["id"], "title": c.get("title", "Untitled"), "updated": c.get("updated", 0)})
+            out.append(chat_summary(json.loads(p.read_text())))
         except Exception:
             continue
     return sorted(out, key=lambda c: c["updated"], reverse=True)
@@ -46,6 +45,8 @@ def get_chat(cid: str):
 def put_chat(cid: str, chat: dict = Body(...)):
     chat["id"] = cid
     chat["updated"] = time.time()
+    if chat_kind(chat) != "code":
+        chat.pop("workspace", None)                              # a folder belongs to Code conversations only
     write_text_atomic(_chat_path(cid), json.dumps(chat))           # never a half-written chat (refactor P3)
     return {"ok": True, "updated": chat["updated"]}
 
