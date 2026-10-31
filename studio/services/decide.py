@@ -110,6 +110,11 @@ def preflight(text, previous=None, timeout=0.25):
 def prefetch_call(plan, text, web_fast, files=False):
     """The read tool to run before round one, as (name, args), or None to let the model choose as usual."""
     query = clean_query(text)
+    floor = rules(query)
+    if floor["live_facts"] and floor["standalone"] and not floor["small_talk"]:
+        # The word rules are a floor under d1 for live facts too: a plain "latest match" question that d1 scored as small talk
+        # or as a follow-up (the greeting before it counts as context) must still search, not leave the model to refuse.
+        plan = {**plan, "live_facts": max(plan["live_facts"], 1.0), "standalone": max(plan["standalone"], 1.0), "small_talk": 0.0}
     if not query or plan["standalone"] < STANDALONE_THRESHOLD:
         return None                                   # a follow-up's words alone make a junk query
     if plan["small_talk"] >= SMALL_TALK_THRESHOLD or _GREETING.match(query):

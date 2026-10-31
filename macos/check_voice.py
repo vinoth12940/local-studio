@@ -537,6 +537,10 @@ def decide_personal_questions_never_reach_the_web():
         assert decide.prefetch_call(missed, said, web_fast=True, files=False) is None, said
         pick = decide.prefetch_call(missed, said, web_fast=True, files=True)
         assert pick is None or pick[0] == "search_files", (said, pick)
+    veto = dict(live_facts=0.1, my_files=0.0, small_talk=0.9, standalone=0.2, news=0.0, source="d1")   # d1 read the greeting before it as context
+    latest = "Would you be able to get me some details from Latest match New Zealand and England."
+    assert decide.prefetch_call(veto, latest, web_fast=True)[0] == "web_search", "the rules are a floor under d1 for live facts"
+    assert decide.prefetch_call(veto, "Hello! How is it going today?", web_fast=True) is None, "a greeting still never searches"
     chatty = dict(live_facts=0.9, my_files=0.0, small_talk=0.9, standalone=0.9, news=0.0)
     assert decide.prefetch_call(chatty, "Hello! How is it going today?", web_fast=True) is None, "d1's small talk never searches"
     assert "LFM Open License v1.0" in __import__("studio.storage.flags", fromlist=["FLAGS"]).FLAGS["voice.decide"][1]

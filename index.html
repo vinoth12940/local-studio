@@ -239,74 +239,110 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .vtxt span { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .voicebar select { font: inherit; font-size: 12.5px; color: var(--ink-2); background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; }
 .sendbtn svg { width: 18px; height: 18px; stroke-width: 2.2; }
-/* Voice view: always dark (an immersive mode); --vc is the chosen character's colour */
-#v-voice { background: #0c0f12; color: #e9eef2; }
-.vv { flex: 1; min-height: 0; display: flex; --vc: #4cc9f0; }
-.vv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 22px 32px 28px; overflow: auto; }
+/* Voice view: always dark ("Aura"). Tokens live on .vv; --vc is the chosen character's colour, --amp (0 to 1) is the voice level,
+   written on .vv-hud only and used for transform/opacity alone, so the 30 ms level updates never restyle the transcript. */
+#v-voice { background: #0b0e11; color: #eef2f5; }
+.vv { --vc: #4cc9f0; --vv-ink: #eef2f5; --vv-ink2: #a3afba; --vv-mut: #6b7783; --vv-line: rgba(255,255,255,.07); --vv-glass: rgba(255,255,255,.05);
+  flex: 1; min-height: 0; display: flex;
+  background: radial-gradient(56% 46% at 50% 36%, color-mix(in srgb, var(--vc) 11%, transparent), transparent 72%), #0b0e11; }
+.vv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 20px 32px 30px; overflow: auto; }
 .vv-main > * { flex-shrink: 0; }
-.vv-top { align-self: stretch; display: flex; gap: 10px; align-items: baseline; }
-.vv-name { font-size: 15px; font-weight: 500; }
-.vv-st { font-size: 14px; color: #8b97a3; }
-.vv-hud { position: relative; width: 280px; height: 280px; margin-top: 34px; flex: none; }
+.vv-top { align-self: stretch; display: flex; align-items: center; justify-content: space-between; }
+.vv-who { display: flex; align-items: center; gap: 12px; }
+.vv-name { font-size: 15px; font-weight: 500; letter-spacing: -.01em; }
+.vv-st { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--vv-ink2); padding: 4px 11px 4px 9px; border-radius: 999px; background: var(--vv-glass); border: 1px solid var(--vv-line); }
+.vv-st::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--vv-mut); }
+.vv[data-state="listening"] .vv-st::before, .vv[data-state="idle"] .vv-st::before, .vv[data-state="speaking"] .vv-st::before { background: var(--vc); }
+.vv[data-state="thinking"] .vv-st::before, .vv[data-state="starting"] .vv-st::before { background: #e0a43a; }
+.vv-hud { --amp: 0; position: relative; width: 264px; height: 264px; margin-top: 38px; flex: none; }
 .vv-r1, .vv-r2, .vv-r3, .vv-core { position: absolute; border-radius: 50%; }
-.vv-r1 { inset: 0; border: 1px dashed var(--vc); opacity: .3; animation: vvspin 40s linear infinite; }
-.vv-r2 { inset: 20px; border: 2px solid transparent; border-top-color: var(--vc); border-right-color: var(--vc); opacity: .8; animation: vvspinr 12s linear infinite; }
-.vv-r3 { inset: 42px; border: 1px solid #1f2a33; }
-.vv-core { inset: 74px; background: #121a21; display: flex; align-items: center; justify-content: center; gap: 4px; }
-.vv-core span { width: 4px; height: 60px; border-radius: 2px; background: var(--vc); transform: scaleY(.1); transition: transform .08s linear; }
-.vv[data-state="thinking"] .vv-r2, .vv[data-state="starting"] .vv-r2 { animation-duration: 2s; }
-.vv[data-state="off"] .vv-r1, .vv[data-state="off"] .vv-r2 { animation-play-state: paused; opacity: .18; }
-.vv[data-state="muted"] .vv-core span { background: #3a4651; }
-.vv-ask, .vv-say { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
-.vv-ask { margin: 34px 0 0; font-size: 15px; color: #8b97a3; text-align: center; min-height: 22px; max-width: 620px; -webkit-line-clamp: 2; }
-.vv-say { margin: 8px 0 0; font-size: 24px; line-height: 1.4; text-align: center; max-width: 640px; min-height: 68px; color: #ffffff; -webkit-line-clamp: 3; }
-.vv-note { margin: 10px 0 0; font-size: 13px; color: #6c7884; min-height: 18px; text-align: center; }
-.vv-ctl { margin-top: auto; padding-top: 28px; display: flex; gap: 28px; }
-.vv-c { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 12px; color: #8b97a3; }
-.vv-btn { width: 56px; height: 56px; border-radius: 50%; border: 1px solid #26323c; background: transparent; color: #e9eef2; display: grid; place-items: center; cursor: pointer; }
-.vv-btn:hover { background: #151c22; }
-.vv-btn.go:hover { background: var(--vc); filter: brightness(1.08); }
+.vv-r1 { inset: -46px; background: radial-gradient(circle, color-mix(in srgb, var(--vc) 42%, transparent) 0, transparent 62%); opacity: .5;
+  transform: scale(calc(.86 + var(--amp) * .3)); transition: transform .12s ease-out; will-change: transform; }
+.vv-r2 { inset: 0; background: conic-gradient(from 0deg, transparent 0 58%, var(--vc) 86%, transparent 100%); opacity: 0;
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px)); mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+  animation: vvspin 9s linear infinite; transition: opacity .4s; }
+.vv-r3 { inset: 16px; border: 1px solid var(--vv-line); }
+.vv-core { inset: 36px; display: flex; align-items: center; justify-content: center; gap: 5px;
+  background: radial-gradient(circle at 34% 28%, color-mix(in srgb, var(--vc) 62%, #fff 14%), color-mix(in srgb, var(--vc) 34%, #0b0e11) 58%, #11171c 100%);
+  box-shadow: inset 0 -18px 40px rgba(0,0,0,.35), 0 0 64px color-mix(in srgb, var(--vc) 26%, transparent);
+  transform: scale(calc(1 + var(--amp) * .07)); transition: transform .12s ease-out, filter .4s; will-change: transform; }
+.vv-core span { width: 3px; height: 46px; border-radius: 2px; background: rgba(255,255,255,.88); transform: scaleY(.1); transition: transform .08s linear; }
+.vv[data-state="listening"] .vv-r2, .vv[data-state="idle"] .vv-r2, .vv[data-state="speaking"] .vv-r2 { opacity: .4; }
+.vv[data-state="thinking"] .vv-r2, .vv[data-state="starting"] .vv-r2 { opacity: .95; animation-duration: 1.6s; }
+.vv[data-state="thinking"] .vv-r1, .vv[data-state="starting"] .vv-r1 { animation: vvbreathe 2.2s ease-in-out infinite; }
+.vv[data-state="off"] .vv-r1 { opacity: .22; }
+.vv[data-state="off"] .vv-core, .vv[data-state="muted"] .vv-core { filter: saturate(.2) brightness(.68); }
+.vv[data-state="muted"] .vv-r1 { opacity: .15; }
+.vv-ask { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; margin: 40px 0 0; font-size: 14px; color: var(--vv-mut); text-align: center; min-height: 20px; max-width: 560px; -webkit-line-clamp: 2; }
+.vv-say { margin: 12px 0 0; font-size: 22px; line-height: 1.5; font-weight: 400; letter-spacing: -.012em; text-align: center; max-width: 600px; min-height: 66px; max-height: 150px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; color: var(--vv-ink); }
+.vv-say::-webkit-scrollbar { display: none; }
+.vv-say.fade { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px); mask-image: linear-gradient(to bottom, transparent 0, #000 22px); }
+.vv-note { margin: 10px 0 0; font-size: 12.5px; color: var(--vv-mut); min-height: 18px; text-align: center; }
+.vv-ctl { margin-top: auto; padding-top: 26px; display: flex; align-items: flex-start; gap: 26px; }
+.vv-c { display: flex; flex-direction: column; align-items: center; gap: 9px; font-size: 11.5px; color: var(--vv-mut); min-width: 56px; }
+.vv-c.main { color: var(--vv-ink2); }
+.vv-btn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--vv-line); background: var(--vv-glass); color: var(--vv-ink); display: grid; place-items: center; cursor: pointer; transition: background .15s, transform .15s; }
+.vv-btn:hover { background: rgba(255,255,255,.1); }
+.vv-btn:active { transform: scale(.96); }
 .vv-btn:focus-visible { outline: 2px solid var(--vc); outline-offset: 3px; }
-.vv-btn svg { width: 21px; height: 21px; }
-.vv-btn.on { background: #e9eef2; color: #0c0f12; }
-.vv-btn.go { background: var(--vc); border-color: var(--vc); color: #0c0f12; }
-.vv-btn.end { background: #e5483c; border-color: #e5483c; color: #ffffff; }
+.vv-btn svg { width: 19px; height: 19px; }
+.vv-btn.on { background: var(--vv-ink); color: #0b0e11; border-color: transparent; }
+.vv-btn.go, .vv-btn.end { width: 68px; height: 68px; border-color: transparent; }
+.vv-btn.go svg, .vv-btn.end svg { width: 23px; height: 23px; }
+.vv-btn.go { background: var(--vc); color: #0b0e11; box-shadow: 0 6px 28px color-mix(in srgb, var(--vc) 32%, transparent); }
+.vv-btn.go:hover { background: var(--vc); filter: brightness(1.08); }
+.vv-btn.end { background: #e5483c; color: #fff; }
+.vv-btn.end:hover { background: #ee5a4e; }
+.vv-c:not(.main) > .vv-btn { margin: 10px 0; }   /* the small buttons centre on the big one, so the three labels share a line */
+.vv-btn.mini { width: 34px; height: 34px; }
+.vv-btn.mini svg { width: 16px; height: 16px; }
 .vv[data-state="off"] #vvMute, .vv[data-state="off"] #vvType { opacity: .35; pointer-events: none; }
-.vv-side { width: 340px; flex: none; border-left: 1px solid #1a2229; background: #0f1317; display: flex; flex-direction: column; min-height: 0; }
-.vv-side h3 { margin: 0; font-size: 12.5px; font-weight: 500; color: #8b97a3; }
-.vv-voices { padding: 20px 16px 14px; border-bottom: 1px solid #1a2229; }
-.vv-chars { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; max-height: 236px; overflow: auto; }
-.vv-ch { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; border: 0; background: transparent; color: #e9eef2; text-align: left; cursor: pointer; font: inherit; }
-.vv-ch:hover { background: #151c22; }
-.vv-ch.on { background: #1a2229; }
-.vv-ch i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
-.vv-ch b { display: block; font-size: 14px; font-weight: 500; }
-.vv-ch small { display: block; font-size: 12px; color: #8b97a3; }
-.vv-ch svg { margin-left: auto; width: 16px; height: 16px; visibility: hidden; }
-.vv-ch.on svg { visibility: visible; }
-.vv-tr { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 20px 18px; }
-.vv-trh { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: #6c7884; }
-.vv-log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
-.vv-m small { display: block; font-size: 12px; color: #6c7884; margin-bottom: 3px; }
-.vv-m p { margin: 0; font-size: 14px; line-height: 1.5; }
-.vv-m.you p { color: #c5ced6; }
-.vv-step, .vv-empty { margin: 0; font-size: 12.5px; color: #6c7884; }
-.vv-note.err, .vv-step.err { color: #ff8f80; }
-.vv-type { margin-top: 18px; display: flex; gap: 8px; width: min(460px, 100%); }
+.vv-type { margin-top: 20px; display: flex; gap: 8px; width: min(460px, 100%); }
 .vv-type[hidden] { display: none; }
-.vv-type input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: #e9eef2; background: #121a21; border: 1px solid #26323c; border-radius: 10px; padding: 9px 12px; }
+.vv-type input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--vv-ink); background: var(--vv-glass); border: 1px solid var(--vv-line); border-radius: 999px; padding: 10px 16px; }
 .vv-type input:focus { outline: none; border-color: var(--vc); }
-.vv-type button, .vv-appr button { font: inherit; font-size: 13px; border-radius: 10px; border: 1px solid #26323c; background: transparent; color: #e9eef2; padding: 0 14px; cursor: pointer; }
-.vv-type button { background: var(--vc); border-color: var(--vc); color: #0c0f12; }
+.vv-type button, .vv-appr button { font: inherit; font-size: 13px; border-radius: 999px; border: 1px solid var(--vv-line); background: transparent; color: var(--vv-ink); padding: 0 16px; cursor: pointer; }
+.vv-type button { background: var(--vc); border-color: transparent; color: #0b0e11; font-weight: 500; }
+.vv[data-panel="hidden"] .vv-side { display: none; }
+.vv-side { width: 320px; flex: none; border-left: 1px solid var(--vv-line); background: #0e1216; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #232c34 transparent; }
+.vv-side h3 { margin: 0; font-size: 10.5px; font-weight: 500; letter-spacing: .09em; text-transform: uppercase; color: var(--vv-mut); }
+.vv-voices, .vv-models { padding: 20px 18px 16px; border-bottom: 1px solid var(--vv-line); }
+.vv-chars { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.vv-ch { --cc: var(--vc); display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px 6px 9px; border-radius: 999px; border: 1px solid var(--vv-line); background: transparent; color: var(--vv-ink2); font: inherit; font-size: 12.5px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.vv-ch:hover { background: var(--vv-glass); color: var(--vv-ink); }
+.vv-ch.on { color: var(--vv-ink); border-color: color-mix(in srgb, var(--cc) 70%, transparent); background: color-mix(in srgb, var(--cc) 14%, transparent); }
+.vv-ch i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.vv-ch b { font-weight: 500; }
+.vv-ch small { display: none; }
+.vv-ch:focus-visible { outline: 2px solid var(--vc); outline-offset: 2px; }
+.vv-chtag { margin: 12px 2px 0; font-size: 12px; color: var(--vv-mut); min-height: 16px; }
+.vv-mods { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.vv-mod { display: grid; grid-template-columns: 8px 64px 1fr; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 10px; font-size: 12.5px; }
+.vv-mod:hover { background: var(--vv-glass); }
+.vv-mod i { width: 7px; height: 7px; border-radius: 50%; background: #3a4651; }
+.vv-mod[data-s="ok"] i { background: #4cc38a; }
+.vv-mod[data-s="wait"] i { background: #e0a43a; }
+.vv-mod span { color: var(--vv-mut); }
+.vv-mod b { font-weight: 500; color: var(--vv-ink2); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vv-tr { flex: 1; min-height: 180px; display: flex; flex-direction: column; padding: 20px 18px; }
+.vv-trh { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; color: var(--vv-mut); }
+.vv-log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 14px; margin-top: 14px; scrollbar-width: thin; scrollbar-color: #232c34 transparent; }
+.vv-m small { display: block; font-size: 11px; letter-spacing: .02em; color: var(--vv-mut); margin-bottom: 3px; }
+.vv-m p { margin: 0; font-size: 13.5px; line-height: 1.55; }
+.vv-m.you p { color: var(--vv-ink2); }
+.vv-step, .vv-empty { margin: 0; font-size: 12px; color: var(--vv-mut); }
+.vv-step::before { content: ""; display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .6; margin: 0 8px 2px 0; }
+.vv-note.err, .vv-step.err { color: #ff8f80; }
 .vv-appr { display: flex; gap: 8px; margin-top: 6px; }
-.vv-appr button { padding: 5px 12px; font-size: 12.5px; }
-.vv-appr button:hover:not(:disabled) { background: #151c22; }
+.vv-appr button { padding: 5px 13px; font-size: 12.5px; }
+.vv-appr button:hover:not(:disabled) { background: var(--vv-glass); }
 .vv-appr button:disabled { opacity: .5; cursor: default; }
-.vv-step.appr { color: #e9eef2; }
+.vv-step.appr { color: var(--vv-ink); }
 @keyframes vvspin { to { transform: rotate(360deg); } }
-@keyframes vvspinr { to { transform: rotate(-360deg); } }
-@media (prefers-reduced-motion: reduce) { .vv-r1, .vv-r2 { animation: none; } }
-@media (max-width: 900px) { .vv { flex-direction: column; overflow: auto; } .vv-main { overflow: visible; } .vv-side { width: auto; border-left: 0; border-top: 1px solid #1a2229; } .vv-log { max-height: 320px; } }
+@keyframes vvbreathe { 0%, 100% { opacity: .35; } 50% { opacity: .75; } }
+@media (prefers-reduced-motion: reduce) { .vv-r2, .vv-r1 { animation: none !important; } .vv-r1, .vv-core { transition: none; } }
+@media (max-height: 700px) { .vv-hud { width: 208px; height: 208px; margin-top: 22px; } .vv-core { inset: 28px; } .vv-core span { height: 36px; } .vv-ask { margin-top: 26px; } .vv-say { font-size: 20px; min-height: 56px; max-height: 120px; } .vv-ctl { padding-top: 18px; } }
+@media (max-width: 900px) { .vv { flex-direction: column; overflow: auto; } .vv-main { overflow: visible; } .vv-hud { width: 220px; height: 220px; margin-top: 26px; } .vv-side { width: auto; border-left: 0; border-top: 1px solid var(--vv-line); } .vv-log { max-height: 260px; } }
 .atts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px -8px; }
 .atts:empty { display: none; }
 .att { position: relative; display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 6px 10px 6px 6px; background: var(--bg); max-width: 260px; }
@@ -1095,24 +1131,24 @@ dialog::backdrop { background: var(--overlay); }
     <section class="view" id="v-voice">
       <div class="vv" id="vv" data-state="off">
         <div class="vv-main">
-          <div class="vv-top"><span class="vv-name" id="vvName">Jarvis</span><span class="vv-st" id="vvState">Voice is off</span></div>
-          <div class="vv-hud" aria-hidden="true">
+          <div class="vv-top"><div class="vv-who"><span class="vv-name" id="vvName">Jarvis</span><span class="vv-st" id="vvState">Voice is off</span></div><button class="vv-btn mini" id="vvPanel" aria-label="Hide side panel" aria-pressed="true" title="Voices, models and transcript"><svg class="i"><use href="#i-pright"/></svg></button></div>
+          <div class="vv-hud" id="vvHud" aria-hidden="true">
             <div class="vv-r1"></div><div class="vv-r2"></div><div class="vv-r3"></div>
             <div class="vv-core" id="vvBars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
           </div>
           <p class="vv-ask" id="vvAsk"></p>
           <p class="vv-say" id="vvSay" aria-live="polite">Press Start and just talk. You can talk over it any time.</p>
           <p class="vv-note" id="vvNote"></p>
-          <p class="vv-note" id="vvDecide" hidden></p>
           <div class="vv-ctl">
             <div class="vv-c"><button class="vv-btn" id="vvMute" aria-label="Mute"><svg class="i"><use href="#i-mic" id="vvMuteIcon"/></svg></button><span id="vvMuteTxt">Mute</span></div>
+            <div class="vv-c main"><button class="vv-btn go" id="vvGo" aria-label="Start talking"><svg class="i"><use href="#i-mic" id="vvGoIcon"/></svg></button><span id="vvGoTxt">Start</span></div>
             <div class="vv-c"><button class="vv-btn" id="vvType" aria-label="Type instead"><svg class="i"><use href="#i-keys"/></svg></button><span>Type</span></div>
-            <div class="vv-c"><button class="vv-btn go" id="vvGo" aria-label="Start talking"><svg class="i"><use href="#i-mic" id="vvGoIcon"/></svg></button><span id="vvGoTxt">Start</span></div>
           </div>
           <form class="vv-type" id="vvTypeRow" hidden><input id="vvTypeIn" autocomplete="off" aria-label="Type instead of talking" placeholder="Type instead of talking"><button type="submit">Send</button></form>
         </div>
         <aside class="vv-side">
-          <section class="vv-voices"><h3>Voice</h3><div class="vv-chars" id="vvChars"></div></section>
+          <section class="vv-voices"><h3>Voice</h3><div class="vv-chars" id="vvChars"></div><p class="vv-chtag" id="vvChTag"></p></section>
+          <section class="vv-models"><h3>Models</h3><div class="vv-mods" id="vvModels" aria-label="Models in use"></div></section>
           <section class="vv-tr">
             <div class="vv-trh"><h3>Transcript</h3><span id="vvTime"></span></div>
             <div class="vv-log" id="vvLog"><p class="vv-empty">What you say and its replies appear here.</p></div>

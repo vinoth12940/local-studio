@@ -7,9 +7,10 @@
 //  - the reply is spoken sentence by sentence as it streams (Phonon), in the chosen character's voice;
 //  - a sound from you first only PAUSES it; real speech (about 0.9 s) cuts it and stops the reply; a cough or "uh-huh"
 //    lets it carry on; it waits when you sound mid-thought (turn.mjs).
-import { $, store, toast } from "../core/util.mjs";
-import { chatKind, listState, sessionOf } from "../chat/list.mjs";
+import { $, esc, store, toast } from "../core/util.mjs";
+import { chatKind, listState, saveChat, sessionOf } from "../chat/list.mjs";
 import { liveGen, promptShape, send } from "../chat/live.mjs";
+import { libraryState, activeChat } from "../library/library.mjs";
 import { showView, view } from "../ui/views.mjs";
 import { CHARACTERS, DEFAULT_CHARACTER } from "./characters.mjs";
 import { endpointWait, isBackchannel, looksLikeOwnVoice, takeSentences } from "./turn.mjs";
@@ -19,6 +20,7 @@ const v = {
   on: false, muted: false, state: "off", rms: 0, level: 0, micChunks: 0, es: null, sampler: 0,
   acceptInput: false, turnPending: false, gen: 0, speakId: 0, pending: new Map(), chain: Promise.resolve(),
   playedMs: 0, lastSpeechEnd: 0, respondAt: 0, firstAudioAt: 0, askedAt: 0,
+  carry: null,   // { text, at } of the turn just sent, until its first real answer sentence is spoken: more speech joins it
 };
 const turn = { active: false, done: false, buf: "", held: [], roundSpoken: 0, chunks: 0, said: "", heard: "", heardParts: [], toolActive: false,
   filler: false, workIdx: 0, lastSpoke: 0, tick: 0, interrupted: false, question: null, approval: null };
@@ -72,7 +74,10 @@ function explainError(e) {
   return "The reply failed.";
 }
 function asked(text) { const el = $("vvAsk"); if (el) el.textContent = text || ""; }
-function saying(text) { const el = $("vvSay"); if (el) el.textContent = text || ""; }
+function saying(text) {                                  // the whole reply so far; the newest words stay in view, the top fades only when it overflows
+  const el = $("vvSay"); if (!el) return;
+  el.textContent = text || ""; el.scrollTop = el.scrollHeight; el.classList.toggle("fade", el.scrollHeight > el.clientHeight + 2);
+}
 function syncBar() { const bar = $("voiceBar"); if (bar) bar.hidden = !v.on || view === "voice"; }
 // The display's bars: your level while listening, a speech-like movement while it speaks, a slow ripple while it thinks.
 const BAR_SHAPE = [0.35, 0.55, 0.75, 0.9, 1, 0.9, 0.75, 0.55, 0.35];
@@ -81,12 +86,14 @@ function drawOrb() {
   const orb = $("vOrb"); if (orb) orb.style.transform = `scale(${(1 + Math.min(1, amp) * 0.9).toFixed(3)})`;
   if (view !== "voice") return;
   const t = performance.now() / 1000, thinking = v.state === "thinking";
+  const hud = $("vvHud"), lvl = thinking ? 0.12 + 0.08 * Math.sin(t * 3) : Math.min(1, amp);
+  if (hud && Math.abs(lvl - (drawOrb.last ?? -1)) > 0.015) { drawOrb.last = lvl; hud.style.setProperty("--amp", lvl.toFixed(2)); }   // on the orb only: the transcript never restyles
   document.querySelectorAll("#vvBars span").forEach((el, i) => {
     const a = thinking ? 0.18 + 0.12 * Math.sin(t * 5 + i * 0.7) : Math.max(0.08, Math.min(1, amp * BAR_SHAPE[i] * (0.7 + 0.6 * Math.random())));
     el.style.transform = `scaleY(${a.toFixed(3)})`;
   });
 }
-function restBars() { document.querySelectorAll("#vvBars span").forEach((el) => { el.style.transform = "scaleY(0.1)"; }); }
+function restBars() { document.querySelectorAll("#vvBars span").forEach((el) => { el.style.transform = "scaleY(0.1)"; }); drawOrb.last = 0; $("vvHud")?.style.setProperty("--amp", "0"); }
 
 // The transcript beside the display: what you said, the tools it used, and what it said aloud.
 const tr = { you: null, bot: null, count: 0, chatId: undefined };
@@ -120,16 +127,25 @@ function trBot(text) {
 }
 
 // ---------------------------------------------------------------- start and stop
-// Which live-facts check spoken turns use (voice.decide): d1-2B, or the word rules and why. Hidden while the flag is off.
-function showDecide(d) {
-  const el = $("vvDecide"); if (!el) return;
-  el.hidden = !d || d.mode === "off";
-  el.textContent = !d || d.mode === "off" ? "" : d.mode === "d1" ? "Live-facts check: d1-2B (LiquidAI, LFM Open License v1.0)"
-    : `Live-facts check: rules${d.reason ? ` (${d.reason})` : ""}`;
+// The models in use, in the side panel: hearing (Parakeet), speaking (Phonon), thinking (the chat model), deciding (d1-2B or the
+// word rules, and why). A dot says whether each is loaded. Re-read after each turn, because d1 loads after Start and can stop.
+const modelState = { st: null };
+function renderModels(st = modelState.st) {
+  const el = $("vvModels"); if (!el) return;
+  modelState.st = st;
+  const d = st?.decide, llm = libraryState.runningName || activeChat()?.name || "";
+  const rows = [
+    ["Hearing", "Parakeet TDT 0.6B v3", st?.stt_loaded ? "ok" : st?.running ? "wait" : "off", st?.stt_model || "mlx-community/parakeet-tdt-0.6b-v3"],
+    ["Speaking", "Phonon 31M", st?.tts_loaded ? "ok" : st?.running ? "wait" : "off", st?.tts_model || "gradium/phonon-31m-en"],
+    ["Thinking", llm || "No model loaded", llm ? "ok" : "off", llm ? "The chat model answering" : "Load one in the sidebar"],
+  ];
+  if (d && d.mode !== "off") rows.push(d.mode === "d1"
+    ? ["Deciding", "d1-2B", "ok", "LiquidAI d1-2B, decides when to search the web (LFM Open License v1.0)"]
+    : ["Deciding", "Word rules", "wait", `Decides when to search the web${d.reason ? `: ${d.reason}` : ""}`]);
+  el.innerHTML = rows.map(([role, name, s, tip]) => `<div class="vv-mod" data-s="${s}" title="${esc(tip)}"><i></i><span>${role}</span><b>${esc(name)}</b></div>`).join("");
 }
-// d1 loads after Start and can stop mid-session: re-read the status after each turn so the line never goes stale.
-async function refreshDecide() {
-  try { if (v.on) showDecide((await (await fetch("/api/voice/status")).json()).decide); } catch {}
+async function refreshModels() {
+  try { renderModels(await (await fetch("/api/voice/status")).json()); } catch { renderModels(); }
 }
 
 async function startVoice() {
@@ -150,8 +166,7 @@ async function startVoice() {
       if (!st.running) throw new Error("Voice didn't start. See logs/voice.log.");
     }
     if (!v.on) return;
-    showDecide(st.decide);
-    setTimeout(refreshDecide, 4000);                 // Start brings d1 up in the background: show it once it answers
+    renderModels(st); setTimeout(refreshModels, 4000);      // Start brings d1 up in the background: show it once it answers
     const r = await post("/api/voice/mic/open");
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "The microphone could not be opened.");
     v.es = new EventSource("/api/voice/events");
@@ -208,7 +223,7 @@ async function stopVoice() {
   if (liveGen && chatKind(liveGen.chat) === "voice") listState.streaming?.abort();
   v.on = false; v.acceptInput = false; v.gen++; clearInterval(v.sampler); clearInterval(turn.tick); clearTimeout(pend.timer);
   try { v.es?.close(); } catch {}
-  v.es = null; v.pending.clear(); tent = null; turn.active = false; v.turnPending = false;
+  v.es = null; v.pending.clear(); v.carry = null; tent = null; turn.active = false; v.turnPending = false;
   $("micBtn")?.classList.remove("on");
   v.muted = false; setMuteButton();
   setState("off"); restBars(); caption("");
@@ -279,9 +294,9 @@ function onMicChunk(chunk) {
   }
   cap.chunks.push(chunk);
   if (voiced) { cap.voiced += dur; cap.silence = 0; cap.lastVoicedAt = performance.now(); } else cap.silence += dur;
-  if (cap.silence > 0.5) {                               // short on purpose: endpointWait() decides whether you are finished
+  if (cap.silence > 0.8) {                               // endpointWait() then decides whether you are finished; a short breath is not the end
     const chunks = cap.chunks, voicedFor = cap.voiced; cap.on = false; cap.chunks = []; cap.pre = [];
-    if (voicedFor > 0.3) transcribe(chunks);
+    if (voicedFor > 0.3) transcribe(chunks); else backToThinking();
   }
 }
 function wav16k(chunks) {
@@ -297,8 +312,9 @@ async function transcribe(chunks) {
     const r = await fetch("/api/voice/transcribe", { method: "POST", headers: { "content-type": "audio/wav" }, body: wav16k(chunks) });
     if (!r.ok) { problem("I couldn't make out what you said.", (await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`); return; }
     const text = ((await r.json()).text || "").trim();
-    if (!text || !v.on) return;
+    if (!text || !v.on) { backToThinking(); return; }
     if (tent && isBackchannel(text)) { endTent(); return; }      // "yeah", "uh-huh": keep talking
+    if (v.carry && isBackchannel(text)) { backToThinking(); return; }
     if (performance.now() - v.lastSpeechEnd < 3000 && looksLikeOwnVoice(text, turn.said)) return;
     submitUtterance(text);
   } catch (e) { problem("I couldn't make out what you said.", String(e.message || e)); }
@@ -316,8 +332,23 @@ function userResumed() {                                 // you are still talkin
   if (!pend.timer) return;
   clearTimeout(pend.timer); pend.timer = setTimeout(firePending, 2500);
 }
-async function firePending() {
-  const text = pend.text; pend.text = ""; pend.timer = 0;
+// A cough or "uh-huh" while the reply is still being prepared: it carries on, so the display goes back to Thinking.
+function backToThinking() { if (v.carry && v.on && listState.streaming && v.state === "listening" && !pend.timer) setState("thinking"); }
+const CANCEL = /^\s*(stop|cancel|never ?mind|forget it|scratch that)\W*$/i;
+// You carried on after a pause, before the reply had started: stop that reply, take it out of the Voice conversation and
+// let the caller send what you said first together with what you said now.
+async function retractTurn(c) {
+  const botEl = tr.bot;
+  if (listState.streaming && turn.active) interrupt();
+  for (let i = 0; i < 60 && listState.streaming; i++) await new Promise((r) => setTimeout(r, 50));
+  const chat = sessionOf("voice"), m = chat?.messages || [];
+  if (m.length >= 2 && m[m.length - 1].role === "assistant" && m[m.length - 2].role === "user" && m[m.length - 2].content === c.text) {
+    m.splice(-2, 2); await saveChat(chat);
+  }
+  botEl?.remove(); tr.bot = null;
+}
+async function firePending(typed) {
+  let text = pend.text; pend.text = ""; pend.timer = 0;
   if (!text || !v.on) return;
   if (turn.approval) {                                   // it asked for your okay: yes allows, anything else declines (and says why)
     const a = turn.approval, yes = YES.test(text), no = NO.test(text);
@@ -333,18 +364,29 @@ async function firePending() {
     setState("thinking"); v.acceptInput = false; v.respondAt = performance.now();
     return;
   }
+  const c = !typed && v.carry && performance.now() - v.carry.at < 20000 ? v.carry : null;
+  v.carry = null;
+  if (c) {                                                // you carried on: one turn, not two
+    await retractTurn(c);
+    if (CANCEL.test(text)) { tr.you?.remove(); tr.you = null; v.acceptInput = true; setState("listening"); caption("Okay."); return; }
+    text = c.text + " " + text;                          // "...Paris" then "no, Tokyo": the model sees both and sorts it out
+    if (tr.you) tr.you.querySelector("p").textContent = text;
+  }
   if (listState.streaming) { caption("Still working on the last one. Say it again in a moment."); return; }
-  v.acceptInput = false; v.turnPending = true; v.askedAt = performance.now(); v.respondAt = v.askedAt;
-  trAdd("you", text, "You"); tr.bot = null; saying(""); caption("");
+  // Listening stays open until its first real sentence is spoken, so words after a pause are not lost.
+  v.acceptInput = true; v.turnPending = true; v.askedAt = performance.now(); v.respondAt = v.askedAt;
+  v.carry = { text, at: v.askedAt };
+  if (!c || !tr.you) tr.you = trAdd("you", text, "You");
+  tr.bot = null; saying(""); caption(""); asked(text);
   setState("thinking");
   await send(text);
   tr.chatId = sessionOf("voice")?.id ?? null;             // the transcript already shows this conversation
   if (v.turnPending) {                                    // send() refused (for example, another chat is still answering)
-    v.turnPending = false; v.acceptInput = true; setState("listening"); caption("Couldn't send that right now.");
+    v.turnPending = false; v.carry = null; v.acceptInput = true; setState("listening"); caption("Couldn't send that right now.");
   }
 }
 function finishTurn() {
-  refreshDecide();
+  v.carry = null; refreshModels();
   clearInterval(turn.tick); turn.done = false;
   v.lastSpeechEnd = performance.now();
   if (!v.on) return;
@@ -386,8 +428,10 @@ function interrupt() {
 }
 
 // ---------------------------------------------------------------- speaking the reply
-function speak(text) {
+function speak(text, answer = false) {                    // answer: the reply itself, not a filler or a question to you
   const clean = cleanSpeech(text); if (!clean || !v.on) return;
+  v.acceptInput = false;                                 // its own voice is playing: only a talk-over (interrupt) can reach it now
+  if (answer) v.carry = null;
   const gen = v.gen, id = ++v.speakId;
   turn.chunks++; turn.said += " " + clean; turn.lastSpoke = performance.now();
   v.chain = v.chain.then(async () => {
@@ -398,7 +442,7 @@ function speak(text) {
       const { seconds } = await r.json();
       if (gen !== v.gen) return;
       v.pending.set(id, { text: clean, ms: (seconds || 0) * 1000 });
-      turn.shown = (turn.shown ? turn.shown + " " : "") + clean; saying(clean); trBot(turn.shown);   // the display: the sentence being said
+      turn.shown = (turn.shown ? turn.shown + " " : "") + clean; saying(turn.shown); trBot(turn.shown);   // the display: the reply so far
       // If its "played" notice is ever lost (the engine restarted), count it as played a little after it should have ended.
       setTimeout(() => { if (v.pending.has(id)) onEvent({ t: "played", id }); }, (seconds || 0) * 1000 + 2500 + v.pending.size * 400);
       if (v.state !== "speaking") { setState("speaking"); if (!v.firstAudioAt) v.firstAudioAt = performance.now(); }
@@ -427,7 +471,7 @@ function voiceRequest() {
 // A model sometimes says what it is about to do before calling a tool ("I'll search the web…"); that round ends in tool
 // calls and must not be spoken. So a round's first sentence is held until a second one arrives or the round ends in
 // "stop" (one sentence of delay at most), and anything held is dropped when the round turns out to be a tool call.
-function flushHeld() { turn.held.splice(0).forEach((x) => { turn.roundSpoken++; speak(x); }); }
+function flushHeld() { turn.held.splice(0).forEach((x) => { turn.roundSpoken++; speak(x, true); }); }
 function dropRound() { turn.held = []; turn.buf = ""; turn.roundSpoken = 0; }
 function voiceOnEvent(j) {
   if (!turn.active) return;
@@ -436,19 +480,19 @@ function voiceOnEvent(j) {
     if (turn.toolActive) {
       dropRound();                                       // words before a tool call are the model thinking aloud
       if (!turn.filler && !turn.chunks) { turn.filler = true; speak("Let me check."); }
-      caption(j.x_tool.summary || j.x_tool.name);
       trAdd("step", j.x_tool.summary || j.x_tool.name);
     }
     return;
   }
   if (j.x_approval) {
+    v.carry = null;
     const x = j.x_approval, el = trAdd("step", `Needs your okay: ${x.title || x.name || "an action"}`);
     turn.approval = { session_id: x.session_id, id: x.id, el };
     if (el) { el.classList.add("appr"); el.insertAdjacentHTML("beforeend", `<span class="vv-appr"><button data-appr="allow">Allow</button><button data-appr="deny">Decline</button></span>`); }
     caption(x.title || x.name || ""); speak("I need your okay for that. Say yes or no.");
     return;
   }
-  if (j.x_question) { turn.question = { session_id: j.x_question.session_id, id: j.x_question.id }; speak(j.x_question.question); return; }
+  if (j.x_question) { v.carry = null; turn.question = { session_id: j.x_question.session_id, id: j.x_question.id }; speak(j.x_question.question); return; }
   if (j.error) {
     const said = explainError(j.error);
     if (said) { speak(said); problem(said, String(j.error).slice(0, 240)); }
@@ -472,19 +516,19 @@ function voiceOnEnd(bot) {
     turn.interrupted = false; return;
   }
   turn.held.push(...takeSentences(turn.buf, true)[0]); turn.buf = ""; flushHeld();
-  turn.active = false; turn.done = true;
+  turn.active = false; turn.done = true; v.carry = null;   // a reply that ended (even without a spoken answer) is its own turn
   v.chain.then(() => { if (!v.pending.size && turn.done) finishTurn(); });
   if (turn.question) { turn.done = false; v.acceptInput = true; }   // waiting for your spoken answer
 }
 
 // ---------------------------------------------------------------- controls
-const CHECK = '<svg class="i"><use href="#i-check"/></svg>';
 function renderCharacters() {
   const c = character(), sel = $("vChar");
   if (sel) { sel.innerHTML = CHARACTERS.map((x) => `<option value="${x.id}">${x.name}</option>`).join(""); sel.value = c.id; }
   const list = $("vvChars");
-  if (list) list.innerHTML = CHARACTERS.map((x) => `<button class="vv-ch${x.id === c.id ? " on" : ""}" data-ch="${x.id}" aria-pressed="${x.id === c.id}">`
-    + `<i style="background:${x.color}"></i><span><b>${x.name}</b><small>${x.tag}</small></span>${CHECK}</button>`).join("");
+  if (list) list.innerHTML = CHARACTERS.map((x) => `<button class="vv-ch${x.id === c.id ? " on" : ""}" data-ch="${x.id}" aria-pressed="${x.id === c.id}" title="${x.tag}" style="--cc:${x.color}">`
+    + `<i style="background:${x.color}"></i><b>${x.name}</b></button>`).join("");
+  if ($("vvChTag")) $("vvChTag").textContent = c.tag;
   $("vv")?.style.setProperty?.("--vc", c.color);
   if ($("vvName")) $("vvName").textContent = c.name;
 }
@@ -503,7 +547,7 @@ function toggleMute() {                                  // muted: it keeps talk
 function voiceViewShown(name) {
   syncBar();
   if (name !== "voice") return;
-  renderCharacters(); voiceShowSession();
+  renderCharacters(); voiceShowSession(); refreshModels();
   if (!v.on) startVoice();
 }
 $("micBtn").onclick = () => { showView("voice"); };
@@ -518,7 +562,7 @@ $("vvTypeRow").onsubmit = (e) => {                       // typed text is a turn
   if (!text || !v.on) return;
   if (listState.streaming && !turn.question && !turn.approval) { caption("Still working on the last one. Send it in a moment."); return; }
   if (v.pending.size && !turn.question && !turn.approval) interrupt();
-  $("vvTypeIn").value = ""; clearTimeout(pend.timer); pend.text = text; firePending();
+  $("vvTypeIn").value = ""; clearTimeout(pend.timer); pend.text = text; firePending(true);
 };
 $("vvLog").onclick = (e) => {
   const b = e.target.closest?.("[data-appr]"), a = turn.approval;
@@ -526,6 +570,14 @@ $("vvLog").onclick = (e) => {
 };
 $("vvChars").onclick = (e) => { const b = e.target.closest?.("[data-ch]"); if (b) pickCharacter(b.dataset.ch); };
 renderCharacters();
+// The side panel (voices, models, transcript) can be hidden for a clean stage; the choice is kept.
+function applyPanel() {
+  const on = store.get("voicePanel", true) !== false;
+  $("vv").dataset.panel = on ? "shown" : "hidden";
+  $("vvPanel").setAttribute("aria-pressed", String(on)); $("vvPanel").setAttribute("aria-label", on ? "Hide side panel" : "Show side panel");
+}
+$("vvPanel").onclick = () => { store.set("voicePanel", store.get("voicePanel", true) === false); applyPanel(); };
+applyPanel();
 // The mic button and the Voice item appear only when the voice.enabled flag is on.
 (async () => {
   try {
