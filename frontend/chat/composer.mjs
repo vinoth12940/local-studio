@@ -2,7 +2,7 @@
 import { $, api, esc, jpost, store, toast } from "../core/util.mjs";
 import { view } from "../ui/views.mjs";
 import { chLive, listState, openChat, saveChat } from "./list.mjs";
-import { modelThinks, renderThread } from "./thread.mjs";
+import { modelEffort, modelThinks, renderThread } from "./thread.mjs";
 import { attachmentsState } from "./attachments.mjs";
 import { activeChat, chStop, codeUpdateStatus, liveGen, send } from "../modules.mjs";
 
@@ -168,7 +168,16 @@ document.addEventListener("keydown", (e) => {                                   
 function syncThink() {
   const can = modelThinks();
   $("thinkPill").classList.toggle("on", thinking && can);
-  $("thinkPill").disabled = !can; $("effortSel").disabled = !can;
+  let name = "This model"; try { name = activeChat()?.name || name; } catch {}   // the library module runs after this one at start-up
+  const eff = can && modelEffort();
+  $("thinkPill").disabled = !can; $("effortSel").disabled = !eff;
+  const why = !can ? `${name} doesn't have a thinking mode` : eff ? "" : `${name} has no effort levels: its chat template ignores them. Think still applies.`;
+  $("effortSel").title = why || "How long it may think";
+  $("effortSeg").querySelectorAll("button").forEach((b) => { b.disabled = !eff; });
+  $("effortSeg").closest(".mrow")?.classList.toggle("off", !eff);
+  // A model with no effort levels shows Auto (your stored choice comes back for a model that has them).
+  if (eff) syncEffort(); else { $("effortSel").value = ""; $("effortSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.v === "")); }
+  if ($("effortWhy")) $("effortWhy").textContent = why || "How long it may think";
   $("thinkPill").title = can ? "Reason step by step before answering" : `${activeChat()?.name || "This model"} doesn't have a thinking mode`;
   $("thinkSw").checked = thinking; store.set("think", thinking);
 }

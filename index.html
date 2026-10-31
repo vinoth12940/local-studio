@@ -129,6 +129,8 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .switch input:checked + span::after { transform: translateX(14px); }
 .seg { display: inline-flex; background: var(--soft); border-radius: 9px; padding: 2px; margin-left: auto; }
 .seg button { border: 0; background: transparent; padding: 3px 9px; border-radius: 7px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.seg button:disabled { cursor: default; opacity: .45; }
+.mrow.off .d { color: var(--muted); }
 .seg button.on { background: var(--raised); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 
 /* ---------- views */
@@ -392,7 +394,9 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .adv.on { display: flex; }
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }
 .field input, .field select { height: 36px; border: 1px solid var(--line-2); border-radius: 9px; padding: 0 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13.5px; outline: 0; }
-.field input:focus { border-color: var(--ink-2); }
+.field textarea { min-height: 104px; max-height: 40vh; resize: vertical; border: 1px solid var(--line-2); border-radius: 9px; padding: 8px 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13.5px; line-height: 1.5; outline: 0; }
+.field input:focus, .field textarea:focus { border-color: var(--ink-2); }
+.field .hint { font-size: 11.5px; color: var(--muted); }
 .job { margin-top: 18px; border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; display: none; gap: 16px; align-items: center; }
 .job.on { display: flex; }
 .job .thumb { width: 64px; height: 64px; border-radius: 10px; background: var(--soft); overflow: hidden; flex: none; position: relative; }
@@ -1057,7 +1061,7 @@ dialog::backdrop { background: var(--overlay); }
       <div class="mrow click" data-view="library"><svg class="i"><use href="#i-box"/></svg>Browse model library…</div>
       <div class="sep"></div>
       <label class="mrow click"><div><div>Thinking</div><div class="d">Reason step by step before answering</div></div><span class="switch"><input type="checkbox" id="thinkSw" checked><span></span></span></label>
-      <div class="mrow"><div><div>Effort</div><div class="d">How long it may think</div></div>
+      <div class="mrow"><div><div>Effort</div><div class="d" id="effortWhy">How long it may think</div></div>
         <div class="seg" id="effortSeg"><button data-v="low">Low</button><button data-v="" class="on">Auto</button><button data-v="high">High</button><button data-v="xhigh">Max</button></div></div>
       <div class="sep"></div>
       <div class="mrow click" id="mmEngine"><svg class="i"><use href="#i-power"/></svg><span id="mmEngineTxt">Stop engine</span></div>
@@ -1545,7 +1549,7 @@ dialog::backdrop { background: var(--overlay); }
 </div></dialog>
 <dialog id="settingsDlg"><div class="modal" style="width:min(520px,92vw)"><h3>Chat settings</h3>
   <div style="display:flex; flex-direction:column; gap:12px; margin:14px 0 18px">
-    <label class="field">System prompt<input id="sysPrompt" placeholder="Optional instructions for every reply"></label>
+    <label class="field">System prompt<textarea id="sysPrompt" rows="5" placeholder="Optional instructions for every reply, for example: Answer briefly. Use metric units."></textarea><span class="hint">Sent first with every message in Chat, Code and Voice. Saved when this window closes.</span></label>
     <div style="display:flex; gap:12px">
       <label class="field" style="flex:1">Max tokens (thinking + answer)<input id="maxTok" type="number" min="256" step="1024" value="16384"></label>
       <label class="field" style="flex:1">Temperature<input id="temp" placeholder="Model default"></label>

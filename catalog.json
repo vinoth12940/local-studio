@@ -9,6 +9,7 @@
       "mode": "dflash",
       "accel": "DFlash 2",
       "vision": true,
+      "effort": true,
       "size_gb": 18.7,
       "ram_gb": 18,
       "default": true,

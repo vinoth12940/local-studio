@@ -23,7 +23,7 @@ export {
 } from "./chat/list.mjs";
 export {
   autoTop, chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chRoundsHTML, chToolsHTML, chToolStepsInner,
-  chWebSourcesHTML, CODE_STARTERS, diffLinesHTML, drawSpark, EDIT_TOOLS, fmtSecs, modelThinks, perfGrid, perfLine,
+  chWebSourcesHTML, CODE_STARTERS, diffLinesHTML, drawSpark, EDIT_TOOLS, fmtSecs, modelEffort, modelThinks, perfGrid, perfLine,
   PERM_WORDS, renderOnboarding, renderThread, scrollBottom, showPerf, sourcesHTML, STARTERS, thoughtHTML, threadState,
   TOOL_LABELS, toolLabel, toolResultHTML, turnHTML
 } from "./chat/thread.mjs";

@@ -139,6 +139,8 @@ def _start_engine(mode, m):
         if _uses_mlx_lm(m["repo"]):
             cmd += ["--kv-bits", "8"]
     elif mode == "vision":
+        # No window argument on purpose: mlx-vlm's --max-kv-size is a rotating cache that silently drops the oldest tokens (the system
+        # prompt first). The window still holds here: prompts and replies are budgeted against it by the chat route (_chat_fit_context).
         cmd = [str(DSPARK_PY), "-m", "mlx_vlm", "server", "--model", m["repo"], "--host", "127.0.0.1", "--port", "8081"]
         if m["id"] == "qwen3.8-27b":               # the only pairing verified with mlx-vlm's DFlash path
             cmd += ["--draft-model", m["drafter"], "--draft-kind", "dflash"]
