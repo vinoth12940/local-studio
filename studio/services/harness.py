@@ -7,6 +7,7 @@ import ast
 import asyncio
 import fnmatch
 import json
+import logging
 import os
 import re
 import subprocess
@@ -247,6 +248,7 @@ ENGINE_ERROR_NOTE = ("Your last reply could not be read by the engine ({error}).
 TOOL_LIMIT_NOTE = ("This turn has reached its tool-call limit, so no tool can run now: do not call one. In a few short lines, "
                    "tell the user what you did, what you checked works, and what is still left, claiming nothing you did not "
                    "check. They can say \"continue\" to let you keep going.")
+_log = logging.getLogger("uvicorn.error")          # lands in logs/ui.log with the server's own lines
 SEARCH_RETRY_WAITS = (1.0, 2.0)     # seconds before the second and third try of a DuckDuckGo search
 
 
@@ -966,6 +968,33 @@ def _duckduckgo(query):
     return []
 
 
+_WEATHERISH = re.compile(r"\b(weather|forecast|temperature|rain(?:ing|y)?|snow(?:ing)?|humidity|humid|windy|sunny|cloudy|storm)\b", re.I)
+
+
+def _headline_fallback(query, timezone, refused):
+    """When DuckDuckGo refuses a search (found on 1.7.9: HTTP 202 on a spoken weather question and on two cricket questions) or has
+    nothing, recent news headlines from Google News RSS: it answers "who won the Test?" with the result and its age, where a
+    refused search ended in one short apology. Never for weather (headlines are not a forecast; the honest answer is that the
+    search failed) and never for a site: search. Another search engine was tried first: Bing answered every request but ranked a
+    spoken question by its first word ("South Africa versus Australia..." gave a Philadelphia restaurant), so it is not used.
+    Returns web_search's shape, or None when this does not apply."""
+    if _WEATHERISH.search(query) or re.search(r"(?<!\S)site:", query, re.I):
+        return None
+    spoken = " ".join(re.sub(r"\b(?:um+|uh+|erm+|hmm+)\b[,.]?", " ", query, flags=re.I).split())     # "um" and "uh" leave Google News with nothing
+    try:
+        news = _news_search(spoken, "7d", timezone)
+    except (ValueError, httpx.HTTPError):
+        news = None
+    items = (news or {}).get("items") or []
+    _log.info("web_search: DuckDuckGo %s; news headlines gave %d", "refused (%s)" % str(refused)[:60] if refused else "had nothing", len(items))
+    if len(items) < 3:
+        return None                                   # a long, rambling question leaves one stray headline (a singer's apology for a cricket question): that is not evidence
+    return {"query": query, "fetched_at": news["fetched_at"],
+            "results": [{"url": i["url"], "title": i["title"], "snippet": ", ".join(x for x in (i.get("source"), i.get("age")) if x)} for i in items[:6]],
+            "note": "The web search was refused, so these are recent news headlines (Google News) with their sources and ages. Answer from them and "
+                    "say they are headlines; if they do not answer the question, say so instead of guessing.", "from": "news headlines"}
+
+
 def _chat_read_tool(name, args, timezone=None):
     """Read-only chat tools. Returns evidence or an explicit error, never a made-up answer."""
     if not isinstance(args, dict): return {"error": "Tool arguments must be a JSON object"}
@@ -999,7 +1028,16 @@ def _chat_read_tool(name, args, timezone=None):
             query = args.get("query")
             if not isinstance(query, str) or not query.strip() or len(query) > 500:
                 raise ValueError("web_search needs a query of 1–500 characters")
-            results = _duckduckgo(query)
+            try:
+                results, refused = _duckduckgo(query), None
+            except (ValueError, httpx.HTTPError) as failed:
+                results, refused = [], failed
+            if not results:
+                fallback = _headline_fallback(query, timezone, refused)
+                if fallback:
+                    return fallback
+                if refused:
+                    raise refused
             sites = re.findall(r"(?<!\S)site:([\w.-]+)", query, re.I)
             if len(sites) == 1:       # honor a single explicit domain filter even if the provider ignores it
                 domain = sites[0].lower().strip(".")

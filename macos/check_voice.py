@@ -555,6 +555,19 @@ def decide_personal_questions_never_reach_the_web():
     assert decide.prefetch_call(decide.rules(ask), ask, web_fast=True) is None, "alone it is not a question about the world"
     assert decide.prefetch_call(decide.rules(ask), ask, web_fast=True, previous=before) == ("web_search", {"query": "what is the Frisco weather looks like today?"})
     assert decide.prefetch_call(decide.rules(ask), ask, web_fast=True, previous="Hello there, how are you?") is None
+    # Found on 1.7.9 in a real Voice session: "Sorry, my bad" vetoed the search as if it were about the user, and "Yes, please, go
+    # ahead." searched for those very words (pages about the phrase) instead of the question it confirmed.
+    cricket = "Um can you check who won between India and South Africa? Sorry, my bad, I mean South Africa versus Australia."
+    assert decide.prefetch_call(decide.rules(cricket), cricket, web_fast=True)[0] == "web_search", "an idiom with 'my' is not about the user"
+    for statement in ("Oh my god, I'm so tired today.", "Sorry, my bad, I was thinking about something else today."):
+        assert decide.prefetch_call(decide.rules(statement), statement, web_fast=True) is None, statement
+    assert decide.prefetch_call(decide.rules("What is my name?"), "What is my name?", web_fast=True) is None, "a real 'my' still never goes to the web"
+    asked = "Yeah, so it happened today morning, I think South Africa, day five. So can you check it? It's a test game."
+    for yes in ("Yes, please, go ahead.", "Sure, check it.", "Okay, go on."):
+        pick = decide.prefetch_call(decide.rules(yes), yes, web_fast=True, previous=asked)
+        assert pick and pick[0] == "web_search" and "South Africa" in pick[1]["query"] and "go ahead" not in pick[1]["query"], (yes, pick)
+        assert decide.prefetch_call(decide.rules(yes), yes, web_fast=True, previous="Hello there, how are you?") is None, "a yes to small talk searches nothing"
+        assert decide.prefetch_call(decide.rules(yes), yes, web_fast=True) is None, "a yes with nothing before it searches nothing"
     chatty = dict(live_facts=0.9, my_files=0.0, small_talk=0.9, standalone=0.9, news=0.0)
     assert decide.prefetch_call(chatty, "Hello! How is it going today?", web_fast=True) is None, "d1's small talk never searches"
     assert "LFM Open License v1.0" in __import__("studio.storage.flags", fromlist=["FLAGS"]).FLAGS["voice.decide"][1]

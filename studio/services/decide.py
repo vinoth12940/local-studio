@@ -48,6 +48,9 @@ _LIVE = re.compile(r"\b(latest|today|tonight|right now|current(?:ly)?|prices?|co
 _FILES = re.compile(r"\bmy\b.*\b(passport|visa|green card|i-?94|ead|tax(?:es)?|w-?2|1099|licen[cs]e|insurance|bank|documents?|"
                     r"files?|pdf|statements?|receipts?|contracts?|lease)\b", re.I)
 _MINE = re.compile(r"\b(my|mine|our)\b", re.I)          # about the user: never a public search, whatever d1 says
+_MY_IDIOM = re.compile(r"\b(?:oh,? my(?: god| gosh| goodness)?|my (?:bad|god|gosh|goodness|apologies|mistake|fault|pleasure|word)|sorry,? my)\b", re.I)
+_CONFIRM = re.compile(r"^(?:(?:yes|yeah|yep|yup|sure|okay|ok|alright|right|please|go ahead|go on|do it|and|that would be (?:great|good|nice)|that's (?:great|good|fine)|"
+                       r"check(?: it| that)?|search(?: for it| for that| it)?|look (?:it|that) up|try (?:again|that|it))\b[\s,.!]*)+$", re.I)
 _FOLLOW_UP = re.compile(r"^(and|what about|how about|also|then)\b", re.I)
 _NEWS = re.compile(r"\b(news|headlines?)\b", re.I)
 _CLOCK = re.compile(r"\b(what time is it|what(?:'s| is) the time|what(?:'s| is) (?:the )?(?:date|day)|today's date|what day is it)\b", re.I)
@@ -107,6 +110,11 @@ _ASKS = re.compile(r"^(?:what|who|whom|where|when|why|how|which|is|are|do|does|d
                    r"search|look|check|get|read|list|explain|remind|play|open)\b", re.I)
 
 
+def _asking(text):
+    """A question or a request, not a statement."""
+    return text.rstrip().endswith("?") or bool(_ASKS.match(text)) or bool(re.search(r"\b(?:can|could|would|will) you\b|\bplease\b|\bcheck\b", text, re.I))
+
+
 def _small_talk(said):
     """A greeting, a thanks or a command to the Mac. A greeting in front of a question ("Hey, what's the weather?") is not small
     talk; a greeting in front of a statement ("Hey, I'm doing great today") still is, whatever live-sounding word it holds."""
@@ -149,11 +157,11 @@ _ASK_SEARCH = re.compile(r"\b(?:web ?search|search (?:the )?web|search online|go
 def prefetch_call(plan, text, web_fast, files=False, previous=None):
     """The read tool to run before round one, as (name, args), or None to let the model choose as usual.
 
-    `previous` is the user's turn before this one. "Can you use web search for that?" asks for a search of what was just asked,
-    so when it follows a live-facts question that question is the query, not the request to search."""
+    `previous` is the user's turn before this one. "Can you use web search for that?" and "Yes, please, go ahead." ask for a search
+    of what was just asked, so when they follow a live-facts question that question is the query, not the request."""
     raw = clean_query(text)
     query = strip_lead(raw)
-    if previous and _ASK_SEARCH.search(query):
+    if previous and (_ASK_SEARCH.search(query) or _CONFIRM.match(query)):
         before_raw = clean_query(previous)
         before = strip_lead(before_raw)
         if rules(before_raw)["live_facts"] and not rules(before_raw)["small_talk"] and not _ASK_SEARCH.search(before):
@@ -170,7 +178,8 @@ def prefetch_call(plan, text, web_fast, files=False, previous=None):
     if max(plan["my_files"], rules(query)["my_files"]) >= FILES_THRESHOLD:     # the word rules are a floor under d1 here
         return ("search_files", {"query": query}) if files else None      # personal questions never go to the web
     if _MINE.search(query):
-        return None                                   # "my name", "my city": the model decides, never a prefetched web search
+        if _MINE.search(_MY_IDIOM.sub(" ", query)) or not _asking(query):
+            return None                                   # "my bad" is not about the user, but "Oh my god, I'm tired today" still asks nothing                                   # "my name", "my city": the model decides, never a prefetched web search
     if _CLOCK.search(query):                          # "now" sounds live, but the Mac's clock answers it in milliseconds
         return None if _ELSEWHERE.search(query) else ("get_current_datetime", {})   # another city: the model picks the zone
     if plan["live_facts"] < LIVE_THRESHOLD:

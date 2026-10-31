@@ -5,6 +5,7 @@ Moved from app.py in the refactor's P1 split.
 
 import asyncio
 import json
+import logging
 import threading
 import queue
 import time
@@ -49,6 +50,7 @@ from studio.storage.chats import _chat_path
 from studio.storage.flags import flag
 from studio.storage.settings import load_settings, save_settings
 
+_log = logging.getLogger("uvicorn.error")                    # logs/ui.log
 router = APIRouter()
 
 
@@ -397,6 +399,10 @@ async def chat(request: Request):
         try:
             plan = (await preflight) if preflight else typed_plan
             pick = decide.prefetch_call(plan, said[-1], flag("harness.web_fast"), use_files, said[-2] if len(said) > 1 else None) if plan else None
+            if plan:                                  # one line per decision, never the words: a search that did not happen is otherwise invisible
+                _log.info("prefetch %s: source=%s ms=%s live=%.2f files=%.2f small=%.2f standalone=%.2f news=%.2f -> %s",
+                          "voice" if voice_note else "typed", plan.get("source"), plan.get("ms"), plan.get("live_facts", 0), plan.get("my_files", 0),
+                          plan.get("small_talk", 0), plan.get("standalone", 0), plan.get("news", 0), pick[0] if pick else "nothing")
             if pick:
                 # A spoken turn that needs live facts (or the user's files): run that search now and hand the model its result
                 # as the first tool result, so it answers from evidence in what would have been its second round.
@@ -415,6 +421,10 @@ async def chat(request: Request):
                     except ValueError as error:
                         return {"error": str(error), "verified": False}
                 result = await asyncio.to_thread(_prefetch)
+                _log.info("prefetch %s: %s", pre_name, ("error: " + str(result["error"])[:100]) if result.get("error") else "ok")
+                if result.get("error") and pre_name in ("web_search", "news_search"):
+                    result = {**result, "retry": "This search failed. Call web_search yourself once, with a short query of the key words "
+                                                 "(the place or subject and the date), before telling the user you could not find it."}
                 if flag("security.redact"):
                     result = redact_obj(result)
                 call = {"id": "prefetch-0", "type": "function", "function": {"name": pre_name, "arguments": json.dumps(pre_args, ensure_ascii=False)}}
@@ -429,7 +439,7 @@ async def chat(request: Request):
                 found = result.get("results", []) if pre_name == "web_search" else result.get("items", []) if pre_name == "news_search" else []
                 if found:
                     yield _sse({"x_web_sources": [{"url": item["url"], "title": item.get("title") or item["url"]} for item in found if item.get("url")]})
-                if pre_name == "web_search" and result.get("results") and not any(p.get("text") for p in result.get("pages") or []):
+                if pre_name == "web_search" and result.get("results") and result.get("from") != "news headlines" and not any(p.get("text") for p in result.get("pages") or []):
                     unread_web_results = True
                 if pre_name == "search_files" and result.get("results"):
                     file_candidates.update({item["file_id"]: item for item in result["results"] if item.get("file_id")})
@@ -755,7 +765,7 @@ async def chat(request: Request):
                         await asyncio.to_thread(lambda: verification.observe(name, args, result, executed=executed))
                     if durable_id:
                         await asyncio.to_thread(lambda: workflow_runs.store.checkpoint(durable_id, body["messages"], verification.snapshot(), verification.fingerprint() or fingerprint))
-                    if name == "web_search" and result.get("results") and not any(p.get("text") for p in result.get("pages") or []):
+                    if name == "web_search" and result.get("results") and result.get("from") != "news headlines" and not any(p.get("text") for p in result.get("pages") or []):
                         unread_web_results = True                       # nothing read yet: read a page before searching again
                     if name == "read_webpage": unread_web_results = False
                     if await request.is_disconnected(): return
