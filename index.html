@@ -257,9 +257,9 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .vv[data-state="thinking"] .vv-r2, .vv[data-state="starting"] .vv-r2 { animation-duration: 2s; }
 .vv[data-state="off"] .vv-r1, .vv[data-state="off"] .vv-r2 { animation-play-state: paused; opacity: .18; }
 .vv[data-state="muted"] .vv-core span { background: #3a4651; }
-.vv-ask, .vv-say { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+.vv-ask { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
 .vv-ask { margin: 34px 0 0; font-size: 15px; color: #8b97a3; text-align: center; min-height: 22px; max-width: 620px; -webkit-line-clamp: 2; }
-.vv-say { margin: 8px 0 0; font-size: 24px; line-height: 1.4; text-align: center; max-width: 640px; min-height: 68px; color: #ffffff; -webkit-line-clamp: 3; }
+.vv-say { margin: 8px 0 0; font-size: 24px; line-height: 1.4; text-align: center; max-width: 640px; min-height: 68px; max-height: 148px; overflow-y: auto; overscroll-behavior: contain; color: #ffffff; }
 .vv-note { margin: 10px 0 0; font-size: 13px; color: #6c7884; min-height: 18px; text-align: center; }
 .vv-ctl { margin-top: auto; padding-top: 28px; display: flex; gap: 28px; }
 .vv-c { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 12px; color: #8b97a3; }
@@ -275,7 +275,16 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .vv-side { width: 340px; flex: none; border-left: 1px solid #1a2229; background: #0f1317; display: flex; flex-direction: column; min-height: 0; }
 .vv-side h3 { margin: 0; font-size: 12.5px; font-weight: 500; color: #8b97a3; }
 .vv-voices { padding: 20px 16px 14px; border-bottom: 1px solid #1a2229; }
-.vv-chars { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; max-height: 236px; overflow: auto; }
+.vv-chars { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; max-height: 172px; overflow: auto; }
+.vv-models { padding: 14px 16px 12px; border-bottom: 1px solid #1a2229; }
+.vv-mods { display: flex; flex-direction: column; gap: 1px; margin-top: 8px; }
+.vv-mod { display: grid; grid-template-columns: 8px 62px 1fr; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; font-size: 12.5px; }
+.vv-mod:hover { background: #151c22; }
+.vv-mod i { width: 7px; height: 7px; border-radius: 50%; background: #3a4651; }
+.vv-mod[data-s="ok"] i { background: #4cc38a; }
+.vv-mod[data-s="wait"] i { background: #e0a43a; }
+.vv-mod span { color: #6c7884; }
+.vv-mod b { font-weight: 500; color: #c5ced6; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vv-ch { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; border: 0; background: transparent; color: #e9eef2; text-align: left; cursor: pointer; font: inherit; }
 .vv-ch:hover { background: #151c22; }
 .vv-ch.on { background: #1a2229; }
@@ -1103,7 +1112,6 @@ dialog::backdrop { background: var(--overlay); }
           <p class="vv-ask" id="vvAsk"></p>
           <p class="vv-say" id="vvSay" aria-live="polite">Press Start and just talk. You can talk over it any time.</p>
           <p class="vv-note" id="vvNote"></p>
-          <p class="vv-note" id="vvDecide" hidden></p>
           <div class="vv-ctl">
             <div class="vv-c"><button class="vv-btn" id="vvMute" aria-label="Mute"><svg class="i"><use href="#i-mic" id="vvMuteIcon"/></svg></button><span id="vvMuteTxt">Mute</span></div>
             <div class="vv-c"><button class="vv-btn" id="vvType" aria-label="Type instead"><svg class="i"><use href="#i-keys"/></svg></button><span>Type</span></div>
@@ -1113,6 +1121,7 @@ dialog::backdrop { background: var(--overlay); }
         </div>
         <aside class="vv-side">
           <section class="vv-voices"><h3>Voice</h3><div class="vv-chars" id="vvChars"></div></section>
+          <section class="vv-models"><h3>Models</h3><div class="vv-mods" id="vvModels" aria-label="Models in use"></div></section>
           <section class="vv-tr">
             <div class="vv-trh"><h3>Transcript</h3><span id="vvTime"></span></div>
             <div class="vv-log" id="vvLog"><p class="vv-empty">What you say and its replies appear here.</p></div>
