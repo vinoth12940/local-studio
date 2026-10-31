@@ -5305,7 +5305,7 @@ def web_search_retries_duckduckgos_empty_and_throttled_pages():
         calls.clear()
         answers[:] = [empty, empty, empty]
         result = app._chat_read_tool("web_search", {"query": "cheap laptop deals"})
-        assert result["verified"] is False and len(calls) == 3, "three tries at most, then the honest error"
+        assert result["verified"] is False and sum("duckduckgo" in u for u in calls) == 3, "three DuckDuckGo tries at most, then the honest error"
         calls.clear()
         answers[:] = [good]
         assert not app._chat_read_tool("web_search", {"query": "site:apple.com scores"}).get("results") and len(calls) == 1, \
@@ -5648,6 +5648,89 @@ def voice_turns_prefetch_live_facts_before_the_first_round():
         with Env(enabled=False) as e, ChatEngine(turns=list(turns)) as engine:
             e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "Bitcoin price right now?"}]})
             assert asked == [], "a typed turn never asks d1 (it runs only while Voice is on); the word rules decide it"
+    finally:
+        studio.services.harness._chat_read_tool, decide.preflight = real_read, real_pre
+        app.save_settings(original)
+
+
+@check
+def web_search_falls_back_to_news_headlines_when_duckduckgo_refuses():
+    """Found on 1.7.9 in a real Voice session: DuckDuckGo's HTML endpoint answered HTTP 202 to a weather search and to two cricket
+    searches, and each spoken turn got one short apology. For anything but weather and site: searches, recent news headlines
+    (Google News RSS, which found "South Africa Beat Australia by 176 Runs" for the spoken question as it was said) now follow a
+    refused or empty search. Bing was tried and rejected: it ranked the question by its first word."""
+    real, waits, original = studio.services.web._fetch_public_web, studio.services.harness.SEARCH_RETRY_WAITS, app.load_settings()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    rfc = lambda hours: email.utils.format_datetime(now - datetime.timedelta(hours=hours))
+    google = ('<rss><channel><title>Google News</title>'
+              f'<item><title>South Africa beat Australia by 176 runs</title><link>https://news.google.com/rss/articles/1</link><pubDate>{rfc(1)}</pubDate><source url="https://x">Cricket World</source></item>'
+              f'<item><title>South Africa reclaim No. 1 in Test rankings</title><link>https://news.google.com/rss/articles/2</link><pubDate>{rfc(2)}</pubDate><source url="https://y">SportsTak</source></item>'
+              f'<item><title>Cummins reflects on series loss</title><link>https://news.google.com/rss/articles/3</link><pubDate>{rfc(3)}</pubDate><source url="https://z">CODE Sports</source></item>'
+              '</channel></rss>')
+    throttled = ValueError("The source returned HTTP 202; its contents could not be verified")
+    calls, news_state = [], {"feed": google}
+    def fetch(url):
+        calls.append(url)
+        if "duckduckgo" in url:
+            raise throttled
+        return url, "application/rss+xml", news_state["feed"]
+    studio.services.web._fetch_public_web = fetch
+    studio.services.harness.SEARCH_RETRY_WAITS = (0, 0)
+    try:
+        app.save_settings({**original, "harness": {"web_fast": True}})
+        result = app._chat_read_tool("web_search", {"query": "Um, who won uh South Africa versus Australia test match"}, "Asia/Kolkata")
+        assert [r["title"] for r in result["results"]][0] == "South Africa beat Australia by 176 runs" and result["results"][0]["snippet"] == "Cricket World, 1 hour ago", result
+        assert len(result["results"]) == 3 and "headlines" in result["note"] and "pages" not in result, result
+        assert sum("duckduckgo" in u for u in calls) == 3 and any("news.google.com/rss/search" in u and "when%3A7d" in u and "Um" not in u and "uh" not in u for u in calls), calls
+        # Headlines are the answer, not links to open: web_search stays available (its redirect links cannot be read anyway).
+        from studio.services import decide
+        real_pre = decide.preflight
+        decide.preflight = lambda text, previous, timeout=0.25: dict(decide.rules(text), source="rules", ms=0)
+        try:
+            app.save_settings({**original, "voice": {"enabled": True, "decide": True}, "harness": {"web_fast": True}})
+            with Env(enabled=False) as e, ChatEngine(chat_delta(content="ok"), chat_delta(content="")) as engine:
+                e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "messages": [{"role": "user", "content": "Who won the South Africa Australia test match today?"}]})
+            tool = engine.seen[0]["messages"][-1]
+            assert tool["role"] == "tool" and "176 runs" in tool["content"], tool
+            assert "web_search" in [t["function"]["name"] for t in engine.seen[0]["tools"]], "web_search stays available after headlines"
+        finally:
+            decide.preflight = real_pre
+        calls.clear()
+        weather = app._chat_read_tool("web_search", {"query": "how's the weather looking in Frisco"}, "Asia/Kolkata")
+        assert weather["verified"] is False and "HTTP 202" in weather["error"] and not any("news.google" in u for u in calls), "headlines are not a forecast"
+        calls.clear()
+        assert app._chat_read_tool("web_search", {"query": "site:espncricinfo.com South Africa"}, "Asia/Kolkata")["verified"] is False and not any("news.google" in u for u in calls)
+        news_state["feed"] = google.replace("</channel>", "").split("<item>")[0] + "<item><title>A stray singer story</title><link>https://news.google.com/rss/articles/9</link>" \
+                             f"<pubDate>{rfc(2)}</pubDate></item></channel></rss>"
+        calls.clear()
+        assert app._chat_read_tool("web_search", {"query": "who won the test"}, "Asia/Kolkata")["verified"] is False, "one stray headline is not evidence"
+        news_state["feed"] = "<rss><channel></channel></rss>"
+        calls.clear()
+        assert app._chat_read_tool("web_search", {"query": "who won the test"}, "Asia/Kolkata")["verified"] is False, "no headlines: the honest error, not a guess"
+        calls.clear()
+        studio.services.web._fetch_public_web = lambda url: (calls.append(url) or url, "text/html", '<a class="result__a" href="https://www.espn.com/">Scores</a><a class="result__snippet">Live.</a>')
+        assert app._chat_read_tool("web_search", {"query": "scores"}, "Asia/Kolkata").get("results") and not any("news.google" in u for u in calls), "DuckDuckGo answering is never second-guessed"
+    finally:
+        studio.services.web._fetch_public_web = real
+        studio.services.harness.SEARCH_RETRY_WAITS = waits
+        app.save_settings(original)
+
+
+@check
+def a_failed_voice_search_tells_the_model_to_try_once_more():
+    """A spoken turn whose prefetched search failed used to end in one short apology. The failed result now says what to do."""
+    from studio.services import decide
+    real_read, real_pre, original = app._chat_read_tool, decide.preflight, app.load_settings()
+    def failing(name, args, timezone=None):
+        return {"error": "The source returned HTTP 202; its contents could not be verified", "verified": False}
+    studio.services.harness._chat_read_tool = failing
+    decide.preflight = lambda text, previous, timeout=0.25: dict(decide.rules(text), source="rules", ms=0)
+    try:
+        app.save_settings({**original, "voice": {"enabled": True, "decide": True}, "harness": {"web_fast": True}})
+        with Env(enabled=False) as e, ChatEngine(chat_delta(content="ok")) as engine:
+            r = e.c.post("/api/chat", json={"model_id": TEXT_MLX, "voice": True, "messages": [{"role": "user", "content": "What's the weather in Frisco today?"}]})
+        tool = engine.seen[0]["messages"][-1]
+        assert tool["role"] == "tool" and "Call web_search yourself once" in tool["content"] and "HTTP 202" in tool["content"], tool
     finally:
         studio.services.harness._chat_read_tool, decide.preflight = real_read, real_pre
         app.save_settings(original)
