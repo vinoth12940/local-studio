@@ -248,6 +248,11 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .vv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 20px 32px 30px; overflow: auto; }
 .vv-main > * { flex-shrink: 0; }
 .vv-top { align-self: stretch; display: flex; align-items: center; justify-content: space-between; }
+.vv-acts { display: flex; align-items: center; gap: 8px; }
+.vv-new { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px 0 11px; border-radius: 999px; border: 1px solid var(--vv-line); background: var(--vv-glass); color: var(--vv-ink2); font: inherit; font-size: 12.5px; cursor: pointer; transition: background .15s, color .15s; }
+.vv-new:hover { background: rgba(255,255,255,.1); color: var(--vv-ink); }
+.vv-new:focus-visible { outline: 2px solid var(--vc); outline-offset: 3px; }
+.vv-new svg { width: 14px; height: 14px; }
 .vv-who { display: flex; align-items: center; gap: 12px; }
 .vv-name { font-size: 15px; font-weight: 500; letter-spacing: -.01em; }
 .vv-st { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--vv-ink2); padding: 4px 11px 4px 9px; border-radius: 999px; background: var(--vv-glass); border: 1px solid var(--vv-line); }
@@ -1131,7 +1136,7 @@ dialog::backdrop { background: var(--overlay); }
     <section class="view" id="v-voice">
       <div class="vv" id="vv" data-state="off">
         <div class="vv-main">
-          <div class="vv-top"><div class="vv-who"><span class="vv-name" id="vvName">Jarvis</span><span class="vv-st" id="vvState">Voice is off</span></div><button class="vv-btn mini" id="vvPanel" aria-label="Hide side panel" aria-pressed="true" title="Voices, models and transcript"><svg class="i"><use href="#i-pright"/></svg></button></div>
+          <div class="vv-top"><div class="vv-who"><span class="vv-name" id="vvName">Jarvis</span><span class="vv-st" id="vvState">Voice is off</span></div><div class="vv-acts"><button class="vv-new" id="vvNew" aria-label="New voice chat" title="Start a new voice conversation (⇧⌘O)"><svg class="i"><use href="#i-plus"/></svg><span>New chat</span></button><button class="vv-btn mini" id="vvPanel" aria-label="Hide side panel" aria-pressed="true" title="Voices, models and transcript"><svg class="i"><use href="#i-pright"/></svg></button></div></div>
           <div class="vv-hud" id="vvHud" aria-hidden="true">
             <div class="vv-r1"></div><div class="vv-r2"></div><div class="vv-r3"></div>
             <div class="vv-core" id="vvBars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
