@@ -81,7 +81,7 @@ The [guide](docs/GUIDE.md) covers every tool, limit and setting.
 
 ## Install
 
-1. Download **Local-Studio-1.7.9.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
+1. Download **Local-Studio-1.7.10.dmg** from the [latest release](https://github.com/vinoth12940/local-studio/releases/latest).
 2. Open it and drag **Local Studio** to **Applications**.
 3. Open Local Studio and click **Install**. It sets up the engines: about 3 GB and a few minutes, with no Terminal,
    Homebrew or Xcode.
