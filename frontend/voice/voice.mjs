@@ -8,7 +8,7 @@
 //  - a sound from you first only PAUSES it; real speech (about 0.9 s) cuts it and stops the reply; a cough or "uh-huh"
 //    lets it carry on; it waits when you sound mid-thought (turn.mjs).
 import { $, esc, store, toast } from "../core/util.mjs";
-import { chatKind, listState, saveChat, sessionOf } from "../chat/list.mjs";
+import { chatKind, listState, newChat, saveChat, sessionOf } from "../chat/list.mjs";
 import { liveGen, promptShape, send } from "../chat/live.mjs";
 import { libraryState, activeChat } from "../library/library.mjs";
 import { showView, view } from "../ui/views.mjs";
@@ -576,6 +576,19 @@ function applyPanel() {
   $("vv").dataset.panel = on ? "shown" : "hidden";
   $("vvPanel").setAttribute("aria-pressed", String(on)); $("vvPanel").setAttribute("aria-label", on ? "Hide side panel" : "Show side panel");
 }
+// New chat: the next thing you say starts a new Voice conversation. A reply still running (or being spoken) is stopped first.
+async function newConversation() {
+  clearTimeout(pend.timer); pend.text = ""; pend.timer = 0; v.carry = null;
+  const a = turn.approval; turn.question = null;
+  if (a) await answerApproval(a, "deny");
+  if (listState.streaming && turn.active) interrupt();
+  else if (v.pending.size) { v.gen++; v.pending.clear(); clearInterval(turn.tick); post("/api/voice/stop").catch(() => {}); turn.done = false; }
+  for (let i = 0; i < 60 && listState.streaming && liveGen && chatKind(liveGen.chat) === "voice"; i++) await new Promise((r) => setTimeout(r, 50));
+  newChat();
+  tr.bot = tr.you = null; asked(""); saying(v.on ? "I'm listening." : "Press Start and just talk. You can talk over it any time."); caption("");
+  if (v.on) { v.acceptInput = true; setState("listening"); }
+}
+$("vvNew").onclick = () => newConversation();
 $("vvPanel").onclick = () => { store.set("voicePanel", store.get("voicePanel", true) === false); applyPanel(); };
 applyPanel();
 // The mic button and the Voice item appear only when the voice.enabled flag is on.
