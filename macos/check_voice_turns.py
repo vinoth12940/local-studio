@@ -114,6 +114,8 @@ CASES = [
     ("t", "What time is it right now?", "clock", False),
     ("p", "What is the price of bitcoin right now?", "price", True),
     ("w", "What is the weather in Chennai right now?", "weather", True),
+    ("g", "Hey, um what is the Frisco weather looks like today?", "weather", True),      # a greeting in front of a question still searches
+    ("g", "Why don't you use a web search to get that information?", "weather", True),    # asked to search: the weather again, not the request
     ("d", "What is the latest release of llama dot cpp?", "llama", True),
     ("n", "What is the latest cricket news?", "news", True),
 ]

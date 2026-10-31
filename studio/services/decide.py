@@ -51,7 +51,7 @@ _MINE = re.compile(r"\b(my|mine|our)\b", re.I)          # about the user: never 
 _FOLLOW_UP = re.compile(r"^(and|what about|how about|also|then)\b", re.I)
 _NEWS = re.compile(r"\b(news|headlines?)\b", re.I)
 _CLOCK = re.compile(r"\b(what time is it|what(?:'s| is) the time|what(?:'s| is) (?:the )?(?:date|day)|today's date|what day is it)\b", re.I)
-_GREETING = re.compile(r"^(hi|hello|hey|thanks|thank you|good (?:morning|afternoon|evening|night)|how are you|what'?s (?:new|up)|"
+_GREETING = re.compile(r"^(hi|hello|hey|thanks|thank you|good (?:morning|afternoon|evening|night)|how are you|how(?:'s| is) it going|how are things|how(?:'s| is) your day|what'?s (?:new|up)|"
                        r"bye|goodbye|see you|ok(?:ay)?|that'?s (?:great|good|all)|great|cool|nice)\b|"
                        r"^(?:(?:can|could|would|will) you |please )*(?:open|close|turn|set|start|stop|play|pause|resume|remind|call|"
                        r"text|send|mute|unmute|tell me a joke)\b", re.I)   # greetings, closings and commands to the Mac
@@ -82,11 +82,46 @@ def clean_query(text):
     return " ".join(_FILLERS.sub(" ", str(text or "")).split()).strip(" ,")
 
 
+_LEAD_WORD = r"(?:hey|hi|hello|yo|ok(?:ay)?|so|well|alright|good (?:morning|afternoon|evening|night))"
+_LEAD = re.compile(rf"(?i:{_LEAD_WORD})\b[\s,!.]*")
+_LEAD_NAME = re.compile(r"(?i:hey|hi|hello|yo)\s+[A-Z][a-z]+(?:\s[A-Z][a-z]+)?[,!.]\s+")   # "Hey Jarvis, ": a name by shape, since speech
+                                                                                         # recognition spells it "Javis" as easily as "Jarvis"
+
+
+def strip_lead(text):
+    """The words after a spoken greeting or address: "Hey, what's the weather in Frisco?" -> "what's the weather in Frisco?".
+    A greeting in front of a question is not small talk. Only a greeting alone stays as it is, and "and", "then", "also" and
+    "what about" are never taken off: they mark a follow-up."""
+    s = str(text or "").strip()
+    out = s
+    while True:
+        m = _LEAD_NAME.match(out) or _LEAD.match(out)
+        if not m or not out[m.end():].strip():
+            break
+        out = out[m.end():]
+    out = out.strip()
+    return s if not out or _LEAD.fullmatch(out) else out      # nothing left but greetings: it was only a greeting
+
+
+_ASKS = re.compile(r"^(?:what|who|whom|where|when|why|how|which|is|are|do|does|did|can|could|will|would|should|has|have|any|tell|give|show|find|"
+                   r"search|look|check|get|read|list|explain|remind|play|open)\b", re.I)
+
+
+def _small_talk(said):
+    """A greeting, a thanks or a command to the Mac. A greeting in front of a question ("Hey, what's the weather?") is not small
+    talk; a greeting in front of a statement ("Hey, I'm doing great today") still is, whatever live-sounding word it holds."""
+    core = strip_lead(said)
+    if _GREETING.match(core):
+        return True
+    return core != said and not core.rstrip().endswith("?") and not _ASKS.match(core)
+
+
 def rules(text):
     """The same five answers from word rules, each 0.0 or 1.0: the fallback whenever d1 is off, down or slow."""
-    said = clean_query(text)
+    raw = clean_query(text)
+    said = strip_lead(raw)
     return {"live_facts": float(bool(_LIVE.search(said))), "my_files": float(bool(_FILES.search(said))),
-            "small_talk": float(bool(_GREETING.match(said))),
+            "small_talk": float(_small_talk(raw)),
             "standalone": 0.0 if len(said.split()) < 3 or _FOLLOW_UP.match(said)
                           or (_REFERS_BACK.search(said) and not re.search(r"\s[A-Z]", said)) else 1.0,   # a pronoun, no name
             "news": float(bool(_NEWS.search(said))), "source": "rules", "ms": 0}
@@ -107,17 +142,30 @@ def preflight(text, previous=None, timeout=0.25):
         return {**rules(text), "ms": int((time.perf_counter() - started) * 1000)}
 
 
-def prefetch_call(plan, text, web_fast, files=False):
-    """The read tool to run before round one, as (name, args), or None to let the model choose as usual."""
-    query = clean_query(text)
-    floor = rules(query)
+_ASK_SEARCH = re.compile(r"\b(?:web ?search|search (?:the )?web|search online|google|the internet|look (?:it|that|this) up|"
+                         r"search (?:for )?(?:it|that|this))\b", re.I)      # talking about searching; only read after a live question
+
+
+def prefetch_call(plan, text, web_fast, files=False, previous=None):
+    """The read tool to run before round one, as (name, args), or None to let the model choose as usual.
+
+    `previous` is the user's turn before this one. "Can you use web search for that?" asks for a search of what was just asked,
+    so when it follows a live-facts question that question is the query, not the request to search."""
+    raw = clean_query(text)
+    query = strip_lead(raw)
+    if previous and _ASK_SEARCH.search(query):
+        before_raw = clean_query(previous)
+        before = strip_lead(before_raw)
+        if rules(before_raw)["live_facts"] and not rules(before_raw)["small_talk"] and not _ASK_SEARCH.search(before):
+            raw, query, plan = before_raw, before, {**plan, "live_facts": 1.0, "standalone": 1.0, "small_talk": 0.0, "my_files": 0.0, "news": float(bool(_NEWS.search(before)))}
+    floor = rules(raw)
     if floor["live_facts"] and floor["standalone"] and not floor["small_talk"]:
         # The word rules are a floor under d1 for live facts too: a plain "latest match" question that d1 scored as small talk
         # or as a follow-up (the greeting before it counts as context) must still search, not leave the model to refuse.
         plan = {**plan, "live_facts": max(plan["live_facts"], 1.0), "standalone": max(plan["standalone"], 1.0), "small_talk": 0.0}
     if not query or plan["standalone"] < STANDALONE_THRESHOLD:
         return None                                   # a follow-up's words alone make a junk query
-    if plan["small_talk"] >= SMALL_TALK_THRESHOLD or _GREETING.match(query):
+    if plan["small_talk"] >= SMALL_TALK_THRESHOLD or floor["small_talk"]:
         return None                                   # greetings, thanks and commands need no search
     if max(plan["my_files"], rules(query)["my_files"]) >= FILES_THRESHOLD:     # the word rules are a floor under d1 here
         return ("search_files", {"query": query}) if files else None      # personal questions never go to the web
