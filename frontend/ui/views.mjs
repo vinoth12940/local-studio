@@ -56,7 +56,14 @@ document.addEventListener("click", (e) => { if (!e.target.closest("#modelMenu") 
 $("inspBtn").onclick = (e) => { e.stopPropagation(); $("inspector").classList.toggle("on"); };
 $("inspClose").onclick = () => $("inspector").classList.remove("on");
 $("mmSettings").onclick = () => { closeMenus(); $("settingsDlg").showModal(); };
-$("settingsDone").onclick = () => { $("settingsDlg").close(); store.set("settings", { sys: $("sysPrompt").value, max: $("maxTok").value, temp: $("temp").value }); toast("Settings saved"); };
+// Saved whenever the window closes (Done, Esc, or a click outside): the edit used to be kept only by Done, so closing any other way left
+// the old system prompt in use while the box still showed the new one.
+$("settingsDone").onclick = () => $("settingsDlg").close();
+$("settingsDlg").onclose = () => {
+  const next = { sys: $("sysPrompt").value, max: $("maxTok").value, temp: $("temp").value }, was = store.get("settings", {});
+  if (next.sys === (was.sys || "") && String(next.max) === String(was.max || DEFAULT_MAX_TOKENS) && next.temp === (was.temp || "")) return;
+  store.set("settings", next); toast("Settings saved");
+};
 { const s = store.get("settings", {}); $("sysPrompt").value = s.sys || ""; $("maxTok").value = s.max || DEFAULT_MAX_TOKENS; $("temp").value = s.temp || ""; }
 
 export {

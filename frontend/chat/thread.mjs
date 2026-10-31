@@ -513,10 +513,13 @@ $("chatScroll").addEventListener("scroll", () => {
 $("chatScroll").addEventListener("wheel", (e) => { if (e.deltaY < 0) threadState.stick = false; }, { passive: true });
 $("jumpBtn").onclick = () => scrollBottom(true);
 function modelThinks() { try { const a = activeChat(); return !a || a.thinking !== false; } catch { return true; } }   // lib may not exist yet at start-up
+// Whether the loaded model's chat template acts on the effort level (the backend reads the template: /api/models "effort"); for any other
+// model every level would be ignored, so the control is off and nothing is sent.
+function modelEffort() { try { return activeChat()?.effort === true; } catch { return false; } }
 
 export {
   autoTop, chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chRoundsHTML, chToolsHTML, chToolStepsInner,
-  chVerificationHTML, chWebSourcesHTML, CODE_STARTERS, diffLinesHTML, drawSpark, EDIT_TOOLS, fmtSecs, modelThinks, perfGrid, perfLine,
+  chVerificationHTML, chWebSourcesHTML, CODE_STARTERS, diffLinesHTML, drawSpark, EDIT_TOOLS, fmtSecs, modelEffort, modelThinks, perfGrid, perfLine,
   PERM_WORDS, renderOnboarding, renderThread, scrollBottom, showPerf, sourcesHTML, STARTERS, thoughtHTML, threadState,
   TOOL_LABELS, toolLabel, toolResultHTML, turnHTML, verificationResult
 };

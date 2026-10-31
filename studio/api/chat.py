@@ -307,6 +307,11 @@ async def chat(request: Request):
     for key, value in (m.get("sampling") or {}).items():       # the model card's sampling, unless the request chose its own
         body.setdefault("repeat_penalty" if gguf and key == "repetition_penalty" else key, value)
     mode = models.engine_mode(m, needs_vision)
+    if body.get("reasoning_effort") is not None and (not body.get("enable_thinking", True) or not models.supports_effort(m) or mode != "text"):
+        # Nothing reads it (thinking is off, or the template has no effort levels), or the engine would pass it on unchanged: only
+        # mlx-dspark maps a level the template lacks to the nearest one it has (Qwen3.8 has no "high"); an image turn runs on
+        # mlx-vlm, where that level would be a template error.
+        body.pop("reasoning_effort")
     durable_attempt = 0
     if durable_enabled:
         try:

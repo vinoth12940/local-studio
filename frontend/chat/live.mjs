@@ -6,7 +6,7 @@ import { view } from "../ui/views.mjs";
 import { poll } from "../ui/engine.mjs";
 import { chatKind, chLive, kindOfView, listState, renderHistory, saveChat, updateWorkspaceUI } from "./list.mjs";
 import {
-  chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chToolStepsInner, chVerificationHTML, drawSpark, fmtSecs, modelThinks, renderThread,
+  chHarnessCardHTML, chPlanHTML, chRoundItemHTML, chToolStepsInner, chVerificationHTML, drawSpark, fmtSecs, modelEffort, modelThinks, renderThread,
   scrollBottom, showPerf, threadState, turnHTML, verificationResult
 } from "./thread.mjs";
 import { attachmentsState, renderPending } from "./attachments.mjs";
@@ -118,7 +118,7 @@ async function generate(resumeBot = null, target = null) {    // target: the con
   const body = { messages, chat_id: chat.id, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, max_tokens: +s.max || DEFAULT_MAX_TOKENS, enable_thinking: thinking && modelThinks() };
   try { Object.assign(body, workflowRequest(chat), takeWorkflowResume() || {}); }
   catch (error) { bot.error = error.message; liveGen = null; renderThread(); renderHistory(); return; }     // nothing is streaming: no permanent skeleton
-  if (effort && modelThinks()) body.reasoning_effort = effort;
+  if (effort && modelThinks() && modelEffort()) body.reasoning_effort = effort;   // only a model whose template reads it
   if (s.temp) body.temperature = +s.temp;
   if (!chat.workspace && useFiles && sr?.running && !sr.error && !searchState.noFilesOnce) body.use_files = true;
   if (chat.workspace) body.workspace = chat.workspace;

@@ -96,6 +96,30 @@ def native_context(m):
     return None
 
 
+def supports_effort(m):
+    """Whether this model's chat template reads `reasoning_effort`. The engines hand the level to the template and nothing else
+    uses it, so for a model whose template does not (Qwen3.6, LFM, most others) every level is silently ignored; only
+    Qwen3.8-class templates act on it. Read from the cached template; a GGUF model (its template is inside the file) or one not
+    downloaded yet falls back to the entry's own `effort` flag."""
+    if m.get("backend") != "gguf" and m.get("repo"):
+        seen = False
+        for name in ("chat_template.jinja", "chat_template.json", "tokenizer_config.json"):
+            path = snapshot_file(m["repo"], name)
+            try:
+                text = path.read_text() if path else None
+            except OSError:
+                text = None
+            if text is None:
+                continue
+            if name != "tokenizer_config.json" or "chat_template" in text:
+                seen = True
+            if "reasoning_effort" in text:
+                return True
+        if seen:
+            return False
+    return bool(m.get("effort"))
+
+
 def effective_context(m):
     """The window to start this model with and budget its prompts against: the setting, never beyond what the model supports.
 
@@ -208,6 +232,7 @@ def _row(m, kind, active_id, running):
            "active": m["id"] == active_id and inst}
     if kind == "chat":
         row["running"] = running
+        row["effort"] = supports_effort(m)        # the Effort control is enabled only for a model that acts on it
     return row
 
 

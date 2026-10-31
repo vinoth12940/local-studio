@@ -4955,6 +4955,70 @@ def chat_action_deltas(name="use_computer", args="{}"):
 
 
 @check
+def effort_is_sent_only_to_a_model_whose_template_reads_it():
+    """Found on 1.7.7: every chat model that can think offered Effort (Low/High/Max) and the request carried it, but only a chat
+    template that reads `reasoning_effort` (Qwen3.8-class) acts on it; Qwen3.6, LFM and the rest ignored it without a word. The
+    backend now reads the cached template, lists `effort` on /api/models, and never sends a level nothing reads: not for a model
+    without effort levels, not with thinking off, not for a spoken turn."""
+    import tempfile
+    models = studio.services.models
+    orig, tmp = models.snapshot_file, Path(tempfile.mkdtemp(prefix="effort-"))
+    files = {}
+    def fake(repo, name):
+        if name in ("chat_template.jinja", "chat_template.json", "tokenizer_config.json"):
+            path = tmp / name
+            return path if path.exists() else None
+        return orig(repo, name)
+    def put(name, text):
+        for old in tmp.iterdir(): old.unlink()
+        if name: (tmp / name).write_text(text)
+    chat = {"id": "x", "repo": "org/x", "backend": "mlx"}
+    try:
+        models.snapshot_file = fake
+        put("chat_template.jinja", "{% if reasoning_effort %}effort: {{ reasoning_effort }}{% endif %}")
+        assert models.supports_effort(chat) is True
+        put("tokenizer_config.json", json.dumps({"chat_template": "{% if reasoning_effort == 'low' %}x{% endif %}"}))
+        assert models.supports_effort(chat) is True, "a template kept inside tokenizer_config.json counts"
+        put("chat_template.jinja", "{{ messages }} {% if enable_thinking %}<think>{% endif %}")
+        assert models.supports_effort({**chat, "effort": True}) is False, "the template we can read wins over the catalog flag"
+        put("tokenizer_config.json", json.dumps({"model_max_length": 8}))
+        assert models.supports_effort({**chat, "effort": True}) is True and models.supports_effort(chat) is False, "no template cached: the catalog flag"
+        put(None, "")
+        assert models.supports_effort({**chat, "effort": True}) is True and models.supports_effort(chat) is False
+        assert models.supports_effort({"id": "g", "repo": "org/g", "backend": "gguf"}) is False
+        catalog = {m["id"]: m for m in app.CATALOG["chat"]}
+        assert catalog["qwen3.8-27b"]["effort"] is True and "effort" not in catalog[TEXT_MLX], "only Qwen3.8 is known to read it"
+
+        def sent(template, **body):
+            put("chat_template.jinja" if template else None, "{{ reasoning_effort }} {{ enable_thinking }}")
+            with Env(enabled=False) as e, ChatEngine(chat_delta(content="ok")) as eng:
+                e.c.post("/api/chat", json={"model_id": TEXT_MLX, "messages": [{"role": "user", "content": "hi"}], **body})
+            return eng.seen[0].get("reasoning_effort")
+        assert sent(True, reasoning_effort="high", enable_thinking=True) == "high"
+        assert sent(True, reasoning_effort="low") == "low", "thinking defaults on"
+        assert sent(True, reasoning_effort="high", enable_thinking=False) is None, "thinking off: no effort"
+        assert sent(True, reasoning_effort="high", enable_thinking=True, voice=True) is None, "a spoken turn thinks with nothing"
+        assert sent(False, reasoning_effort="high", enable_thinking=True) is None, "no effort levels in this model's template"
+        saved = (models.engine_mode, studio.services.engines.ensure_engine)
+        try:                                             # an image turn runs on mlx-vlm, which passes the level on unchanged
+            models.engine_mode = lambda m, needs_vision=False: "vision"
+            studio.services.engines.ensure_engine = lambda mode, m: None
+            assert sent(True, reasoning_effort="high", enable_thinking=True) is None, "only mlx-dspark maps a level the template lacks"
+        finally:
+            models.engine_mode, studio.services.engines.ensure_engine = saved
+        put("chat_template.jinja", "{{ messages }}")
+        with Env(enabled=False) as e:
+            rows = {m["id"]: m for m in e.c.get("/api/models").json()["chat"]}
+        assert rows[TEXT_MLX]["effort"] is False and rows["qwen3.8-27b"]["effort"] in (True, False)
+        put("chat_template.jinja", "{{ reasoning_effort }}")
+        with Env(enabled=False) as e:
+            assert {m["id"]: m for m in e.c.get("/api/models").json()["chat"]}[TEXT_MLX]["effort"] is True, "/api/models tells the UI"
+    finally:
+        models.snapshot_file = orig
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+
+@check
 def lfm3_thinking_opened_by_the_prompt_reaches_the_thinking_section():
     """Found on 1.7.2 with LFM3 1.7B (MLX): its template ends the prompt with "<think>", and mlx-vlm 0.7.11 streams with
     LFM3's response-template parser given an empty prefix, so the whole reply arrives as content: "...thinking...</think>
