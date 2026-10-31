@@ -396,7 +396,7 @@ async def chat(request: Request):
         _chat_sessions[session.id] = session
         try:
             plan = (await preflight) if preflight else typed_plan
-            pick = decide.prefetch_call(plan, said[-1], flag("harness.web_fast"), use_files) if plan else None
+            pick = decide.prefetch_call(plan, said[-1], flag("harness.web_fast"), use_files, said[-2] if len(said) > 1 else None) if plan else None
             if pick:
                 # A spoken turn that needs live facts (or the user's files): run that search now and hand the model its result
                 # as the first tool result, so it answers from evidence in what would have been its second round.

@@ -541,6 +541,20 @@ def decide_personal_questions_never_reach_the_web():
     latest = "Would you be able to get me some details from Latest match New Zealand and England."
     assert decide.prefetch_call(veto, latest, web_fast=True)[0] == "web_search", "the rules are a floor under d1 for live facts"
     assert decide.prefetch_call(veto, "Hello! How is it going today?", web_fast=True) is None, "a greeting still never searches"
+    # A greeting in front of a question is not small talk (found on 1.7.8: "Hey, um what is the Frisco weather looks like today?"
+    # never searched because "Hey" matched the greeting rule), but a greeting alone, or in front of small talk, still is.
+    frisco = "Hey, um what is the Frisco weather looks like today?"
+    assert decide.prefetch_call(decide.rules(frisco), frisco, web_fast=True) == ("web_search", {"query": "what is the Frisco weather looks like today?"})
+    assert decide.prefetch_call(veto, "Hey, what's the weather in Frisco?", web_fast=True)[0] == "web_search", "d1 reading the greeting as small talk"
+    assert decide.strip_lead("Hey Jarvis, what is the weather?") == "what is the weather?" and decide.strip_lead("Hey, Frisco, what's the weather?") == "Frisco, what's the weather?"
+    assert decide.strip_lead("Hey!") == "Hey!" and decide.strip_lead("Hello, hi") == "Hello, hi" and decide.strip_lead("And what about tomorrow?") == "And what about tomorrow?"
+    for chat in ("Hey, how are you?", "Hello, how is it going today?", "Hey Jarvis, how are you doing today?", "Hi, can you open Safari?", "Good morning!"):
+        assert decide.prefetch_call(decide.rules(chat), chat, web_fast=True) is None, chat
+    # "Use web search for that" after a live question searches the question, not the request; after small talk it searches nothing.
+    ask, before = "Why don't you use a web search to get that information?", "Hey, um what is the Frisco weather looks like today?"
+    assert decide.prefetch_call(decide.rules(ask), ask, web_fast=True) is None, "alone it is not a question about the world"
+    assert decide.prefetch_call(decide.rules(ask), ask, web_fast=True, previous=before) == ("web_search", {"query": "what is the Frisco weather looks like today?"})
+    assert decide.prefetch_call(decide.rules(ask), ask, web_fast=True, previous="Hello there, how are you?") is None
     chatty = dict(live_facts=0.9, my_files=0.0, small_talk=0.9, standalone=0.9, news=0.0)
     assert decide.prefetch_call(chatty, "Hello! How is it going today?", web_fast=True) is None, "d1's small talk never searches"
     assert "LFM Open License v1.0" in __import__("studio.storage.flags", fromlist=["FLAGS"]).FLAGS["voice.decide"][1]

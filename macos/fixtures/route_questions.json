@@ -1,6 +1,9 @@
 {
  "_about": "Spoken-turn routing set: 'search' needs live public facts, 'direct' does not (both from the voice prototype's route_eval.py), 'personal' is about the user's own documents, 'follow_up' only makes sense after an earlier turn. 'small_talk_and_commands' never needs the web.",
  "search": [
+  "Hey, um what is the Frisco weather looks like today?",
+  "Hey Jarvis, what's the weather in Chennai?",
+  "Good morning, what's the news?",
   "Would you be able to get me some details from Latest match New Zealand and England.",
   "How much is Bitcoin right now?",
   "Is it going to rain in London tomorrow?",
@@ -72,6 +75,10 @@
   "Is that one still open?"
  ],
  "small_talk_and_commands": [
+  "Hey Jarvis, how are you doing today?",
+  "Hi, can you open Safari?",
+  "Hey, I'm doing great today.",
+  "Hello! Nice to meet you tonight.",
   "How are you doing today?",
   "Hi, how are you doing?",
   "What's new with you?",
