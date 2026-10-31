@@ -159,6 +159,9 @@ def seed(url, home):
                                      headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10).read()
         time.sleep(0.05)
+    req = urllib.request.Request(f"{url}/api/chats/{VOICE_CHAT}", method="PUT", headers={"Content-Type": "application/json"},
+                                 data=json.dumps({"title": "Tokyo trip dates", "kind": "voice", "messages": VOICE_TURNS}).encode())
+    urllib.request.urlopen(req, timeout=10).read()                       # the Voice view lists its own conversations
     return workspace
 
 
@@ -206,8 +209,14 @@ def chat_shot(page, cid, my_files=False):
     page.wait_for_timeout(300)
 
 
+VOICE_CHAT = "a1b2c3d4e5f60010"
+VOICE_TURNS = [{"role": "user", "content": "When do I land in Tokyo, and how long am I in Shinjuku?"},
+               {"role": "assistant", "content": "You land at Haneda on the third of April, then spend four nights in Shinjuku "
+                                                "before the bullet train to Kyoto."}]
+
+
 def voice_shot(page):
-    page.evaluate("LS.showView('voice')")
+    page.evaluate(f"LS.openChat('{VOICE_CHAT}')")
     page.wait_for_timeout(800)
     page.evaluate("""() => {
       const $ = (id) => document.getElementById(id);

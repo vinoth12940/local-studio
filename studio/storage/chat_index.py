@@ -2,6 +2,8 @@
 import json
 import threading
 
+from studio.storage.chats import chat_summary
+
 _LOCK = threading.Lock()
 _CACHE = {}
 
@@ -16,8 +18,7 @@ def chat_metadata(directory):
                 signature = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
                 cached = _CACHE.get(path)
                 if cached is None or cached[0] != signature:
-                    chat = json.loads(path.read_text())
-                    meta = {'id': chat['id'], 'title': chat.get('title', 'Untitled'), 'updated': chat.get('updated', 0)}
+                    meta = chat_summary(json.loads(path.read_text()))
                     cached = (signature, meta)
                     _CACHE[path] = cached
                 out.append(dict(cached[1]))

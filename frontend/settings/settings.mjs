@@ -130,7 +130,7 @@ async function loadStorage() {
     const [, t] = STORAGE.find(([k]) => k === b.dataset.clear);
     if (!(await confirmBox(`Clear ${t.toLowerCase()}?`, "This permanently deletes the files and can't be undone.", "Clear"))) return;
     try { await jpost("/api/storage/clear", { what: b.dataset.clear }); toast(`${t} cleared`); } catch (err) { toast(err.message); }
-    if (b.dataset.clear === "chats") { chDetach(); listState.current = null; loadChats(); }
+    if (b.dataset.clear === "chats") { chDetach(); listState.current = null; listState.sessions = { chat: null, code: null, voice: null }; loadChats(); }
     loadStorage();
   };
 }

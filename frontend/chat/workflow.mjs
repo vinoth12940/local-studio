@@ -1,6 +1,7 @@
 // Explicit task controls. Mode/permission state is always validated by the server.
 import { $, api, esc, jpost, newId, setOptions, toast } from "../core/util.mjs";
-import { listState, saveChat } from "./list.mjs";
+import { kindOfView, listState, saveChat } from "./list.mjs";
+import { view } from "../ui/views.mjs";
 import { activeCodeWs, generate, renderThread } from "../modules.mjs";
 
 const FEATURE_LABELS = { workflow: "Plan / Act / Auto", durable_runs: "Restart recovery", verification_gate: "Required checks",
@@ -8,7 +9,7 @@ const FEATURE_LABELS = { workflow: "Plan / Act / Auto", durable_runs: "Restart r
   hooks: "Tool hooks", protect_tests: "Protect test files", review: "Independent reviews", triggers: "Scheduled tasks", worktrees: "Isolated write workers" };
 const workflowState = { enabled: false, features: {}, workspace: null, tasks: [], pending: false, mode: "plan", run: null };
 const selectedTask = () => workflowState.tasks.find((t) => t.id === listState.current?.workflow_task_id);
-const workspace = () => listState.current?.workspace || activeCodeWs() || null;
+const workspace = () => (kindOfView(view) === "code" ? activeCodeWs() || null : null);        // coding tasks belong to Code's folder
 function showError(error) { const el = $("workflowError"); el.hidden = !error; el.textContent = error?.message || error || ""; }
 
 function syncWorkflow() {
@@ -125,7 +126,7 @@ async function renderTriggers() {
 async function startInvocation(id) {
   if (listState.streaming) throw new Error("Stop the current reply before starting a scheduled run.");
   const { request } = await jpost(`/api/workflow/invocations/${encodeURIComponent(id)}/start`, {});
-  const chat = { id: newId(), title: "Scheduled task", workspace: request.workspace, workflow_task_id: request.workflow_task_id, messages: [{ role: "user", content: request.prompt }] };
+  const chat = { id: newId(), title: "Scheduled task", kind: "code", workspace: request.workspace, workflow_task_id: request.workflow_task_id, messages: [{ role: "user", content: request.prompt }] };
   listState.current = chat;
   await saveChat();
   workflowState.resume = { workflow_request_key: request.workflow_request_key };
@@ -198,7 +199,7 @@ async function showWorkflowRun(id) {
     try {
       if (listState.streaming) throw new Error("Stop the current reply before continuing a saved run.");
       const prepared = await jpost(`/api/workflow/runs/${run.id}/resume`, { expected_seq: run.seq });
-      if (!listState.current) listState.current = { id: newId(), title: "Recovered coding task", workspace: run.workspace, messages: [] };
+      if (!listState.current) listState.current = { id: newId(), title: "Recovered coding task", kind: "code", workspace: run.workspace, messages: [] };
       listState.current.workspace = run.workspace;
       if (run.metadata?.task_id) listState.current.workflow_task_id = run.metadata.task_id;
       workflowState.resume = prepared.next_request;
@@ -223,7 +224,7 @@ $("workflowNewTask").onclick = async () => {
     const task = await jpost("/api/workflow/tasks", { workspace: workspace(), intent: $("workflowIntent").value, spec: $("workflowSpec").value, plan: $("workflowPlan").value,
       mode: $("workflowModeSel").value, scope: $("workflowScope").value.split("\n").filter(Boolean),
       budgets: { max_steps: +$("workflowSteps").value, max_seconds: +$("workflowSeconds").value }, review_required: $("workflowReviewRequired").checked });
-    if (!listState.current) listState.current = { id: newId(), title: "Coding task", workspace: task.workspace, messages: [] };
+    if (!listState.current) listState.current = { id: newId(), title: "Coding task", kind: "code", workspace: task.workspace, messages: [] };
     listState.current.workflow_task_id = task.id; await saveChat(); await refreshWorkflow(); await fillTask(task); showError(null); toast("Task and planning artifacts created");
   } catch (e) { showError(e); }
 };

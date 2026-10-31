@@ -2,7 +2,7 @@
 // tabs, find and replace, side-by-side diffs against the last commit); the explorer is a folder tree, the git changes and
 // the open file's outline.
 import { $, api, esc, human, jpost, toast } from "../core/util.mjs";
-import { listState, updateWorkspaceUI } from "../chat/list.mjs";
+import { listState, renderHistory, sessionOf } from "../chat/list.mjs";
 import { applyCodeLayout, codeUpdateStatus } from "../modules.mjs";
 import { loadMonaco } from "./monaco.mjs";
 
@@ -12,7 +12,7 @@ const codeTabs = [];                                     // open files: { path, 
 const codeTree = new Map(), codeOpenDirs = new Set();    // folder listings by path ("" is the workspace) and the expanded folders
 let codeMon = null, codeEd = null, codeDiffEd = null, codeEdReady = null, codeTreeWs = null;
 let codeCtxOff = "";                                     // the open file the user took off their messages (×); another file brings the chip back
-const activeCodeWs = () => listState.current?.workspace || listState.codeWorkspace || "";
+const activeCodeWs = () => sessionOf("code")?.workspace || listState.codeWorkspace || "";      // Code's folder, never a Chat conversation's
 const codeWsQ = (sep = "&") => activeCodeWs() ? `${sep}workspace=${encodeURIComponent(activeCodeWs())}` : "";
 const codeTab = (path) => codeTabs.find((t) => t.path === path);
 const codeTabDirty = (t) => !!t && t.model.getAlternativeVersionId() !== t.savedVersion;   // undoing back to the saved text is clean again
@@ -334,8 +334,7 @@ async function loadCodeView(keepCurrentFile = false) {
   try { info = await api(`/api/workspace/info${codeWsQ("?")}`); }
   catch (err) { $("codeWsPath").textContent = err.message || "Could not load the workspace"; }
   if (info) {
-    if (info.workspace && !listState.codeWorkspace) listState.codeWorkspace = info.workspace;
-    if (listState.current && info.workspace && !listState.current.workspace) { listState.current.workspace = info.workspace; updateWorkspaceUI(); }
+    if (info.workspace && !listState.codeWorkspace) { listState.codeWorkspace = info.workspace; renderHistory(); }
     const ws = info.workspace || "", name = ws.split("/").filter(Boolean).pop() || "Workspace";
     $("codeWsBadge").textContent = name;
     $("codeWsPick").title = `${ws} · choose another folder`;

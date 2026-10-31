@@ -1,14 +1,15 @@
 // voice/voice.mjs: talk to the assistant. The voice POC's conversation loop (build/voice-poc), inside Local Studio:
 //  - the microphone and speaker are voice.py's echo-cancelling engine (Apple voice processing), relayed by /api/voice/*,
 //    so the assistant's own voice never reaches what we listen to;
-//  - what you say is transcribed on this Mac (Parakeet) and sent as a normal message in the current chat, so tools, web
-//    search, approvals, memory and history are exactly those of typed chat (send(), generate());
+//  - what you say is transcribed on this Mac (Parakeet) and sent as a normal message in the Voice conversation (its own,
+//    apart from Chat's and Code's, even from the small bar), so tools, web search, memory and history work as in typed
+//    chat (send(), generate()); an approval is asked aloud and answered by voice or in the transcript;
 //  - the reply is spoken sentence by sentence as it streams (Phonon), in the chosen character's voice;
 //  - a sound from you first only PAUSES it; real speech (about 0.9 s) cuts it and stops the reply; a cough or "uh-huh"
 //    lets it carry on; it waits when you sound mid-thought (turn.mjs).
 import { $, store, toast } from "../core/util.mjs";
-import { listState } from "../chat/list.mjs";
-import { promptShape, send } from "../chat/live.mjs";
+import { chatKind, listState, sessionOf } from "../chat/list.mjs";
+import { liveGen, promptShape, send } from "../chat/live.mjs";
 import { showView, view } from "../ui/views.mjs";
 import { CHARACTERS, DEFAULT_CHARACTER } from "./characters.mjs";
 import { endpointWait, isBackchannel, looksLikeOwnVoice, takeSentences } from "./turn.mjs";
@@ -20,7 +21,7 @@ const v = {
   playedMs: 0, lastSpeechEnd: 0, respondAt: 0, firstAudioAt: 0, askedAt: 0,
 };
 const turn = { active: false, done: false, buf: "", held: [], roundSpoken: 0, chunks: 0, said: "", heard: "", heardParts: [], toolActive: false,
-  filler: false, workIdx: 0, lastSpoke: 0, tick: 0, interrupted: false, question: null };
+  filler: false, workIdx: 0, lastSpoke: 0, tick: 0, interrupted: false, question: null, approval: null };
 const cap = { pre: [], chunks: [], on: false, voiced: 0, silence: 0, lastVoicedAt: 0 };
 const pend = { text: "", timer: 0 };
 let tent = null, loudSince = 0, tentBlockUntil = 0;
@@ -88,7 +89,7 @@ function drawOrb() {
 function restBars() { document.querySelectorAll("#vvBars span").forEach((el) => { el.style.transform = "scaleY(0.1)"; }); }
 
 // The transcript beside the display: what you said, the tools it used, and what it said aloud.
-const tr = { you: null, bot: null, count: 0 };
+const tr = { you: null, bot: null, count: 0, chatId: undefined };
 function trAdd(kind, text, who) {
   const log = $("vvLog"); if (!log) return null;
   if (!tr.count++) { log.innerHTML = ""; $("vvTime").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
@@ -99,6 +100,18 @@ function trAdd(kind, text, who) {
   while (log.children.length > 80) log.firstChild.remove();
   log.scrollTop = log.scrollHeight;
   return el;
+}
+// The Voice conversation's turns, when another one is opened (the sidebar, New chat); a running one is left as it is.
+function voiceShowSession() {
+  const chat = sessionOf("voice"), log = $("vvLog");
+  if (!log || turn.active || (chat?.id ?? null) === tr.chatId) return;
+  tr.chatId = chat?.id ?? null; tr.count = 0; tr.you = tr.bot = null;
+  log.innerHTML = `<p class="vv-empty">What you say and its replies appear here.</p>`; $("vvTime").textContent = "";
+  for (const m of chat?.messages || []) {
+    const text = typeof m.content === "string" ? cleanSpeech(m.content) : "";
+    if (text && (m.role === "user" || m.role === "assistant")) trAdd(m.role === "user" ? "you" : "bot", text, m.role === "user" ? "You" : character().name);
+  }
+  if (tr.count && chat.updated) $("vvTime").textContent = new Date(chat.updated * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 function trBot(text) {
   if (!text) return;
@@ -180,7 +193,7 @@ async function selfCheck() {
 // One token, built like a spoken turn: the engine processes the tools and instructions now (about 3 s when its cache was
 // dropped), not when you ask your first question. Nothing is saved; a failure only means the first turn is slower.
 function warmModel() {
-  const b = promptShape();
+  const b = promptShape(sessionOf("voice"));
   b.messages.push({ role: "user", content: "Hello." });
   fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ ...b, warm: true, voice: true, voice_style: character().style, enable_thinking: false }) })
@@ -188,6 +201,11 @@ function warmModel() {
 }
 async function stopVoice() {
   const wasOn = v.on;
+  // End also ends a spoken reply still running: no chat screen shows the Voice conversation, so nothing else can stop it.
+  // A pending approval is declined first, so the reply is not left waiting on it.
+  const a = turn.approval; turn.question = null;
+  if (a) await answerApproval(a, "deny");
+  if (liveGen && chatKind(liveGen.chat) === "voice") listState.streaming?.abort();
   v.on = false; v.acceptInput = false; v.gen++; clearInterval(v.sampler); clearInterval(turn.tick); clearTimeout(pend.timer);
   try { v.es?.close(); } catch {}
   v.es = null; v.pending.clear(); tent = null; turn.active = false; v.turnPending = false;
@@ -212,6 +230,7 @@ function onEvent(ev) {
       turn.heard = turn.heardParts.sort((a, b) => a[0] - b[0]).map((x) => x[1]).join(" ");
     }
     if (!v.pending.size && turn.done) finishTurn();
+    else if (!v.pending.size && (turn.question || turn.approval) && !v.acceptInput) { v.acceptInput = true; setState("listening"); }   // it asked: your answer
   } else if (ev.t === "mic_restart") caption("The microphone stalled and was restarted.");
   else if (ev.t === "error") caption("The voice service stopped.");
 }
@@ -300,10 +319,17 @@ function userResumed() {                                 // you are still talkin
 async function firePending() {
   const text = pend.text; pend.text = ""; pend.timer = 0;
   if (!text || !v.on) return;
+  if (turn.approval) {                                   // it asked for your okay: yes allows, anything else declines (and says why)
+    const a = turn.approval, yes = YES.test(text), no = NO.test(text);
+    trAdd("you", text, "You"); tr.bot = null; turn.shown = "";
+    setState("thinking"); v.acceptInput = false; v.respondAt = performance.now();
+    answerApproval(a, yes ? "allow" : "deny", yes || no ? "" : text);
+    return;
+  }
   if (turn.question) {                                   // the assistant asked you something: this is the answer
     const q = turn.question; turn.question = null;
     post(`/api/chat/sessions/${q.session_id}/reply`, { id: q.id, answer: text }).catch(() => {});
-    trAdd("you", text, "You"); tr.bot = null;
+    trAdd("you", text, "You"); tr.bot = null; turn.shown = "";
     setState("thinking"); v.acceptInput = false; v.respondAt = performance.now();
     return;
   }
@@ -312,6 +338,7 @@ async function firePending() {
   trAdd("you", text, "You"); tr.bot = null; saying(""); caption("");
   setState("thinking");
   await send(text);
+  tr.chatId = sessionOf("voice")?.id ?? null;             // the transcript already shows this conversation
   if (v.turnPending) {                                    // send() refused (for example, another chat is still answering)
     v.turnPending = false; v.acceptInput = true; setState("listening"); caption("Couldn't send that right now.");
   }
@@ -325,11 +352,32 @@ function finishTurn() {
   const gen = v.gen;
   setTimeout(() => { if (gen === v.gen && v.on) { v.acceptInput = true; setState("listening"); } }, 900);
 }
+// An approval during a spoken turn: answered aloud or with the transcript's buttons (the Voice conversation is never on a
+// chat screen, so this is the only place it can be answered).
+const YES = /^\s*(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|allow( it)?|please do|fine)\b/i;
+const NO = /^\s*(no|nope|don'?t|do not|stop|cancel|decline|never mind)\b/i;
+async function answerApproval(a, decision, feedback = "") {
+  if (turn.approval === a) turn.approval = null;
+  a.el?.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+  try {
+    const r = await post(`/api/chat/sessions/${a.session_id}/reply`, { decision, ...(feedback ? { feedback } : {}) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+    const bot = liveGen?.bot;
+    if (bot?.pendingApproval?.id === a.id) {
+      const step = (bot.tool_steps || []).find((x) => x.id === a.id);
+      if (step?.status === "waiting") step.status = "running";
+      delete bot.pendingApproval;
+    }
+    a.el?.querySelector(".vv-appr")?.replaceWith(decision === "allow" ? " · allowed" : " · declined");
+    setState("thinking"); v.acceptInput = false;
+  } catch (e) { problem("I couldn't send your answer.", String(e.message || e)); }
+}
 // You talked over it: stop the speech and the reply, keep what was actually heard, listen.
 function interrupt() {
   v.gen++; v.pending.clear(); clearInterval(turn.tick);
   post("/api/voice/stop").catch(() => {});
   tent = null; loudSince = 0; tentBlockUntil = performance.now() + 600;
+  if (turn.approval || turn.question) { v.acceptInput = true; setState("listening"); caption("Go ahead."); return; }   // it asked you: the reply waits for your answer
   if (turn.active) { turn.interrupted = true; listState.streaming?.abort(); }
   turn.done = false; turn.active = false;
   v.lastSpeechEnd = performance.now(); v.acceptInput = true; setState("listening"); caption("Go ahead.");
@@ -393,7 +441,13 @@ function voiceOnEvent(j) {
     }
     return;
   }
-  if (j.x_approval) { speak("I need your okay on screen for that."); return; }
+  if (j.x_approval) {
+    const x = j.x_approval, el = trAdd("step", `Needs your okay: ${x.title || x.name || "an action"}`);
+    turn.approval = { session_id: x.session_id, id: x.id, el };
+    if (el) { el.classList.add("appr"); el.insertAdjacentHTML("beforeend", `<span class="vv-appr"><button data-appr="allow">Allow</button><button data-appr="deny">Decline</button></span>`); }
+    caption(x.title || x.name || ""); speak("I need your okay for that. Say yes or no.");
+    return;
+  }
   if (j.x_question) { turn.question = { session_id: j.x_question.session_id, id: j.x_question.id }; speak(j.x_question.question); return; }
   if (j.error) {
     const said = explainError(j.error);
@@ -449,7 +503,7 @@ function toggleMute() {                                  // muted: it keeps talk
 function voiceViewShown(name) {
   syncBar();
   if (name !== "voice") return;
-  renderCharacters();
+  renderCharacters(); voiceShowSession();
   if (!v.on) startVoice();
 }
 $("micBtn").onclick = () => { showView("voice"); };
@@ -457,7 +511,19 @@ $("vEnd").onclick = () => stopVoice();
 $("vChar").onchange = (e) => pickCharacter(e.target.value);
 $("vvGo").onclick = () => (v.on ? stopVoice() : startVoice());
 $("vvMute").onclick = toggleMute;
-$("vvType").onclick = () => { showView("chat"); };
+$("vvType").onclick = () => { const row = $("vvTypeRow"); row.hidden = !row.hidden; if (!row.hidden) $("vvTypeIn").focus(); };
+$("vvTypeRow").onsubmit = (e) => {                       // typed text is a turn of the Voice conversation, answered aloud
+  e.preventDefault();
+  const text = $("vvTypeIn").value.trim();
+  if (!text || !v.on) return;
+  if (listState.streaming && !turn.question && !turn.approval) { caption("Still working on the last one. Send it in a moment."); return; }
+  if (v.pending.size && !turn.question && !turn.approval) interrupt();
+  $("vvTypeIn").value = ""; clearTimeout(pend.timer); pend.text = text; firePending();
+};
+$("vvLog").onclick = (e) => {
+  const b = e.target.closest?.("[data-appr]"), a = turn.approval;
+  if (b && a?.el?.contains(b)) { tr.bot = null; turn.shown = ""; answerApproval(a, b.dataset.appr); }
+};
 $("vvChars").onclick = (e) => { const b = e.target.closest?.("[data-ch]"); if (b) pickCharacter(b.dataset.ch); };
 renderCharacters();
 // The mic button and the Voice item appear only when the voice.enabled flag is on.
@@ -473,4 +539,4 @@ renderCharacters();
 function voiceHeard(text) { if (v.on) submitUtterance(String(text || "")); }
 const voiceState = () => ({ on: v.on, muted: v.muted, state: v.state, check: v.check, micChunks: v.micChunks, acceptInput: v.acceptInput, pending: v.pending.size, speaking: turn.chunks, said: turn.said.trim() });
 
-export { startVoice, stopVoice, voiceHeard, voiceOnEnd, voiceOnEvent, voiceRequest, voiceState, voiceViewShown };
+export { startVoice, stopVoice, voiceHeard, voiceOnEnd, voiceOnEvent, voiceRequest, voiceShowSession, voiceState, voiceViewShown };
