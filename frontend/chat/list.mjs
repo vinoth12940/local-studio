@@ -3,7 +3,7 @@ import { savedMessages } from "./record.mjs";
 import { createStore } from "../core/store.mjs";
 import { $, api, confirmBox, esc, icon, jpost, newId, store, toast } from "../core/util.mjs";
 import { showView, syncChatDock, view } from "../ui/views.mjs";
-import { activeCodeWs, chDetach, chResume, liveGen, loadCodeView, renderThread, scrollBottom, voiceShowSession } from "../modules.mjs";
+import { activeCodeWs, chDetach, chResume, liveGen, loadCodeView, renderThread, scrollBottom, voiceNewChat, voiceOpenChat } from "../modules.mjs";
 
 // ---------------- chats
 // Chat, Code and Voice each keep their own conversations. `current` is the one the open view shows; `sessions` keeps each
@@ -91,7 +91,7 @@ async function openChat(id) {
   const kind = chatKind(c);                                                              // it opens in its own view
   if (kindOfView(view) === kind) { chDetach(); listState.current = c; } else listState.sessions[kind] = c;
   if (kind === "code") { listState.codeWorkspace = c.workspace; store.set("code_workspace", listState.codeWorkspace); }
-  if (kind === "voice") { if (view !== "voice") showView("voice"); else { voiceShowSession(); renderHistory(); } return; }
+  if (kind === "voice") { if (view !== "voice") showView("voice"); else voiceOpenChat(); return; }
   if (kind === "chat" || view !== "code") showView(kind);
   else { syncChatDock(); renderThread(); loadCodeView(); }
   scrollBottom(true);
@@ -100,8 +100,8 @@ async function openChat(id) {
 function newChat() {                                     // a new conversation of the open view's kind
   chDetach();
   const kind = kindOfView(view), ws = kind === "code" && activeCodeWs();
+  if (kind === "voice") return voiceNewChat();           // also stops a reply that is still running and clears the display
   listState.current = ws ? { id: newId(), title: "New coding task", kind, workspace: ws, messages: [] } : null;
-  if (kind === "voice") { voiceShowSession(); renderHistory(); return; }
   if (kind === "chat") showView("chat");
   else syncChatDock();
   renderThread();
